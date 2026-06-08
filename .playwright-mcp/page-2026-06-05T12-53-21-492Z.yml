@@ -1,0 +1,170 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e5]:
+    - banner [ref=e6]:
+      - button "Toy-Box 3D" [ref=e8] [cursor=pointer]
+      - generic [ref=e9]:
+        - generic [ref=e10]: 正在生成
+        - button "导出 STL" [ref=e11] [cursor=pointer]:
+          - img [ref=e12]
+          - text: 导出 STL
+        - button "保存配置" [ref=e16] [cursor=pointer]:
+          - img [ref=e17]
+          - text: 保存配置
+        - button "设置" [ref=e21] [cursor=pointer]:
+          - img [ref=e22]
+        - button "提问" [ref=e25] [cursor=pointer]:
+          - img [ref=e26]
+        - button "个人" [ref=e29] [cursor=pointer]: L
+    - generic [ref=e224]:
+      - complementary [ref=e225]:
+        - generic [ref=e226]:
+          - img [ref=e228]
+          - generic [ref=e231]:
+            - heading "模型工作台" [level=2] [ref=e232]
+            - paragraph [ref=e233]: V1.0.5 Alpha
+        - button "新建版本" [ref=e234] [cursor=pointer]:
+          - img [ref=e235]
+          - text: 新建版本
+        - navigation "当前项目功能栏" [ref=e238]:
+          - button "参数" [ref=e239] [cursor=pointer]:
+            - img [ref=e240]
+            - generic [ref=e241]: 参数
+          - button "选图" [ref=e242] [cursor=pointer]:
+            - img [ref=e243]
+            - generic [ref=e248]: 选图
+          - button "生成 STL" [ref=e249] [cursor=pointer]:
+            - img [ref=e250]
+            - generic [ref=e253]: 生成 STL
+          - button "下载 STL" [ref=e254] [cursor=pointer]:
+            - img [ref=e255]
+            - generic [ref=e258]: 下载 STL
+        - generic [ref=e259]:
+          - button "本地历史" [ref=e260] [cursor=pointer]:
+            - img [ref=e261]
+            - generic [ref=e265]: 本地历史
+          - button "本地存储" [ref=e266] [cursor=pointer]:
+            - img [ref=e267]
+            - generic [ref=e271]: 本地存储
+          - button "邀请联盟" [ref=e272] [cursor=pointer]:
+            - img [ref=e273]
+            - generic [ref=e278]: 邀请联盟
+      - main [ref=e321]:
+        - generic [ref=e322]:
+          - generic "AI 工作区呼吸预览" [ref=e323]
+          - generic [ref=e414]:
+            - heading "正在生成 STL 模型" [level=1] [ref=e415]
+            - paragraph [ref=e416]: 这里显示真实任务事件：外部工具调用、STL 校验、文件保存和产物创建。Tripo 运行中会保持连接，不展示无法验证的精确百分比。
+          - status [ref=e417]:
+            - generic [ref=e418]:
+              - generic [ref=e419]: 真实任务进度
+              - strong [ref=e420]: 1 个事件完成
+            - paragraph [ref=e427]: 任务正在运行，等待下一个工具事件。
+          - region "模型生成阶段" [ref=e428]:
+            - article [ref=e429]:
+              - generic [ref=e430]: "01"
+              - generic [ref=e431]:
+                - strong [ref=e432]: 图像提交
+                - paragraph [ref=e433]: 锁定所选概念图和打印参数。
+            - article [ref=e434]:
+              - generic [ref=e435]: "02"
+              - generic [ref=e436]:
+                - strong [ref=e437]: Tripo 建模
+                - paragraph [ref=e438]: 调用 Tripo image-to-model，等待外部任务返回模型资产。
+            - article [ref=e439]:
+              - generic [ref=e440]: "03"
+              - generic [ref=e441]:
+                - strong [ref=e442]: STL 校验
+                - paragraph [ref=e443]: 下载 STL 并执行基础可打印文件校验。
+            - article [ref=e444]:
+              - generic [ref=e445]: "04"
+              - generic [ref=e446]:
+                - strong [ref=e447]: 局部渲染与细节取样
+                - paragraph [ref=e448]: 3D 渲染过程中同步准备局部视角，模型拆解图会和 STL 一起进入检查台。
+          - generic [ref=e449]:
+            - generic [ref=e450]:
+              - generic [ref=e451]:
+                - img [ref=e452]
+                - text: 生成日志
+              - generic [ref=e454]: event stream connected
+            - generic "活跃任务词元" [ref=e455]:
+              - generic [ref=e456]: poll
+              - generic [ref=e457]: repair
+              - generic [ref=e458]: support
+              - generic [ref=e459]: asset
+              - generic [ref=e460]: preview
+              - generic [ref=e461]: timeout
+              - generic [ref=e462]: layer
+              - generic [ref=e463]: render
+              - generic [ref=e464]: handoff
+              - generic [ref=e465]: upload
+              - generic [ref=e466]: normal
+              - generic [ref=e467]: units
+              - generic [ref=e468]: smooth
+              - generic [ref=e469]: cache
+              - generic [ref=e470]: queued
+              - generic [ref=e471]: raft
+              - generic [ref=e472]: waterline
+              - generic [ref=e473]: export
+              - generic [ref=e474]: image
+              - generic [ref=e475]: surface
+              - generic [ref=e476]: bbox
+              - generic [ref=e477]: detail
+              - generic [ref=e478]: download
+              - generic [ref=e479]: status
+              - generic [ref=e480]: slice
+              - generic [ref=e481]: island
+              - generic [ref=e482]: top-view
+              - generic [ref=e483]: queue
+              - generic [ref=e484]: mesh
+              - generic [ref=e485]: merge
+              - generic [ref=e486]: overhang
+              - generic [ref=e487]: glb
+              - generic [ref=e488]: viewer
+              - generic [ref=e489]: heartbeat
+              - generic [ref=e490]: infill
+              - generic [ref=e491]: crop
+              - generic [ref=e492]: console
+              - generic [ref=e493]: Tripo
+              - generic [ref=e494]: edge
+              - generic [ref=e495]: mm
+              - generic [ref=e496]: convert
+              - generic [ref=e497]: metadata
+              - generic [ref=e498]: retry
+              - generic [ref=e499]: nozzle
+              - generic [ref=e500]: orientation
+              - generic [ref=e501]: ready
+              - generic [ref=e502]: token
+              - generic [ref=e503]: watertight
+              - generic [ref=e504]: axis
+              - generic [ref=e505]: decimate
+              - generic [ref=e506]: checksum
+              - generic [ref=e507]: running
+              - generic [ref=e508]: bed
+              - generic [ref=e509]: manifold
+            - log "最近生成日志" [ref=e510]:
+              - generic [ref=e511]:
+                - generic [ref=e512]: "[JOB]"
+                - generic [ref=e513]: Generate STL model
+                - emphasis [ref=e514]: 事件来自后端生成链路。
+              - generic [ref=e515]:
+                - generic [ref=e516]: "[STEP]"
+                - generic [ref=e517]: Select concept and print parameters
+                - emphasis [ref=e518]: 事件来自后端生成链路。
+              - generic [ref=e519]:
+                - generic [ref=e520]: "[SELECT-CONCEPT]"
+                - generic [ref=e521]: select_concept 已完成
+                - emphasis [ref=e522]: aircraft / 120mm
+              - generic [ref=e523]:
+                - generic [ref=e524]: "[TRIPO-IMAGE-TO-MODEL]"
+                - generic [ref=e525]: 正在执行 tripo_image_to_model
+                - emphasis [ref=e526]: 推荐建模图
+              - generic [ref=e527]:
+                - generic [ref=e528]: "[PREPARE-TRIPO-IMAGE]"
+                - generic [ref=e529]: 正在执行 prepare_tripo_image
+                - emphasis [ref=e530]: 推荐建模图
+              - generic [ref=e531]:
+                - generic [ref=e532]: "[TRIPO-UPLOAD-IMAGE]"
+                - generic [ref=e533]: 正在执行 tripo_upload_image
+                - emphasis [ref=e534]: concept.png
+          - button "继续等待" [ref=e535] [cursor=pointer]
+  - alert [ref=e4]

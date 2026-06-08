@@ -1,0 +1,90 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e5]:
+    - banner [ref=e6]:
+      - button "Toy-Box 3D" [ref=e8] [cursor=pointer]
+      - generic [ref=e9]:
+        - generic [ref=e10]: 先配置模型
+        - button "导出 STL" [ref=e11] [cursor=pointer]:
+          - img [ref=e12]
+          - text: 导出 STL
+        - button "保存配置" [ref=e16] [cursor=pointer]:
+          - img [ref=e17]
+          - text: 保存配置
+        - button "设置" [ref=e21] [cursor=pointer]:
+          - img [ref=e22]
+        - button "提问" [ref=e25] [cursor=pointer]:
+          - img [ref=e26]
+        - button "个人" [ref=e29] [cursor=pointer]: L
+    - generic [ref=e224]:
+      - complementary [ref=e225]:
+        - generic [ref=e226]:
+          - img [ref=e228]
+          - generic [ref=e231]:
+            - heading "模型工作台" [level=2] [ref=e232]
+            - paragraph [ref=e233]: V1.0.5 Alpha
+        - button "新建版本" [ref=e234] [cursor=pointer]:
+          - img [ref=e235]
+          - text: 新建版本
+        - navigation "当前项目功能栏" [ref=e238]:
+          - button "参数" [ref=e239] [cursor=pointer]:
+            - img [ref=e240]
+            - generic [ref=e241]: 参数
+          - button "选图" [ref=e242] [cursor=pointer]:
+            - img [ref=e243]
+            - generic [ref=e248]: 选图
+          - button "生成 STL" [ref=e249] [cursor=pointer]:
+            - img [ref=e250]
+            - generic [ref=e253]: 生成 STL
+          - button "下载 STL" [ref=e254] [cursor=pointer]:
+            - img [ref=e255]
+            - generic [ref=e258]: 下载 STL
+        - generic [ref=e259]:
+          - button "本地历史" [ref=e260] [cursor=pointer]:
+            - img [ref=e261]
+            - generic [ref=e265]: 本地历史
+          - button "本地存储" [ref=e266] [cursor=pointer]:
+            - img [ref=e267]
+            - generic [ref=e271]: 本地存储
+          - button "邀请联盟" [ref=e272] [cursor=pointer]:
+            - img [ref=e273]
+            - generic [ref=e278]: 邀请联盟
+      - main [ref=e279]:
+        - generic [ref=e280]:
+          - generic [ref=e281]:
+            - heading "确认建模输入图" [level=1] [ref=e282]
+            - paragraph [ref=e283]: 系统默认选中这一张建模图。需要再确认时，可以用自然语言只修改局部，其余部分会尽量保持和第一张一致。
+          - status [ref=e284]:
+            - generic [ref=e285]:
+              - generic [ref=e286]: Concept images are ready.
+              - strong [ref=e287]: 100%
+            - progressbar "概念图生成进度" [ref=e288]
+          - region "概念图方案" [ref=e290]:
+            - button "当前建模图 推荐建模图 推荐建模图 赛车模型以低位三分之四视角呈现，主体完整、遮挡少，轮廓和落地姿态更适合交给 Tripo 生成 STL。#050505为主，#050505点缀，未加入额外编号标记。 当前使用" [pressed] [ref=e291] [cursor=pointer]:
+              - generic [ref=e292]: 当前建模图
+              - img "推荐建模图" [ref=e293]
+              - generic [ref=e294]:
+                - heading "推荐建模图" [level=2] [ref=e295]
+                - paragraph [ref=e296]: 赛车模型以低位三分之四视角呈现，主体完整、遮挡少，轮廓和落地姿态更适合交给 Tripo 生成 STL。#050505为主，#050505点缀，未加入额外编号标记。
+                - generic [ref=e298]: 当前使用
+            - button "历史修改版 备选参考图 备选参考图 赛车模型从略高的展示角度展开，顶面、侧面和结构分区更清楚，适合作为备选或对照图。#050505为主，#050505点缀，未加入额外编号标记。 改用这一版" [ref=e299] [cursor=pointer]:
+              - generic [ref=e300]: 历史修改版
+              - img "备选参考图" [ref=e301]
+              - generic [ref=e302]:
+                - heading "备选参考图" [level=2] [ref=e303]
+                - paragraph [ref=e304]: 赛车模型从略高的展示角度展开，顶面、侧面和结构分区更清楚，适合作为备选或对照图。#050505为主，#050505点缀，未加入额外编号标记。
+                - generic [ref=e306]: 改用这一版
+          - region "再确认" [ref=e307]:
+            - generic [ref=e308]:
+              - text: 再确认
+              - paragraph [ref=e309]: 可以写“机翼调高 5 到 8 度”“为船只增加船锚”“在后方增加载机空间”等；系统会与第一步固定输入混合后重新生成一张。
+            - textbox "再确认修改描述" [ref=e310]:
+              - /placeholder: 写下想改的局部，未提到的部分会尽量保持不变。
+            - button "重新生成确认图" [ref=e311] [cursor=pointer]:
+              - img [ref=e312]
+              - text: 重新生成确认图
+          - generic [ref=e315]:
+            - button "返回修改参数" [ref=e316] [cursor=pointer]
+            - button "使用这张图生成 STL" [ref=e317] [cursor=pointer]:
+              - img [ref=e318]
+              - text: 使用这张图生成 STL
+  - alert [ref=e4]

@@ -1,0 +1,106 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e6]:
+      - img [ref=e8]
+      - generic [ref=e10]:
+        - strong [ref=e11]: Product Lock Video Studio
+        - generic [ref=e12]: 四视图锁定 · 首帧审核 · 视频生成
+  - generic [ref=e13]:
+    - complementary [ref=e14]:
+      - generic [ref=e15]:
+        - generic [ref=e16]:
+          - generic [ref=e17]: Current Run
+          - img [ref=e18]
+        - strong [ref=e23]: 鲨鱼充气服
+        - generic [ref=e24]: 0/4 核心视图 · 0 辅助角度
+      - generic [ref=e25]:
+        - button "上传 正面、左侧、右侧、背面四张核心图 01" [ref=e26] [cursor=pointer]:
+          - img [ref=e28]
+          - generic [ref=e31]:
+            - strong [ref=e32]: 上传
+            - generic [ref=e33]: 正面、左侧、右侧、背面四张核心图
+          - generic [ref=e34]: "01"
+        - button "首帧 根据核心四视图生成一致首帧 02" [ref=e35] [cursor=pointer]:
+          - img [ref=e37]
+          - generic [ref=e41]:
+            - strong [ref=e42]: 首帧
+            - generic [ref=e43]: 根据核心四视图生成一致首帧
+          - generic [ref=e44]: "02"
+        - button "视频 基于人工确认首帧提交视频任务 03" [ref=e45] [cursor=pointer]:
+          - img [ref=e47]
+          - generic [ref=e49]:
+            - strong [ref=e50]: 视频
+            - generic [ref=e51]: 基于人工确认首帧提交视频任务
+          - generic [ref=e52]: "03"
+        - button "质检 播放成片并检查产品一致性 04" [ref=e53] [cursor=pointer]:
+          - img [ref=e55]
+          - generic [ref=e59]:
+            - strong [ref=e60]: 质检
+            - generic [ref=e61]: 播放成片并检查产品一致性
+          - generic [ref=e62]: "04"
+      - button "新建流程" [ref=e63] [cursor=pointer]
+      - button "历史记录 7" [ref=e64] [cursor=pointer]:
+        - img [ref=e65]
+        - text: 历史记录
+        - generic [ref=e69]: "7"
+    - main [ref=e70]:
+      - generic [ref=e72]:
+        - generic [ref=e73]:
+          - generic [ref=e74]: 第 1 步
+          - heading "上传产品四视图" [level=1] [ref=e75]
+        - generic [ref=e76]: 核心四视图上传后才进入首帧。正面、左侧、右侧、背面用于锁定尺寸、比例、外形和拓扑；选择本地预设产品时，已保存的辅助角度会在后台自动作为一致性证据进入模型。
+        - generic [ref=e78]:
+          - text: 产品类型
+          - combobox "产品类型" [ref=e79]:
+            - option "鲨鱼充气服" [selected]
+            - option "奶牛充气服"
+            - option "灰色老鼠充气服"
+            - option "青蛙充气服"
+            - option "相扑充气服"
+            - option "通用充气服"
+        - generic [ref=e80]:
+          - strong [ref=e81]: 核心四视图
+          - generic [ref=e82]: 必填，用于后台提取产品结构
+        - generic [ref=e83]:
+          - article [ref=e84]:
+            - generic [ref=e85] [cursor=pointer]:
+              - button "正面图 FRONT" [ref=e86]
+              - generic [ref=e87]:
+                - img "正面图" [ref=e88]
+                - emphasis [ref=e89]: FRONT
+            - strong [ref=e90]: 正面图
+            - generic [ref=e91]: shark-front.png
+            - generic [ref=e92]: 本地预设
+          - article [ref=e93]:
+            - generic [ref=e94] [cursor=pointer]:
+              - button "左侧图 LEFT" [ref=e95]
+              - generic [ref=e96]:
+                - img "左侧图" [ref=e97]
+                - emphasis [ref=e98]: LEFT
+            - strong [ref=e99]: 左侧图
+            - generic [ref=e100]: shark-left.png
+            - generic [ref=e101]: 本地预设
+          - article [ref=e102]:
+            - generic [ref=e103] [cursor=pointer]:
+              - button "右侧图 RIGHT" [ref=e104]
+              - generic [ref=e105]:
+                - img "右侧图" [ref=e106]
+                - emphasis [ref=e107]: RIGHT
+            - strong [ref=e108]: 右侧图
+            - generic [ref=e109]: shark-right.png
+            - generic [ref=e110]: 本地预设
+          - article [ref=e111]:
+            - generic [ref=e112] [cursor=pointer]:
+              - button "背面图 BACK" [ref=e113]
+              - generic [ref=e114]:
+                - img "背面图" [ref=e115]
+                - emphasis [ref=e116]: BACK
+            - strong [ref=e117]: 背面图
+            - generic [ref=e118]: shark-back.jpg
+            - generic [ref=e119]: 本地预设
+        - generic [ref=e120]:
+          - strong [ref=e121]: 已绑定参考视频
+          - generic [ref=e122]: 2 个长期样片：shark-reference-01.mp4、shark-reference-02.mp4
+        - button "素材上传完成" [disabled] [ref=e124]:
+          - img [ref=e125]
+          - text: 素材上传完成

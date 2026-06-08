@@ -1,0 +1,20 @@
+- generic [active] [ref=e1]:
+  - main [ref=e2]:
+    - navigation [ref=e3]:
+      - link "返回 AILA" [ref=e4] [cursor=pointer]:
+        - /url: /aila
+        - img [ref=e5]
+        - text: 返回 AILA
+      - generic [ref=e7]: Image to 3D waiting state
+    - generic [ref=e8]:
+      - generic [ref=e9]:
+        - paragraph [ref=e10]:
+          - img [ref=e11]
+          - text: AILA action probe
+        - heading "图生 3D 模型的等待过程。" [level=1] [ref=e21]
+        - paragraph [ref=e22]: 这段循环视频已放进 AILA 的 Vercel 发布路径，用于长时间生成任务里的进度背景。素材使用 WebM 优先、H.264 MP4 兜底，并保留四边羽化。
+      - generic "3D 打印等待动画预览" [ref=e23]:
+        - generic [ref=e26]:
+          - generic [ref=e27]: 68%
+          - generic [ref=e28]: Building printable geometry
+  - alert [ref=e31]

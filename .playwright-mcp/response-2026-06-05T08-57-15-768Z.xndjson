@@ -1,0 +1,6 @@
+{"phase":"queued","progress":5,"message":"Concept request received."}
+{"phase":"validating","progress":12,"message":"Input validated. Creating generation run."}
+{"phase":"image","progress":22,"message":"Generating concept image 1.","runId":"a9b0d6de-a015-4588-bab8-7a775b9a8194","conceptIndex":1,"totalConcepts":2}
+{"phase":"image","progress":56,"message":"Concept 1 finished. Generating concept 2.","runId":"a9b0d6de-a015-4588-bab8-7a775b9a8194","conceptIndex":1,"totalConcepts":2}
+{"phase":"image","progress":84,"message":"Concept images generated. Saving run.","runId":"a9b0d6de-a015-4588-bab8-7a775b9a8194","conceptIndex":2,"totalConcepts":2}
+{"phase":"complete","progress":100,"message":"fetch failed"}

@@ -1,0 +1,14 @@
+{
+  "baseline": "aircraft_model_interaction_90s_v5_toni_asia_tail_bgm",
+  "accepted_on": "2026-05-21",
+  "artifact": "C:\\Users\\Administrator\\Videos\\interaction_roughcut\\aircraft_model_interaction_90s_v5_toni_asia_tail_bgm.mp4",
+  "tail_preview": "C:\\Users\\Administrator\\Videos\\interaction_roughcut\\v5_tail_review.jpg",
+  "sha256": "1B9FB4358353FF980BD16BD1BC947A432B5E49BBE898C03E17D2D7E3A90F6F36",
+  "duration_seconds": 93.0,
+  "width": 1750,
+  "height": 1244,
+  "fps": 30,
+  "requires_audio": true,
+  "tail_text": "Toni.asia",
+  "tail_seconds": 3
+}

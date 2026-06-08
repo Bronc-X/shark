@@ -1,0 +1,163 @@
+{
+  "video": "D:\\Toni\\code\\航模\\video_interaction_analysis\\source.mp4",
+  "fps": 30.0,
+  "duration": 307.75,
+  "size": [
+    1750,
+    1244
+  ],
+  "estimated_frames": 9232,
+  "decoded_frames": 9231,
+  "analysis_size": [
+    320,
+    227
+  ],
+  "median_p95_diff_per_sec": 0.021377,
+  "stable_threshold": 0.35,
+  "high_activity_threshold": 0.07382919999999998,
+  "stable_intervals": [
+    {
+      "start": 0,
+      "end": 5,
+      "duration": 5
+    },
+    {
+      "start": 6,
+      "end": 9,
+      "duration": 3
+    },
+    {
+      "start": 11,
+      "end": 28,
+      "duration": 17
+    },
+    {
+      "start": 29,
+      "end": 177,
+      "duration": 148
+    },
+    {
+      "start": 178,
+      "end": 202,
+      "duration": 24
+    },
+    {
+      "start": 203,
+      "end": 283,
+      "duration": 80
+    },
+    {
+      "start": 284,
+      "end": 287,
+      "duration": 3
+    },
+    {
+      "start": 301,
+      "end": 308,
+      "duration": 7
+    }
+  ],
+  "activity_bursts": [
+    {
+      "start": 0,
+      "end": 2,
+      "duration": 2
+    },
+    {
+      "start": 5,
+      "end": 6,
+      "duration": 1
+    },
+    {
+      "start": 9,
+      "end": 11,
+      "duration": 2
+    },
+    {
+      "start": 12,
+      "end": 13,
+      "duration": 1
+    },
+    {
+      "start": 18,
+      "end": 23,
+      "duration": 5
+    },
+    {
+      "start": 24,
+      "end": 27,
+      "duration": 3
+    },
+    {
+      "start": 28,
+      "end": 29,
+      "duration": 1
+    },
+    {
+      "start": 99,
+      "end": 101,
+      "duration": 2
+    },
+    {
+      "start": 102,
+      "end": 106,
+      "duration": 4
+    },
+    {
+      "start": 107,
+      "end": 110,
+      "duration": 3
+    },
+    {
+      "start": 111,
+      "end": 112,
+      "duration": 1
+    },
+    {
+      "start": 173,
+      "end": 174,
+      "duration": 1
+    },
+    {
+      "start": 177,
+      "end": 178,
+      "duration": 1
+    },
+    {
+      "start": 198,
+      "end": 199,
+      "duration": 1
+    },
+    {
+      "start": 202,
+      "end": 203,
+      "duration": 1
+    },
+    {
+      "start": 245,
+      "end": 246,
+      "duration": 1
+    },
+    {
+      "start": 283,
+      "end": 284,
+      "duration": 1
+    },
+    {
+      "start": 285,
+      "end": 298,
+      "duration": 13
+    },
+    {
+      "start": 300,
+      "end": 301,
+      "duration": 1
+    },
+    {
+      "start": 305,
+      "end": 307,
+      "duration": 2
+    }
+  ],
+  "keyframe_count": 6
+}

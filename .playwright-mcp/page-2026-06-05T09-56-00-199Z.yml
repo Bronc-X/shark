@@ -1,0 +1,90 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e5]:
+    - banner [ref=e6]:
+      - button "Toy-Box 3D" [ref=e8] [cursor=pointer]
+      - generic [ref=e9]:
+        - generic [ref=e10]: 先配置模型
+        - button "导出 STL" [ref=e11] [cursor=pointer]:
+          - img [ref=e12]
+          - text: 导出 STL
+        - button "保存配置" [ref=e16] [cursor=pointer]:
+          - img [ref=e17]
+          - text: 保存配置
+        - button "设置" [ref=e21] [cursor=pointer]:
+          - img [ref=e22]
+        - button "提问" [ref=e25] [cursor=pointer]:
+          - img [ref=e26]
+        - button "个人" [ref=e29] [cursor=pointer]: L
+    - generic [ref=e221]:
+      - complementary [ref=e222]:
+        - generic [ref=e223]:
+          - img [ref=e225]
+          - generic [ref=e228]:
+            - heading "模型工作台" [level=2] [ref=e229]
+            - paragraph [ref=e230]: V1.0.5 Alpha
+        - button "新建版本" [ref=e231] [cursor=pointer]:
+          - img [ref=e232]
+          - text: 新建版本
+        - navigation "当前项目功能栏" [ref=e235]:
+          - button "参数" [ref=e236] [cursor=pointer]:
+            - img [ref=e237]
+            - generic [ref=e238]: 参数
+          - button "选图" [ref=e239] [cursor=pointer]:
+            - img [ref=e240]
+            - generic [ref=e245]: 选图
+          - button "生成 STL" [ref=e246] [cursor=pointer]:
+            - img [ref=e247]
+            - generic [ref=e250]: 生成 STL
+          - button "下载 STL" [ref=e251] [cursor=pointer]:
+            - img [ref=e252]
+            - generic [ref=e255]: 下载 STL
+        - generic [ref=e256]:
+          - button "本地历史" [ref=e257] [cursor=pointer]:
+            - img [ref=e258]
+            - generic [ref=e262]: 本地历史
+          - button "本地存储" [ref=e263] [cursor=pointer]:
+            - img [ref=e264]
+            - generic [ref=e268]: 本地存储
+          - button "邀请联盟" [ref=e269] [cursor=pointer]:
+            - img [ref=e270]
+            - generic [ref=e275]: 邀请联盟
+      - main [ref=e276]:
+        - generic [ref=e277]:
+          - generic [ref=e278]:
+            - heading "确认建模输入图" [level=1] [ref=e279]
+            - paragraph [ref=e280]: 系统默认选中这一张建模图。需要再确认时，可以用自然语言只修改局部，其余部分会尽量保持和第一张一致。
+          - status [ref=e281]:
+            - generic [ref=e282]:
+              - generic [ref=e283]: Concept images are ready.
+              - strong [ref=e284]: 100%
+            - progressbar "概念图生成进度" [ref=e285]
+          - region "概念图方案" [ref=e287]:
+            - button "当前建模图 推荐建模图 推荐建模图 现代舰艇模型以低位三分之四视角呈现，主体完整、遮挡少，轮廓和落地姿态更适合交给 Tripo 生成 STL。#050505为主，#050505点缀，未加入额外编号标记。 当前使用" [pressed] [ref=e288] [cursor=pointer]:
+              - generic [ref=e289]: 当前建模图
+              - img "推荐建模图" [ref=e290]
+              - generic [ref=e291]:
+                - heading "推荐建模图" [level=2] [ref=e292]
+                - paragraph [ref=e293]: 现代舰艇模型以低位三分之四视角呈现，主体完整、遮挡少，轮廓和落地姿态更适合交给 Tripo 生成 STL。#050505为主，#050505点缀，未加入额外编号标记。
+                - generic [ref=e295]: 当前使用
+            - button "历史修改版 备选参考图 备选参考图 现代舰艇模型从略高的展示角度展开，顶面、侧面和结构分区更清楚，适合作为备选或对照图。#050505为主，#050505点缀，未加入额外编号标记。 改用这一版" [ref=e296] [cursor=pointer]:
+              - generic [ref=e297]: 历史修改版
+              - img "备选参考图" [ref=e298]
+              - generic [ref=e299]:
+                - heading "备选参考图" [level=2] [ref=e300]
+                - paragraph [ref=e301]: 现代舰艇模型从略高的展示角度展开，顶面、侧面和结构分区更清楚，适合作为备选或对照图。#050505为主，#050505点缀，未加入额外编号标记。
+                - generic [ref=e303]: 改用这一版
+          - region "再确认" [ref=e304]:
+            - generic [ref=e305]:
+              - text: 再确认
+              - paragraph [ref=e306]: 可以写“机翼调高 5 到 8 度”“为船只增加船锚”“在后方增加载机空间”等；系统会与第一步固定输入混合后重新生成一张。
+            - textbox "再确认修改描述" [ref=e307]:
+              - /placeholder: 写下想改的局部，未提到的部分会尽量保持不变。
+            - button "重新生成确认图" [ref=e308] [cursor=pointer]:
+              - img [ref=e309]
+              - text: 重新生成确认图
+          - generic [ref=e312]:
+            - button "返回修改参数" [ref=e313] [cursor=pointer]
+            - button "使用这张图生成 STL" [ref=e314] [cursor=pointer]:
+              - img [ref=e315]
+              - text: 使用这张图生成 STL
+  - alert [ref=e4]

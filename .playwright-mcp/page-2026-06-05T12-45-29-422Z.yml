@@ -1,0 +1,178 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e5]:
+    - banner [ref=e6]:
+      - button "Toy-Box 3D" [ref=e8] [cursor=pointer]
+      - generic [ref=e9]:
+        - generic [ref=e10]: 正在生成
+        - button "导出 STL" [ref=e11] [cursor=pointer]:
+          - img [ref=e12]
+          - text: 导出 STL
+        - button "保存配置" [ref=e16] [cursor=pointer]:
+          - img [ref=e17]
+          - text: 保存配置
+        - button "设置" [ref=e21] [cursor=pointer]:
+          - img [ref=e22]
+        - button "提问" [ref=e25] [cursor=pointer]:
+          - img [ref=e26]
+        - button "个人" [ref=e29] [cursor=pointer]: L
+    - generic [ref=e225]:
+      - complementary [ref=e226]:
+        - generic [ref=e227]:
+          - img [ref=e229]
+          - generic [ref=e232]:
+            - heading "模型工作台" [level=2] [ref=e233]
+            - paragraph [ref=e234]: V1.0.5 Alpha
+        - button "新建版本" [ref=e235] [cursor=pointer]:
+          - img [ref=e236]
+          - text: 新建版本
+        - navigation "当前项目功能栏" [ref=e239]:
+          - button "参数" [ref=e240] [cursor=pointer]:
+            - img [ref=e241]
+            - generic [ref=e242]: 参数
+          - button "选图" [ref=e243] [cursor=pointer]:
+            - img [ref=e244]
+            - generic [ref=e249]: 选图
+          - button "生成 STL" [ref=e250] [cursor=pointer]:
+            - img [ref=e251]
+            - generic [ref=e254]: 生成 STL
+          - button "下载 STL" [ref=e255] [cursor=pointer]:
+            - img [ref=e256]
+            - generic [ref=e259]: 下载 STL
+        - generic [ref=e260]:
+          - button "本地历史" [ref=e261] [cursor=pointer]:
+            - img [ref=e262]
+            - generic [ref=e266]: 本地历史
+          - button "本地存储" [ref=e267] [cursor=pointer]:
+            - img [ref=e268]
+            - generic [ref=e272]: 本地存储
+          - button "邀请联盟" [ref=e273] [cursor=pointer]:
+            - img [ref=e274]
+            - generic [ref=e279]: 邀请联盟
+      - main [ref=e324]:
+        - generic [ref=e325]:
+          - generic "AI 工作区呼吸预览" [ref=e326]
+          - generic [ref=e417]:
+            - heading "正在生成 STL 模型" [level=1] [ref=e418]
+            - paragraph [ref=e419]: 这里显示真实任务事件：外部工具调用、STL 校验、文件保存和产物创建。Tripo 运行中会保持连接，不展示无法验证的精确百分比。
+          - status [ref=e420]:
+            - generic [ref=e421]:
+              - generic [ref=e422]: 真实任务进度
+              - strong [ref=e423]: 25 个事件完成
+            - paragraph [ref=e430]: 任务正在运行，等待下一个工具事件。
+          - region "模型生成阶段" [ref=e431]:
+            - article [ref=e432]:
+              - generic [ref=e433]: "01"
+              - generic [ref=e434]:
+                - strong [ref=e435]: 图像提交
+                - paragraph [ref=e436]: 锁定所选概念图和打印参数。
+            - article [ref=e437]:
+              - generic [ref=e438]: "02"
+              - generic [ref=e439]:
+                - strong [ref=e440]: Tripo 建模
+                - paragraph [ref=e441]: 调用 Tripo image-to-model，等待外部任务返回模型资产。
+            - article [ref=e442]:
+              - generic [ref=e443]: "03"
+              - generic [ref=e444]:
+                - strong [ref=e445]: STL 校验
+                - paragraph [ref=e446]: 下载 STL 并执行基础可打印文件校验。
+            - article [ref=e447]:
+              - generic [ref=e448]: "04"
+              - generic [ref=e449]:
+                - strong [ref=e450]: 局部渲染与细节取样
+                - paragraph [ref=e451]: 3D 渲染过程中同步准备局部视角，模型拆解图会和 STL 一起进入检查台。
+          - generic [ref=e452]:
+            - generic [ref=e453]:
+              - generic [ref=e454]:
+                - img [ref=e455]
+                - text: 生成日志
+              - generic [ref=e457]: event stream connected
+            - generic "活跃任务词元" [ref=e458]:
+              - generic [ref=e633]: cache
+              - generic [ref=e634]: queued
+              - generic [ref=e635]: raft
+              - generic [ref=e636]: waterline
+              - generic [ref=e637]: export
+              - generic [ref=e638]: image
+              - generic [ref=e639]: surface
+              - generic [ref=e640]: bbox
+              - generic [ref=e641]: detail
+              - generic [ref=e642]: download
+              - generic [ref=e643]: status
+              - generic [ref=e644]: slice
+              - generic [ref=e645]: island
+              - generic [ref=e646]: top-view
+              - generic [ref=e647]: queue
+              - generic [ref=e648]: mesh
+              - generic [ref=e649]: merge
+              - generic [ref=e650]: overhang
+              - generic [ref=e651]: glb
+              - generic [ref=e652]: viewer
+              - generic [ref=e653]: heartbeat
+              - generic [ref=e654]: infill
+              - generic [ref=e655]: crop
+              - generic [ref=e656]: console
+              - generic [ref=e657]: Tripo
+              - generic [ref=e658]: edge
+              - generic [ref=e659]: mm
+              - generic [ref=e660]: convert
+              - generic [ref=e661]: metadata
+              - generic [ref=e662]: retry
+              - generic [ref=e663]: nozzle
+              - generic [ref=e664]: orientation
+              - generic [ref=e665]: ready
+              - generic [ref=e666]: token
+              - generic [ref=e667]: watertight
+              - generic [ref=e668]: axis
+              - generic [ref=e669]: decimate
+              - generic [ref=e670]: checksum
+              - generic [ref=e671]: running
+              - generic [ref=e672]: bed
+              - generic [ref=e673]: manifold
+              - generic [ref=e674]: joint
+              - generic [ref=e675]: task
+              - generic [ref=e676]: shell
+              - generic [ref=e677]: scale
+              - generic [ref=e678]: thin-wall
+              - generic [ref=e679]: stl
+              - generic [ref=e680]: bounds
+              - generic [ref=e681]: inspect
+              - generic [ref=e682]: bridge
+              - generic [ref=e683]: front-view
+              - generic [ref=e684]: tail
+              - generic [ref=e685]: poll
+              - generic [ref=e686]: repair
+            - log "最近生成日志" [ref=e513]:
+              - generic [ref=e687]:
+                - generic [ref=e688]: "[TRIPO-POLL-MODEL-TASK-STATUS]"
+                - generic [ref=e689]: tripo_poll_model_task_status 已完成
+                - emphasis [ref=e690]: "e816f228-4cdb-43fe-a87b-ddf5ea933d2a: running"
+              - generic [ref=e691]:
+                - generic [ref=e692]: "[TRIPO-POLL-MODEL-TASK-STATUS]"
+                - generic [ref=e693]: tripo_poll_model_task_status 已完成
+                - emphasis [ref=e694]: "e816f228-4cdb-43fe-a87b-ddf5ea933d2a: running"
+              - generic [ref=e695]:
+                - generic [ref=e696]: "[TRIPO-POLL-MODEL-TASK-STATUS]"
+                - generic [ref=e697]: tripo_poll_model_task_status 已完成
+                - emphasis [ref=e698]: "e816f228-4cdb-43fe-a87b-ddf5ea933d2a: running"
+              - generic [ref=e699]:
+                - generic [ref=e700]: "[TRIPO-POLL-MODEL-TASK-STATUS]"
+                - generic [ref=e701]: tripo_poll_model_task_status 已完成
+                - emphasis [ref=e702]: "e816f228-4cdb-43fe-a87b-ddf5ea933d2a: running"
+              - generic [ref=e703]:
+                - generic [ref=e704]: "[TRIPO-POLL-MODEL-TASK-STATUS]"
+                - generic [ref=e705]: tripo_poll_model_task_status 已完成
+                - emphasis [ref=e706]: "e816f228-4cdb-43fe-a87b-ddf5ea933d2a: running"
+              - generic [ref=e707]:
+                - generic [ref=e708]: "[TRIPO-POLL-MODEL-TASK-STATUS]"
+                - generic [ref=e709]: tripo_poll_model_task_status 已完成
+                - emphasis [ref=e710]: "e816f228-4cdb-43fe-a87b-ddf5ea933d2a: running"
+              - generic [ref=e711]:
+                - generic [ref=e712]: "[TRIPO-POLL-MODEL-TASK-STATUS]"
+                - generic [ref=e713]: tripo_poll_model_task_status 已完成
+                - emphasis [ref=e714]: "e816f228-4cdb-43fe-a87b-ddf5ea933d2a: running"
+              - generic [ref=e715]:
+                - generic [ref=e716]: "[TRIPO-POLL-MODEL-TASK-STATUS]"
+                - generic [ref=e717]: tripo_poll_model_task_status 已完成
+                - emphasis [ref=e718]: "e816f228-4cdb-43fe-a87b-ddf5ea933d2a: running"
+          - button "继续等待" [ref=e546] [cursor=pointer]
+  - alert [ref=e4]

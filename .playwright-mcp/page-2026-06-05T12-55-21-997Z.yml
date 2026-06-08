@@ -1,0 +1,126 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e5]:
+    - banner [ref=e6]:
+      - button "Toy-Box 3D" [ref=e8] [cursor=pointer]
+      - generic [ref=e9]:
+        - generic [ref=e10]: STL 已就绪
+        - button "导出 STL" [ref=e11] [cursor=pointer]:
+          - img [ref=e12]
+          - text: 导出 STL
+        - button "保存配置" [ref=e16] [cursor=pointer]:
+          - img [ref=e17]
+          - text: 保存配置
+        - button "设置" [ref=e21] [cursor=pointer]:
+          - img [ref=e22]
+        - button "提问" [ref=e25] [cursor=pointer]:
+          - img [ref=e26]
+        - button "个人" [ref=e29] [cursor=pointer]: L
+    - generic [ref=e224]:
+      - complementary [ref=e225]:
+        - generic [ref=e226]:
+          - img [ref=e228]
+          - generic [ref=e231]:
+            - heading "模型工作台" [level=2] [ref=e232]
+            - paragraph [ref=e233]: V1.0.5 Alpha
+        - button "新建版本" [ref=e234] [cursor=pointer]:
+          - img [ref=e235]
+          - text: 新建版本
+        - navigation "当前项目功能栏" [ref=e238]:
+          - button "参数" [ref=e239] [cursor=pointer]:
+            - img [ref=e240]
+            - generic [ref=e241]: 参数
+          - button "选图" [ref=e242] [cursor=pointer]:
+            - img [ref=e243]
+            - generic [ref=e248]: 选图
+          - button "生成 STL" [ref=e249] [cursor=pointer]:
+            - img [ref=e250]
+            - generic [ref=e253]: 生成 STL
+          - button "下载 STL" [ref=e254] [cursor=pointer]:
+            - img [ref=e255]
+            - generic [ref=e258]: 下载 STL
+        - generic [ref=e259]:
+          - button "本地历史" [ref=e260] [cursor=pointer]:
+            - img [ref=e261]
+            - generic [ref=e265]: 本地历史
+          - button "本地存储" [ref=e266] [cursor=pointer]:
+            - img [ref=e267]
+            - generic [ref=e271]: 本地存储
+          - button "邀请联盟" [ref=e272] [cursor=pointer]:
+            - img [ref=e273]
+            - generic [ref=e278]: 邀请联盟
+      - main [ref=e622]:
+        - generic [ref=e623]:
+          - generic [ref=e624]:
+            - generic "检查台视角" [ref=e625]:
+              - generic [ref=e626]: STL 几何预览
+              - button "正视" [pressed] [ref=e627] [cursor=pointer]
+              - button "侧视" [ref=e628] [cursor=pointer]
+              - button "俯视" [ref=e629] [cursor=pointer]
+              - button "连接位" [ref=e630] [cursor=pointer]
+            - generic "3D model preview" [ref=e631]
+            - generic "模型读数" [ref=e633]:
+              - generic [ref=e634]: 120mm X-axis
+              - generic [ref=e635]: 正视轮廓
+          - complementary [ref=e636]:
+            - generic [ref=e637]:
+              - img [ref=e639]
+              - generic [ref=e642]:
+                - heading "模型检查台" [level=1] [ref=e643]
+                - paragraph [ref=e644]: 当前显示的是 STL 几何预览，不是概念图材质还原。预览色只是单色检查材质，不代表 STL 自带颜色。
+            - generic [ref=e645]:
+              - heading "概念图仅作建模参考" [level=2] [ref=e646]
+              - paragraph [ref=e647]: 最终 STL 只保留可打印网格，不包含概念图里的贴图、车窗材质、轮胎黑色、标志文字色彩或真实 PBR 材质。想在 3D 打印时接近效果图，可以后期喷涂、贴水贴纸，或改走 GLB/PBR 与多材料打印通道。
+            - generic [ref=e648]:
+              - generic [ref=e649]:
+                - generic [ref=e650]:
+                  - img [ref=e651]
+                  - text: 尺寸 (X, Y, Z)
+                - strong [ref=e657]: 120 x 55 x 38 mm
+              - generic [ref=e658]:
+                - generic [ref=e659]:
+                  - img [ref=e660]
+                  - text: 预计打印时长
+                - strong [ref=e663]: 约 4h 40m @ 0.2mm
+              - generic [ref=e664]:
+                - generic [ref=e665]:
+                  - img [ref=e666]
+                  - text: 输出格式
+                - strong [ref=e669]: STL geometry only
+              - generic [ref=e670]:
+                - generic [ref=e671]:
+                  - img [ref=e672]
+                  - text: runId
+                - strong [ref=e675]: 2df23654
+            - generic [ref=e676]:
+              - heading "局部渲染样张" [level=2] [ref=e677]
+              - generic [ref=e678]:
+                - button "正视轮廓 检查机翼展开和机身对称" [pressed] [ref=e679] [cursor=pointer]:
+                  - strong [ref=e684]: 正视轮廓
+                  - generic [ref=e685]: 检查机翼展开和机身对称
+                - button "侧视姿态 确认鼻锥、尾段和落地角度" [ref=e686] [cursor=pointer]:
+                  - strong [ref=e691]: 侧视姿态
+                  - generic [ref=e692]: 确认鼻锥、尾段和落地角度
+                - button "俯视比例 核对主翼、尾翼和中轴线" [ref=e693] [cursor=pointer]:
+                  - strong [ref=e698]: 俯视比例
+                  - generic [ref=e699]: 核对主翼、尾翼和中轴线
+                - button "连接位 重点看翼根、起落架和短舱" [ref=e700] [cursor=pointer]:
+                  - strong [ref=e705]: 连接位
+                  - generic [ref=e706]: 重点看翼根、起落架和短舱
+              - status "当前局部渲染" [ref=e707]:
+                - text: 当前查看：
+                - strong [ref=e708]: 正视轮廓
+                - text: ，检查机翼展开和机身对称
+            - generic [ref=e709]:
+              - heading "打印建议" [level=2] [ref=e710]
+              - list [ref=e711]:
+                - listitem [ref=e712]: 下载后先在切片软件里检查非流形边、孤立壳体和过薄区域。
+                - listitem [ref=e713]: 建议先按 120mm 长度打印小样，确认支撑和细节比例后再放大。
+                - listitem [ref=e714]: 先按单色 STL 打印几何体，再通过打磨、底漆、遮盖喷涂和手涂细节还原效果图配色。
+                - listitem [ref=e715]: 飞行器建议斜放或机腹朝下，减少翼尖悬空并保护机鼻细节。
+            - generic [ref=e716]:
+              - link "下载 STL 文件" [ref=e717] [cursor=pointer]:
+                - /url: /api/lusie/runs/2df23654-53c8-4be6-890e-590d43fe8612/download/stl
+                - img [ref=e718]
+                - text: 下载 STL 文件
+              - button "再做一版" [ref=e721] [cursor=pointer]
+  - alert [ref=e4]

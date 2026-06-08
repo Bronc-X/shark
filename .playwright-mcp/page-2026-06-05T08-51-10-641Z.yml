@@ -1,0 +1,70 @@
+- generic [active] [ref=e1]:
+  - alert [ref=e31]
+  - main [ref=e45]:
+    - navigation [ref=e46]:
+      - link "T Toni" [ref=e47] [cursor=pointer]:
+        - /url: /
+        - generic [ref=e48]: T
+        - text: Toni
+      - generic [ref=e49]:
+        - link "作品" [ref=e50] [cursor=pointer]:
+          - /url: /work
+        - link "工具" [ref=e51] [cursor=pointer]:
+          - /url: /tools
+        - link "陪跑" [ref=e52] [cursor=pointer]:
+          - /url: /work/training-system
+        - link "关于 / 联系" [ref=e53] [cursor=pointer]:
+          - /url: /contact
+    - generic [ref=e54]:
+      - generic [ref=e55]:
+        - paragraph [ref=e56]:
+          - img [ref=e57]
+          - text: Lusie AI / 航模项目
+        - heading "航模项目先分两条路。" [level=1] [ref=e59]
+        - paragraph [ref=e60]: 一个给用户看项目，一个给用户试 AI 生成。这样从 Toni 主页进来，不会直接掉进复杂工作台。
+        - generic [ref=e61]:
+          - link "看展示页" [ref=e62] [cursor=pointer]:
+            - /url: /lusie/showcase
+            - text: 看展示页
+            - img [ref=e63]
+          - link "进 AI 工作台" [ref=e65] [cursor=pointer]:
+            - /url: /lusie/ai
+            - text: 进 AI 工作台
+            - img [ref=e66]
+      - complementary [ref=e69]:
+        - strong [ref=e70]: LUSIE
+        - generic [ref=e71]: 第一步先把入口理顺；下一步再把原 Vite 工作台迁成 Toni.asia 站内功能。
+    - generic [ref=e72]:
+      - generic [ref=e73]:
+        - heading "两个入口，各做一件事。" [level=2] [ref=e74]
+        - paragraph [ref=e75]: 静态展示负责介绍和承接，AI 工作台负责生成和交付。后续会共用同一套 Supabase 存储。
+      - generic [ref=e76]:
+        - link "Public page 静态展示页 先看 Lusie 的公开展示、赛事入口和项目介绍。适合给外部用户快速了解。 进入展示页" [ref=e77] [cursor=pointer]:
+          - /url: /lusie/showcase
+          - generic [ref=e78]:
+            - generic [ref=e79]: Public page
+            - img [ref=e80]
+          - heading "静态展示页" [level=3] [ref=e83]
+          - paragraph [ref=e84]: 先看 Lusie 的公开展示、赛事入口和项目介绍。适合给外部用户快速了解。
+          - strong [ref=e85]:
+            - text: 进入展示页
+            - img [ref=e86]
+        - link "AI workspace AI 工作台 用文字和参数生成概念图，再转成可下载的 3D 航模文件。 进入工作台" [ref=e88] [cursor=pointer]:
+          - /url: /lusie/ai
+          - generic [ref=e89]:
+            - generic [ref=e90]: AI workspace
+            - img [ref=e91]
+          - heading "AI 工作台" [level=3] [ref=e94]
+          - paragraph [ref=e95]: 用文字和参数生成概念图，再转成可下载的 3D 航模文件。
+          - strong [ref=e96]:
+            - text: 进入工作台
+            - img [ref=e97]
+    - generic [ref=e99]:
+      - generic [ref=e100]:
+        - img [ref=e101]
+        - strong [ref=e104]: AI 生成
+        - generic [ref=e105]: OpenAI 图片生成 + Tripo 3D 建模，迁入 Next API 后接入。
+      - generic [ref=e106]:
+        - img [ref=e107]
+        - strong [ref=e111]: 存储
+        - generic [ref=e112]: Supabase 用来保存历史记录；模型文件建议再接对象存储。

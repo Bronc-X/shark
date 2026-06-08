@@ -1,0 +1,230 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e6]:
+      - img [ref=e8]
+      - generic [ref=e10]:
+        - strong [ref=e11]: Product Lock Video Studio
+        - generic [ref=e12]: 四视图锁定 · 首帧审核 · 视频生成
+  - generic [ref=e13]:
+    - complementary [ref=e14]:
+      - generic [ref=e15]:
+        - generic [ref=e16]:
+          - generic [ref=e17]: Current Run
+          - img [ref=e18]
+        - strong [ref=e23]: 鲨鱼充气服
+        - generic [ref=e24]: 4/4 核心视图 · 0 辅助角度
+      - generic [ref=e25]:
+        - button "上传 正面、左侧、右侧、背面四张核心图 OK" [ref=e127] [cursor=pointer]:
+          - img [ref=e28]
+          - generic [ref=e31]:
+            - strong [ref=e32]: 上传
+            - generic [ref=e33]: 正面、左侧、右侧、背面四张核心图
+          - generic [ref=e34]: OK
+        - button "首帧 根据核心四视图生成一致首帧 02" [ref=e35] [cursor=pointer]:
+          - img [ref=e37]
+          - generic [ref=e41]:
+            - strong [ref=e42]: 首帧
+            - generic [ref=e43]: 根据核心四视图生成一致首帧
+          - generic [ref=e44]: "02"
+        - button "视频 基于人工确认首帧提交视频任务 03" [ref=e45] [cursor=pointer]:
+          - img [ref=e47]
+          - generic [ref=e49]:
+            - strong [ref=e50]: 视频
+            - generic [ref=e51]: 基于人工确认首帧提交视频任务
+          - generic [ref=e52]: "03"
+        - button "质检 播放成片并检查产品一致性 04" [ref=e53] [cursor=pointer]:
+          - img [ref=e55]
+          - generic [ref=e59]:
+            - strong [ref=e60]: 质检
+            - generic [ref=e61]: 播放成片并检查产品一致性
+          - generic [ref=e62]: "04"
+      - button "新建流程" [ref=e63] [cursor=pointer]
+      - button "历史记录 5" [active] [ref=e64] [cursor=pointer]:
+        - img [ref=e65]
+        - text: 历史记录
+        - generic [ref=e69]: "5"
+    - main [ref=e70]:
+      - generic [ref=e72]:
+        - generic [ref=e73]:
+          - generic [ref=e74]: 第 1 步
+          - heading "上传产品四视图" [level=1] [ref=e75]
+        - generic [ref=e76]: 核心四视图上传后才进入首帧。正面、左侧、右侧、背面用于锁定尺寸、比例、外形和拓扑；选择本地预设产品时，已保存的辅助角度会在后台自动作为一致性证据进入模型。
+        - generic [ref=e78]:
+          - text: 产品类型
+          - combobox "产品类型" [ref=e79]:
+            - option "鲨鱼充气服" [selected]
+            - option "奶牛充气服"
+            - option "灰色老鼠充气服"
+            - option "青蛙充气服"
+            - option "相扑充气服"
+            - option "通用充气服"
+        - generic [ref=e80]:
+          - strong [ref=e81]: 核心四视图
+          - generic [ref=e82]: 必填，用于后台提取产品结构
+        - generic [ref=e83]:
+          - article [ref=e84]:
+            - generic [ref=e85] [cursor=pointer]:
+              - button "正面图 FRONT" [ref=e86]
+              - generic [ref=e87]:
+                - img "正面图" [ref=e88]
+                - emphasis [ref=e89]: FRONT
+            - strong [ref=e90]: 正面图
+            - generic [ref=e91]: shark-front.png
+            - generic [ref=e92]: 本地预设
+          - article [ref=e93]:
+            - generic [ref=e94] [cursor=pointer]:
+              - button "左侧图 LEFT" [ref=e95]
+              - generic [ref=e96]:
+                - img "左侧图" [ref=e97]
+                - emphasis [ref=e98]: LEFT
+            - strong [ref=e99]: 左侧图
+            - generic [ref=e100]: shark-left.png
+            - generic [ref=e101]: 本地预设
+          - article [ref=e102]:
+            - generic [ref=e103] [cursor=pointer]:
+              - button "右侧图 RIGHT" [ref=e104]
+              - generic [ref=e105]:
+                - img "右侧图" [ref=e106]
+                - emphasis [ref=e107]: RIGHT
+            - strong [ref=e108]: 右侧图
+            - generic [ref=e109]: shark-right.png
+            - generic [ref=e110]: 本地预设
+          - article [ref=e111]:
+            - generic [ref=e112] [cursor=pointer]:
+              - button "背面图 BACK" [ref=e113]
+              - generic [ref=e114]:
+                - img "背面图" [ref=e115]
+                - emphasis [ref=e116]: BACK
+            - strong [ref=e117]: 背面图
+            - generic [ref=e118]: shark-back.jpg
+            - generic [ref=e119]: 本地预设
+        - generic [ref=e120]:
+          - strong [ref=e121]: 已绑定参考视频
+          - generic [ref=e122]: 2 个长期样片：shark-reference-01.mp4、shark-reference-02.mp4
+        - button "素材上传完成" [ref=e124] [cursor=pointer]:
+          - img [ref=e125]
+          - text: 素材上传完成
+  - dialog "历史记录" [ref=e128]:
+    - button "关闭历史记录" [ref=e129] [cursor=pointer]
+    - complementary [ref=e130]:
+      - generic [ref=e131]:
+        - generic [ref=e132]:
+          - text: 生成记录
+          - heading "历史记录" [level=2] [ref=e133]
+        - button "关闭" [ref=e134] [cursor=pointer]:
+          - img [ref=e135]
+      - button "清空记录" [ref=e139] [cursor=pointer]:
+        - img [ref=e140]
+        - text: 清空记录
+      - generic [ref=e143]:
+        - strong [ref=e144]: 产品库
+        - article [ref=e145]:
+          - generic [ref=e146]: 四视图
+          - generic [ref=e147]:
+            - generic [ref=e148]: 鲨鱼充气服
+            - generic [ref=e149]: 充气服 · 4 张视图 · 0 张辅助角度 · 2 个参考视频 · 已锁 10 项细节
+        - article [ref=e150]:
+          - generic [ref=e151]: 四视图
+          - generic [ref=e152]:
+            - generic [ref=e153]: 奶牛充气服
+            - generic [ref=e154]: 充气服 · 4 张视图 · 0 张辅助角度 · 1 个参考视频 · 已锁 10 项细节
+        - article [ref=e155]:
+          - generic [ref=e156]: 四视图
+          - generic [ref=e157]:
+            - generic [ref=e158]: 灰色老鼠充气服
+            - generic [ref=e159]: 充气服 · 4 张视图 · 0 张辅助角度 · 0 个参考视频 · 已锁 7 项细节
+        - article [ref=e160]:
+          - generic [ref=e161]: 四视图
+          - generic [ref=e162]:
+            - generic [ref=e163]: 青蛙充气服
+            - generic [ref=e164]: 充气服 · 4 张视图 · 1 张辅助角度 · 0 个参考视频 · 已锁 8 项细节
+        - article [ref=e165]:
+          - generic [ref=e166]: 四视图
+          - generic [ref=e167]:
+            - generic [ref=e168]: 相扑充气服
+            - generic [ref=e169]: 充气服 · 4 张视图 · 1 张辅助角度 · 0 个参考视频 · 已锁 8 项细节
+      - generic [ref=e170]:
+        - article [ref=e171]:
+          - button "视频 视频生成 2026/06/08 16:48:47 处理中" [expanded] [ref=e172] [cursor=pointer]:
+            - generic [ref=e173]:
+              - text: 视频
+              - strong [ref=e174]: 视频生成
+              - generic [ref=e175]: 2026/06/08 16:48:47
+            - generic [ref=e176]:
+              - generic [ref=e177]: 处理中
+              - img [ref=e178]
+          - generic [ref=e180]:
+            - generic [ref=e181]:
+              - generic [ref=e182]:
+                - generic [ref=e183]: 产品
+                - emphasis [ref=e184]: 灰色老鼠充气服
+              - generic [ref=e185]:
+                - generic [ref=e186]: 场景
+                - emphasis [ref=e187]: 夜市投币夹娃娃机旁
+              - generic [ref=e188]:
+                - generic [ref=e189]: 模型
+                - emphasis [ref=e190]: doubao-seedance-1-5-pro-251215
+              - generic [ref=e191]:
+                - generic [ref=e192]: 画面比例
+                - emphasis [ref=e193]: 9:16
+              - generic [ref=e194]:
+                - generic [ref=e195]: 视频时长
+                - emphasis [ref=e196]: 8 秒
+              - generic [ref=e197]:
+                - generic [ref=e198]: 动作模式
+                - emphasis [ref=e199]: strict
+              - generic [ref=e200]:
+                - generic [ref=e201]: 任务号
+                - emphasis [ref=e202]: task_WN1YvK9osCvJO9vOOPFjpSeDQYARNBDi
+            - generic [ref=e203]:
+              - generic [ref=e204]: 首帧提示词
+              - paragraph [ref=e205]: 夜市摊位旁的投币夹娃娃机前，真人穿着灰色老鼠充气服，正面略偏左站立，全身入镜，双脚平稳贴地，和机器玻璃、旁边折叠桌上的手写价签、塑料周转筐形成同一画面。老鼠头脸保持浅灰圆耳、米色耳内、米色鼻口区、突出的灰色鼻嘴、黑色张口和棕色卡通眼睛，胸腹是大块米色椭圆腹部，四肢是充气分离结构，脚套清楚可见，薄尼龙/PVC表面有自然褶皱和轻微松弛感。场景里可以看到夜市暖色灯串、几串没收拢的塑料袋、机器上贴着的投币说明和边角反光，但不要遮挡主体。绿色鼓风阀/进出气口/泵口只允许作为后背硬件隐约存在于背侧，不挪到腹部或脸部；背部拉链、尾巴根部和后腰轮廓保持原位，整体仍是可穿戴的中低充气比例，不像毛绒玩具或圆球吉祥物。
+            - generic [ref=e206]:
+              - generic [ref=e207]: 视频提示词
+              - paragraph [ref=e208]: 灰色老鼠充气服在夹娃娃机前做三次很小的微动：先轻轻抬一下手像要投币，结果发现投币口旁边贴着“请先看说明”的纸条，便把手慢慢收回；再把头稍微点一下，像认真阅读，脸窗和拉链基本竖直、双脚贴地、不大幅前倾、不转体；最后机器突然吐出一枚小奖券，正好落到脚边，老鼠安静低头看一眼，像没想到自己先被夜市“奖励”了。背景可有轻快BGM和摊主一句小声笑：“这只鼠还挺守规矩。”全程保持米色腹部、圆耳、突出鼻嘴、后背绿色阀门、背部拉链、尾巴和薄尼龙褶皱稳定不漂移。
+          - button "删除记录" [ref=e209] [cursor=pointer]:
+            - img [ref=e210]
+        - article [ref=e213]:
+          - button "首帧 首帧生成 16:19 成功" [ref=e214] [cursor=pointer]:
+            - generic [ref=e215]:
+              - text: 首帧
+              - strong [ref=e216]: 首帧生成
+              - generic [ref=e217]: 16:19
+            - generic [ref=e218]:
+              - generic [ref=e219]: 成功
+              - img [ref=e220]
+          - button "删除记录" [ref=e222] [cursor=pointer]:
+            - img [ref=e223]
+        - article [ref=e226]:
+          - button "首帧 首帧生成 10:37 成功" [ref=e227] [cursor=pointer]:
+            - generic [ref=e228]:
+              - text: 首帧
+              - strong [ref=e229]: 首帧生成
+              - generic [ref=e230]: 10:37
+            - generic [ref=e231]:
+              - generic [ref=e232]: 成功
+              - img [ref=e233]
+          - button "删除记录" [ref=e235] [cursor=pointer]:
+            - img [ref=e236]
+        - article [ref=e239]:
+          - button "视频 视频生成 10:11 失败" [ref=e240] [cursor=pointer]:
+            - generic [ref=e241]:
+              - text: 视频
+              - strong [ref=e242]: 视频生成
+              - generic [ref=e243]: 10:11
+            - generic [ref=e244]:
+              - generic [ref=e245]: 失败
+              - img [ref=e246]
+          - button "删除记录" [ref=e248] [cursor=pointer]:
+            - img [ref=e249]
+        - article [ref=e252]:
+          - button "首帧 首帧生成 10:09 成功" [ref=e253] [cursor=pointer]:
+            - generic [ref=e254]:
+              - text: 首帧
+              - strong [ref=e255]: 首帧生成
+              - generic [ref=e256]: 10:09
+            - generic [ref=e257]:
+              - generic [ref=e258]: 成功
+              - img [ref=e259]
+          - button "删除记录" [ref=e261] [cursor=pointer]:
+            - img [ref=e262]

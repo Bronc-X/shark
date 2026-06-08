@@ -1,0 +1,162 @@
+- generic [ref=e1]:
+  - generic [ref=e5]:
+    - banner [ref=e6]:
+      - button "Toy-Box 3D" [ref=e8] [cursor=pointer]
+      - generic [ref=e9]:
+        - generic [ref=e10]: 正在生成
+        - button "导出 STL" [ref=e11] [cursor=pointer]:
+          - img [ref=e12]
+          - text: 导出 STL
+        - button "保存配置" [ref=e16] [cursor=pointer]:
+          - img [ref=e17]
+          - text: 保存配置
+        - button "设置" [ref=e21] [cursor=pointer]:
+          - img [ref=e22]
+        - button "提问" [ref=e25] [cursor=pointer]:
+          - img [ref=e26]
+        - button "个人" [ref=e29] [cursor=pointer]: L
+    - generic [ref=e30]:
+      - complementary [ref=e31]:
+        - generic [ref=e32]:
+          - img [ref=e34]
+          - generic [ref=e37]:
+            - heading "模型工作台" [level=2] [ref=e38]
+            - paragraph [ref=e39]: V1.0.5 Alpha
+        - button "新建版本" [ref=e40] [cursor=pointer]:
+          - img [ref=e41]
+          - text: 新建版本
+        - navigation "当前项目功能栏" [ref=e44]:
+          - button "参数" [ref=e45] [cursor=pointer]:
+            - img [ref=e46]
+            - generic [ref=e47]: 参数
+          - button "选图" [ref=e48] [cursor=pointer]:
+            - img [ref=e49]
+            - generic [ref=e54]: 选图
+          - button "生成 STL" [ref=e55] [cursor=pointer]:
+            - img [ref=e56]
+            - generic [ref=e59]: 生成 STL
+          - button "下载 STL" [ref=e60] [cursor=pointer]:
+            - img [ref=e61]
+            - generic [ref=e64]: 下载 STL
+        - generic [ref=e65]:
+          - button "本地历史" [ref=e66] [cursor=pointer]:
+            - img [ref=e67]
+            - generic [ref=e71]: 本地历史
+          - button "本地存储" [ref=e72] [cursor=pointer]:
+            - img [ref=e73]
+            - generic [ref=e77]: 本地存储
+          - button "邀请联盟" [ref=e78] [cursor=pointer]:
+            - img [ref=e79]
+            - generic [ref=e84]: 邀请联盟
+      - region "生成参数" [ref=e85]:
+        - generic [ref=e86]:
+          - generic [ref=e87]:
+            - heading "先定模型方向" [level=2] [ref=e88]
+            - paragraph [ref=e89]: 先描述要生成的模型，编号默认不启用；需要时可加入番号、字母或姓名等个性化信息。
+            - paragraph [ref=e90]: openai:已连接 · tripo:已连接
+          - generic [ref=e91]:
+            - generic [ref=e92]: 选择类别
+            - generic [ref=e93]:
+              - button "车辆" [ref=e94] [cursor=pointer]
+              - button "飞行器" [ref=e95] [cursor=pointer]
+              - button "舰船" [ref=e96] [cursor=pointer]
+          - generic [ref=e97]:
+            - generic [ref=e98]: 选择原型
+            - generic [ref=e99]:
+              - button "现代军舰 驱逐舰/护卫舰轮廓" [ref=e100] [cursor=pointer]:
+                - img [ref=e101]
+                - img [ref=e103]
+                - strong [ref=e107]: 现代军舰
+                - generic [ref=e108]: 驱逐舰/护卫舰轮廓
+              - button "巡逻舰艇 桥楼清晰，甲板稳固" [ref=e109] [cursor=pointer]:
+                - img [ref=e110]
+                - img [ref=e112]
+                - strong [ref=e116]: 巡逻舰艇
+                - generic [ref=e117]: 桥楼清晰，甲板稳固
+              - button "古典帆船 多桅帆面，木质船体" [ref=e118] [cursor=pointer]:
+                - img [ref=e119]
+                - img [ref=e121]
+                - strong [ref=e125]: 古典帆船
+                - generic [ref=e126]: 多桅帆面，木质船体
+          - generic [ref=e127]:
+            - generic [ref=e128]: 外接盒尺寸 (mm)
+            - generic [ref=e129]:
+              - generic [ref=e130]:
+                - generic [ref=e131]: X Axis
+                - spinbutton "X Axis" [ref=e132]: "120"
+              - generic [ref=e133]:
+                - generic [ref=e134]: Y Axis
+                - spinbutton "Y Axis" [ref=e135]: "55"
+              - generic [ref=e136]:
+                - generic [ref=e137]: Z Axis
+                - spinbutton "Z Axis" [ref=e138]: "38"
+            - generic [ref=e139]: X 可调范围 60-300 mm，Y/Z 会按比例自动计算。
+          - generic [ref=e140]:
+            - generic [ref=e141]: 风格 / 个性化信息
+            - generic [ref=e142]:
+              - combobox "样式" [ref=e143]:
+                - option "海事经典" [selected]
+                - option "巡逻涂装"
+                - option "舰艇灰"
+                - option "古典木船"
+              - textbox "个性化信息" [ref=e144]:
+                - /placeholder: 可选，番号、字母或姓名
+            - generic [ref=e145]: 默认留空，不会自动添加编号。
+          - generic [ref=e146]:
+            - generic [ref=e147]: 主色
+            - generic [ref=e148]:
+              - button "主色 黑色" [ref=e149] [cursor=pointer]
+              - button "主色 信号红" [ref=e151] [cursor=pointer]
+              - button "主色 港湾蓝" [ref=e153] [cursor=pointer]
+              - button "主色 奶油白" [ref=e155] [cursor=pointer]
+              - button "主色 石墨黑" [ref=e157] [cursor=pointer]
+              - button "主色 救援黄" [ref=e159] [cursor=pointer]
+              - button "主色 松针绿" [ref=e161] [cursor=pointer]
+            - textbox "主色 自定义颜色" [ref=e165] [cursor=pointer]: "#050505"
+          - generic [ref=e166]:
+            - generic [ref=e167]: 辅助色
+            - generic [ref=e168]:
+              - button "辅助色 黑色" [ref=e169] [cursor=pointer]
+              - button "辅助色 信号红" [ref=e171] [cursor=pointer]
+              - button "辅助色 港湾蓝" [ref=e173] [cursor=pointer]
+              - button "辅助色 奶油白" [ref=e175] [cursor=pointer]
+              - button "辅助色 石墨黑" [ref=e177] [cursor=pointer]
+              - button "辅助色 救援黄" [ref=e179] [cursor=pointer]
+              - button "辅助色 松针绿" [ref=e181] [cursor=pointer]
+            - textbox "辅助色 自定义颜色" [ref=e185] [cursor=pointer]: "#050505"
+          - generic [ref=e186]:
+            - generic [ref=e187]: 造型要求
+            - textbox [ref=e188]: 生成一个现代军舰比例模型：清晰舰体、桥楼、雷达桅杆、简化甲板设备和适合打印的厚边栏杆。
+            - generic [ref=e189]: 43/500
+        - generic [ref=e190]:
+          - generic [ref=e191]:
+            - strong [ref=e192]: 现代军舰方向
+            - generic [ref=e193]: 驱逐舰/护卫舰式舰体和雷达上层建筑，细节不过度碎片化。
+          - button "正在生成概念图..." [active] [ref=e194] [cursor=pointer]:
+            - img [ref=e195]
+            - text: 正在生成概念图...
+          - status [ref=e198]:
+            - generic [ref=e199]:
+              - generic [ref=e200]: Generating concept image 1.
+              - strong [ref=e201]: 22%
+            - progressbar "概念图生成进度" [ref=e202]
+      - main [ref=e204]:
+        - generic "视图工具栏" [ref=e207]:
+          - button "参数预览" [ref=e208] [cursor=pointer]:
+            - img [ref=e209]
+            - generic [ref=e212]: 参数预览
+          - button "真实线框比例" [ref=e213] [cursor=pointer]:
+            - img [ref=e214]
+            - generic [ref=e216]: 真实线框比例
+        - region "现代军舰方向" [ref=e218]:
+          - img "现代军舰方向" [ref=e220]
+          - generic:
+            - generic:
+              - text: 当前方向
+              - heading "现代军舰方向" [level=2]
+              - paragraph: 驱逐舰/护卫舰式舰体和雷达上层建筑，细节不过度碎片化。
+            - generic:
+              - generic: 海事经典
+              - generic: 120 mm
+              - generic: 55 x 38
+  - alert [ref=e4]
