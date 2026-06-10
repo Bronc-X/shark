@@ -1,0 +1,162 @@
+- generic [ref=e57]:
+  - banner [ref=e58]:
+    - generic [ref=e60]:
+      - img [ref=e62]
+      - generic [ref=e64]:
+        - strong [ref=e65]: Product Lock Video Studio
+        - generic [ref=e66]: 四视图锁定 - 剧情分镜 - 视频生成
+  - generic [ref=e67]:
+    - complementary [ref=e68]:
+      - generic [ref=e69]:
+        - generic [ref=e70]:
+          - generic [ref=e71]: Current Run
+          - img [ref=e72]
+        - strong [ref=e77]: 鲨鱼充气服
+        - generic [ref=e78]: 4/4 核心视图 - 0 辅助角度
+      - generic [ref=e79]:
+        - button "上传 正面、左侧、右侧、背面四张核心图 OK" [ref=e80] [cursor=pointer]:
+          - img [ref=e82]
+          - generic [ref=e85]:
+            - strong [ref=e86]: 上传
+            - generic [ref=e87]: 正面、左侧、右侧、背面四张核心图
+          - generic [ref=e88]: OK
+        - button "分镜 先生成剧情意图，再生成可预检分镜 02" [ref=e89] [cursor=pointer]:
+          - img [ref=e91]
+          - generic [ref=e95]:
+            - strong [ref=e96]: 分镜
+            - generic [ref=e97]: 先生成剧情意图，再生成可预检分镜
+          - generic [ref=e98]: "02"
+        - button "视频 通过执行包预检后一次提交 03" [ref=e99] [cursor=pointer]:
+          - img [ref=e101]
+          - generic [ref=e103]:
+            - strong [ref=e104]: 视频
+            - generic [ref=e105]: 通过执行包预检后一次提交
+          - generic [ref=e106]: "03"
+      - button "新建流程" [ref=e107] [cursor=pointer]
+      - region "历史记录" [ref=e108]:
+        - generic [ref=e109]:
+          - generic [ref=e110]:
+            - generic [ref=e111]: 历史记录
+            - strong [ref=e112]: 0 条
+          - button "清空历史记录" [disabled] [ref=e113]:
+            - img [ref=e114]
+        - generic [ref=e118]: 暂无记录
+    - main [ref=e1]:
+      - generic [ref=e120]:
+        - generic [ref=e121]:
+          - generic [ref=e122]: 第 2 步
+          - heading "剧情意图与候选分镜" [level=1] [ref=e123]
+        - generic [ref=e124]: 视频提交前先收敛剧情、动作路径、入选分镜和产品锁点；执行包预检未通过时不会提交视频模型。
+        - generic [ref=e125]:
+          - generic [ref=e126]:
+            - generic [ref=e127]:
+              - generic [ref=e128]:
+                - generic [ref=e129]: 剧情 / 动作意图
+                - button "调用模型生成剧情意图" [ref=e130] [cursor=pointer]:
+                  - img [ref=e237]
+              - generic [ref=e134]:
+                - generic [ref=e135]:
+                  - generic [ref=e136]: 方向
+                  - textbox "方向" [ref=e137]:
+                    - /placeholder: 可留空，也可以写一句方向
+                    - text: 超市零食货架前，鲨鱼充气服伸手想拿薯片，手鳍碰到包装后弹性缩回，停顿一下再做一个小小的胜利姿势。动作明显但不大幅转身，不出现任何文字、字幕、举牌或价格。
+                - generic [ref=e138]:
+                  - generic [ref=e139]: 修改意见
+                  - textbox "修改意见" [ref=e140]:
+                    - /placeholder: 生成后可让模型改写
+              - generic [ref=e141]:
+                - button "生成剧情意图" [ref=e142] [cursor=pointer]:
+                  - img [ref=e240]
+                  - text: 生成剧情意图
+                - button "用模型修改" [disabled] [ref=e146]:
+                  - img [ref=e243]
+                  - text: 用模型修改
+              - generic [ref=e246]:
+                - strong [ref=e247]: 货架前的小试手
+                - paragraph [ref=e248]: 在真实的超市零食货架前，鲨鱼充气服站在货架边缘，身体保持正面为主、只做很小的前探动作去够一包薯片；手鳍轻轻碰到包装后立刻弹性缩回，整体姿态不大幅转身，停一拍后用一个小小的胜利姿势收尾，动作清楚但克制，画面中不出现任何文字或举牌。
+                - generic [ref=e249]: 超市零食货架前，成排薯片包装、货架层板、购物篮和地面反光形成可拍摄的真实零售场景，画面中不出现可读标识。
+                - generic [ref=e250]:
+                  - generic [ref=e251]: setup
+                  - generic [ref=e252]: tiny reversal
+                  - generic [ref=e253]: recovery pose
+            - generic [ref=e150]:
+              - generic [ref=e151]:
+                - generic [ref=e152]:
+                  - strong [ref=e153]: 正面图
+                  - generic [ref=e154]: FRONT
+                - img "正面图" [ref=e155]
+              - generic [ref=e156]:
+                - generic [ref=e157]:
+                  - strong [ref=e158]: 左侧图
+                  - generic [ref=e159]: LEFT
+                - img "左侧图" [ref=e160]
+              - generic [ref=e161]:
+                - generic [ref=e162]:
+                  - strong [ref=e163]: 右侧图
+                  - generic [ref=e164]: RIGHT
+                - img "右侧图" [ref=e165]
+              - generic [ref=e166]:
+                - generic [ref=e167]:
+                  - strong [ref=e168]: 背面图
+                  - generic [ref=e169]: BACK
+                - img "背面图" [ref=e170]
+            - generic [ref=e172]:
+              - img [ref=e173]
+              - strong [ref=e176]: 等待分镜
+          - generic [ref=e177]:
+            - heading "分镜参数" [level=3] [ref=e178]
+            - generic [ref=e179]:
+              - text: 提示词模型
+              - textbox "提示词模型" [ref=e180]:
+                - /placeholder: gpt-5.4-mini
+                - text: gpt-5.4-mini
+            - generic [ref=e181]:
+              - text: 分镜模型
+              - textbox "分镜模型" [ref=e182]:
+                - /placeholder: gpt-image-2
+                - text: gpt-image-2
+            - button "测试分镜接口" [ref=e183] [cursor=pointer]:
+              - img [ref=e184]
+              - text: 测试分镜接口
+            - generic [ref=e187]:
+              - strong [ref=e188]: 图片 / 文字接口
+              - generic [ref=e189]: 后台固定配置
+            - generic [ref=e190]:
+              - text: 清晰度
+              - generic [ref=e191]: 1080p
+            - generic [ref=e192]:
+              - text: 画面比例
+              - generic [ref=e193]:
+                - button "画面比例 1:1 9:16" [ref=e194] [cursor=pointer]: 16:9
+                - button "1:1" [ref=e196] [cursor=pointer]: 1:1
+                - button "9:16" [ref=e198] [cursor=pointer]: 9:16
+            - generic [ref=e200]:
+              - button "高一致性" [ref=e201] [cursor=pointer]
+              - button "平衡" [ref=e202] [cursor=pointer]
+              - button "创意" [ref=e203] [cursor=pointer]
+            - button "生成候选分镜" [disabled] [ref=e204]:
+              - img [ref=e266]
+              - text: 生成候选分镜
+            - button "预检并编译执行包" [disabled] [ref=e208]:
+              - img [ref=e268]
+              - text: 预检并编译执行包
+            - generic [ref=e213]:
+              - generic [ref=e214]:
+                - strong [ref=e215]: 真实进度
+                - generic [ref=e216]: 3 条事件
+              - generic [ref=e217]:
+                - article [ref=e270]:
+                  - generic [ref=e272]:
+                    - generic [ref=e273]: job.started
+                    - strong [ref=e274]: 分镜生成
+                    - generic [ref=e275]: 任务已创建，等待执行真实步骤。
+                - article [ref=e276]:
+                  - generic [ref=e278]:
+                    - generic [ref=e279]: step.started
+                    - strong [ref=e280]: 整理四视图和剧情
+                    - generic [ref=e281]: 把四张核心视图、辅助角度、结构化锁点和剧情意图打包给图片模型。
+                - article [ref=e282]:
+                  - generic [ref=e284]:
+                    - generic [ref=e285]: tool.started
+                    - strong [ref=e286]: 提交分镜模型
+                    - generic [ref=e287]: 分镜可以多次生成，用来在低成本阶段收敛动作路径。

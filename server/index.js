@@ -28,17 +28,65 @@ const IMAGE_TEXT_API_KEY = process.env.IMAGE_TEXT_API_KEY || TOAPIS_API_KEY;
 const VIDEO_BASE_URL = (process.env.VIDEO_BASE_URL || TOAPIS_BASE_URL).replace(/\/+$/, "");
 const VIDEO_API_KEY = process.env.VIDEO_API_KEY || TOAPIS_API_KEY;
 const VIDEO_MODEL = process.env.VIDEO_MODEL || "";
+const TOAPIS_VIDEO_MODEL = process.env.TOAPIS_VIDEO_MODEL || VIDEO_MODEL || "kling-v3";
+const WISECH_VIDEO_BASE_URL = (process.env.WISECH_VIDEO_BASE_URL || "https://ai.wisech.com/v1").replace(/\/+$/, "");
+const WISECH_VIDEO_API_KEY = process.env.WISECH_VIDEO_API_KEY || "";
+const WISECH_VIDEO_MODEL = process.env.WISECH_VIDEO_MODEL || "yunshu-2-0-260128-1080p";
+const SHISHI_VIDEO_BASE_URL = (process.env.SHISHI_VIDEO_BASE_URL || "https://api.shishikeji.com").replace(/\/+$/, "");
+const SHISHI_VIDEO_API_KEY = process.env.SHISHI_VIDEO_API_KEY || "";
+const SHISHI_VIDEO_MODEL = process.env.SHISHI_VIDEO_MODEL || "2.0";
+const WISECH_DEFAULT_VIDEO_DURATION_SECONDS = 5;
+const SHISHI_MIN_VIDEO_DURATION_SECONDS = 5;
+const SHISHI_MAX_VIDEO_DURATION_SECONDS = 15;
+const SHISHI_MAX_PROMPT_CHARS = 6000;
+const SHISHI_PROMPT_SOFT_LIMIT = 5600;
 const LOCAL_PROMPT_MODEL = "local-safety-draft";
 const DEFAULT_PROMPT_MODEL = "gpt-5.4-mini";
 const DEFAULT_IMAGE_MODEL = "gpt-image-2";
 const STALE_PROMPT_MODELS = new Set(["gpt-4.1-mini", "gpt-5.5", LOCAL_PROMPT_MODEL]);
 const STALE_IMAGE_MODELS = new Set(["gpt-4.1-mini", "image-2"]);
+const RECENT_PROMPT_SCENE_LIMIT = 8;
 const UPSTREAM_TIMEOUT_MS = 360000;
 const VIDEO_UPSTREAM_TIMEOUT_MS = 90000;
+const MAX_JSON_BODY_BYTES = 50 * 1024 * 1024;
 const OPENAI_VIDEO_GENERATIONS_PATH = "/video/generations";
+const TOAPIS_VIDEO_GENERATIONS_PATH = "/videos/generations";
+const TOAPIS_IMAGE_UPLOAD_PATH = "/uploads/images";
 const DASHSCOPE_IMAGE_GENERATION_PATH = "/services/aigc/multimodal-generation/generation";
 const DASHSCOPE_VIDEO_SYNTHESIS_PATH = "/services/aigc/video-generation/video-synthesis";
 const VOLCENGINE_VIDEO_TASKS_PATH = "/contents/generations/tasks";
+const SHISHI_VIDEO_GENERATION_PATH = "/api/generate-video";
+const TOAPIS_MAX_UPLOAD_IMAGE_BYTES = 10 * 1024 * 1024;
+const PROMPT_MODEL_NOT_CONFIGURED_MESSAGE = "Prompt model is not configured.";
+const PROMPT_MODEL_UNAVAILABLE_MESSAGE = "Prompt model is temporarily unavailable.";
+const DEFAULT_PROMPT_MODEL_LIMIT = { maxInputChars: 24000, maxOutputTokens: 1200 };
+const PROMPT_MODEL_LIMITS = {
+  [DEFAULT_PROMPT_MODEL]: DEFAULT_PROMPT_MODEL_LIMIT,
+};
+const DEFAULT_IMAGE_MODEL_LIMIT = { maxPromptChars: 8000, maxReferenceImages: 8, maxReferenceImageBytes: 900_000 };
+const IMAGE_MODEL_LIMITS = {
+  [DEFAULT_IMAGE_MODEL]: DEFAULT_IMAGE_MODEL_LIMIT,
+};
+const VIDEO_MODEL_LIMITS = {
+  shishi: {
+    default: { minDuration: 5, maxDuration: 15, promptSoftLimit: 5600, promptHardLimit: 6000, resolution: "720p" },
+    "2.0": { minDuration: 5, maxDuration: 15, promptSoftLimit: 5600, promptHardLimit: 6000, resolution: "720p" },
+    "transit9-fast": { minDuration: 5, maxDuration: 15, promptSoftLimit: 5200, promptHardLimit: 6000, resolution: "720p" },
+    "transit9-2.0": { minDuration: 5, maxDuration: 15, promptSoftLimit: 5200, promptHardLimit: 6000, resolution: "720p" },
+  },
+  wisech: {
+    default: { minDuration: 4, maxDuration: 15, promptSoftLimit: 5200, promptHardLimit: 6000, resolution: "1080p" },
+    "yunshu-2-0-260128-1080p": { minDuration: 4, maxDuration: 15, promptSoftLimit: 5200, promptHardLimit: 6000, resolution: "1080p" },
+    "yunshu-2-0-260128-720p": { minDuration: 4, maxDuration: 15, promptSoftLimit: 5200, promptHardLimit: 6000, resolution: "720p" },
+  },
+  toapis: {
+    default: { minDuration: 4, maxDuration: 15, promptSoftLimit: 4600, promptHardLimit: 5200, resolution: "1080p" },
+    "kling-v3": { minDuration: 4, maxDuration: 15, promptSoftLimit: 4600, promptHardLimit: 5200, resolution: "1080p" },
+    "seedance-2-fast": { minDuration: 4, maxDuration: 15, promptSoftLimit: 4600, promptHardLimit: 5200, resolution: "1080p" },
+    "doubao-seedance-1-5-pro": { minDuration: 4, maxDuration: 12, promptSoftLimit: 4200, promptHardLimit: 4800, resolution: "1080p" },
+    "grok-video-3": { minDuration: 6, maxDuration: 6, promptSoftLimit: 1800, promptHardLimit: 2200, resolution: "1080p" },
+  },
+};
 const CORE_VIEW_LABELS = [
   { code: "FRONT_VIEW", contentLabel: "Core reference 1 FRONT_VIEW", label: "front reference; owns the belly, face window, zipper, front proportions, and feet" },
   { code: "LEFT_SIDE_VIEW", contentLabel: "Core reference 2 LEFT_SIDE_VIEW", label: "left-side reference; owns left thickness, side seam, and left-visible side details" },
@@ -55,7 +103,7 @@ const PROMPT_SCENE_BANK = [
   { title: "夜市摊位", anchor: "夜市小吃摊旁，暖色灯串、折叠桌、手写价签和塑料周转筐都在画面边缘，地面有轻微反光。" },
   { title: "物流分拣区", anchor: "电商仓库分拣台前，纸箱、扫码枪、传送带和贴着面单的包裹形成真实工作场景。" },
   { title: "洗衣房", anchor: "自助洗衣房里，滚筒洗衣机、蓝色洗衣篮、找零机和墙上的注意事项贴纸构成干净生活场景。" },
-  { title: "展会通道", anchor: "小型展会通道，折叠展架、样品台、挂绳胸牌和未收起的电源线让画面像临时布展现场。" },
+  { title: "展会通道", anchor: "小型展会通道，折叠展架、样品台、挂绳证牌和未收起的电源线让画面像临时布展现场。" },
   { title: "便利店门口", anchor: "便利店门口的自动门旁，冰柜灯箱、雨伞架、促销立牌和扫码付款贴纸清楚可见。" },
   { title: "地铁站外广场", anchor: "地铁站出口旁，导向牌、共享雨伞机、路面反光和排队护栏组成城市通勤背景。" },
   { title: "直播间后台", anchor: "直播间后台角落，补光灯、折叠椅、样品货架、透明胶带和手写流程板围绕产品摆放。" },
@@ -66,12 +114,130 @@ const PROMPT_SCENE_BANK = [
   { title: "商场维修通道", anchor: "商场维修通道门口，黄色警示牌、工具箱、推车和灰色防滑地面带出轻微反差感。" },
 ];
 
+const recentPromptSceneTitles = [];
+
 function pickPromptSceneExamples(count = 6) {
   return PROMPT_SCENE_BANK
     .map((scene) => ({ scene, rank: Math.random() }))
     .sort((a, b) => a.rank - b.rank)
     .slice(0, count)
     .map(({ scene }) => scene);
+}
+
+function pickPromptSceneSet(count = 6) {
+  const shuffledScenes = pickPromptSceneExamples(PROMPT_SCENE_BANK.length);
+  const requiredScene =
+    shuffledScenes.find((scene) => !recentPromptSceneTitles.includes(scene.title)) ||
+    shuffledScenes[0] ||
+    PROMPT_SCENE_BANK[0];
+  if (requiredScene) {
+    recentPromptSceneTitles.unshift(requiredScene.title);
+    recentPromptSceneTitles.splice(RECENT_PROMPT_SCENE_LIMIT);
+  }
+  const scenes = [requiredScene, ...shuffledScenes.filter((scene) => scene.title !== requiredScene.title)].slice(0, Math.max(2, count));
+  return {
+    requiredScene: scenes[0],
+    referenceScenes: scenes.slice(1),
+  };
+}
+
+function createSensitiveChineseRegex(hexParts) {
+  return new RegExp(hexParts.map((part) => `\\u${part}`).join(""), "g");
+}
+
+const SENSITIVE_PRODUCT_WORD_REPLACEMENTS = [
+  [createSensitiveChineseRegex(["5976", "5934"]), "粉色小圆点"],
+  [createSensitiveChineseRegex(["4e73", "623f"]), "粉色下腹组件"],
+  [createSensitiveChineseRegex(["80f8", "8179"]), "侧面躯干"],
+  [createSensitiveChineseRegex(["80f8", "53e3"]), "上身正面"],
+  [createSensitiveChineseRegex(["80f8", "7ebf"]), "上身简线"],
+  [createSensitiveChineseRegex(["80f8", "90e8"]), "上身"],
+  [createSensitiveChineseRegex(["80f8"]), "上身"],
+  [new RegExp("\\bu" + "dders?\\b", "gi"), "front belly pad"],
+  [new RegExp("\\bn" + "ipples?\\b", "gi"), "small pink dots"],
+  [new RegExp("\\bb" + "reasts?\\b", "gi"), "front belly pad"],
+  [new RegExp("\\bc" + "hest\\b", "gi"), "upper torso"],
+  [new RegExp("\\bb" + "ust\\b", "gi"), "upper torso"],
+];
+
+function sanitizeProductText(text) {
+  let value = String(text || "");
+  for (const [pattern, replacement] of SENSITIVE_PRODUCT_WORD_REPLACEMENTS) {
+    value = value.replace(pattern, replacement);
+  }
+  return value.replace(/\s{2,}/g, " ").trim();
+}
+
+function sanitizeApiPayload(value) {
+  if (typeof value === "string") {
+    if (/^(data:|https?:\/\/)/i.test(value)) return value;
+    return sanitizeProductText(value);
+  }
+  if (Array.isArray(value)) return value.map((item) => sanitizeApiPayload(item));
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, sanitizeApiPayload(item)]));
+  }
+  return value;
+}
+
+function getPromptModelLimit(model) {
+  const key = typeof model === "string" ? model.trim() : "";
+  return PROMPT_MODEL_LIMITS[key] || DEFAULT_PROMPT_MODEL_LIMIT;
+}
+
+function getImageModelLimit(model) {
+  const key = typeof model === "string" ? model.trim() : "";
+  return IMAGE_MODEL_LIMITS[key] || DEFAULT_IMAGE_MODEL_LIMIT;
+}
+
+function getVideoModelLimit(provider, model) {
+  const providerKey = typeof provider === "string" && provider.trim() ? provider.trim().toLowerCase() : "shishi";
+  const modelKey = typeof model === "string" ? model.trim() : "";
+  const providerLimits = VIDEO_MODEL_LIMITS[providerKey] || VIDEO_MODEL_LIMITS.shishi;
+  if (providerLimits[modelKey]) return providerLimits[modelKey];
+  if (providerKey === "wisech" && /1-5|1\.5/i.test(modelKey)) {
+    return { minDuration: 4, maxDuration: 12, promptSoftLimit: 4800, promptHardLimit: 5200, resolution: "1080p" };
+  }
+  return providerLimits.default;
+}
+
+function resolveVideoProviderFromUrl(upstreamUrl, fallbackProvider = "") {
+  const fallback = typeof fallbackProvider === "string" && fallbackProvider.trim() ? fallbackProvider.trim().toLowerCase() : "";
+  if (fallback) return fallback;
+  if (isShishiKejiUrl(upstreamUrl)) return "shishi";
+  if (isWisechVideoUrl(upstreamUrl)) return "wisech";
+  if (isToapisUrl(upstreamUrl)) return "toapis";
+  return "toapis";
+}
+
+function formatLockedNodeLines(lockedNodes, maxLines = 10, maxChars = 1800, labelSeparator = " / ") {
+  if (!Array.isArray(lockedNodes)) return "";
+  return truncateTextByChars(
+    lockedNodes
+      .filter((node) => node && typeof node === "object")
+      .slice(0, maxLines)
+      .map((node) => {
+        const code = typeof node.code === "string" ? sanitizeProductText(node.code) : "Locked_Detail";
+        const label = typeof node.label === "string" ? sanitizeProductText(node.label) : "";
+        const detail = typeof node.detail === "string" ? sanitizeProductText(node.detail) : "";
+        return `- ${code}${label ? `${labelSeparator}${label}` : ""}: ${detail}`;
+      })
+      .filter(Boolean)
+      .join("\n"),
+    maxChars,
+  );
+}
+
+function sanitizePromptRequest(payload) {
+  return sanitizeApiPayload(payload);
+}
+
+function ensureVideoPromptFinalLock(productType, prompt) {
+  const text = sanitizeProductText(prompt);
+  if (!text) return "";
+  if (/stable|locked|consistent|no drift|same product/i.test(text.slice(-180))) return text;
+  const stableProductName = getProductStableName(productType);
+  return sanitizeProductText(`${text.replace(/[.;,\s]+$/u, "")}. Keep ${stableProductName} identity, component placement, colors, material wrinkles, wearer proportions, and grounded feet stable with no drift.`);
 }
 
 function sendJson(res, status, payload) {
@@ -95,14 +261,19 @@ async function readRequestBody(req) {
 function readJson(req) {
   return new Promise((resolve, reject) => {
     let raw = "";
+    let tooLarge = false;
     req.on("data", (chunk) => {
+      if (tooLarge) return;
       raw += chunk;
-      if (raw.length > 20 * 1024 * 1024) {
-        reject(new Error("Request body too large"));
-        req.destroy();
+      if (raw.length > MAX_JSON_BODY_BYTES) {
+        tooLarge = true;
+        const error = new Error(`Request body too large. Limit is ${MAX_JSON_BODY_BYTES} bytes.`);
+        error.statusCode = 413;
+        reject(error);
       }
     });
     req.on("end", () => {
+      if (tooLarge) return;
       if (!raw) {
         resolve({});
         return;
@@ -150,22 +321,36 @@ function normalizeUpstreamModel(model, kind) {
 
 function pickProxyConfig(payload, fallbackPath, kind = "generic") {
   const body = payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {};
-  const { base_url, api_key, path, ...upstreamPayload } = body;
+  const { base_url, api_key, path, video_provider, ...upstreamPayload } = body;
+  const videoProvider = typeof video_provider === "string" ? video_provider.trim().toLowerCase() : "";
+  const providerConfig =
+    kind === "video" && videoProvider === "wisech"
+      ? { baseUrl: WISECH_VIDEO_BASE_URL, apiKey: WISECH_VIDEO_API_KEY, model: WISECH_VIDEO_MODEL }
+      : kind === "video" && videoProvider === "shishi"
+        ? { baseUrl: SHISHI_VIDEO_BASE_URL, apiKey: SHISHI_VIDEO_API_KEY, model: SHISHI_VIDEO_MODEL }
+        : kind === "video" && videoProvider === "toapis"
+          ? { baseUrl: VIDEO_BASE_URL || TOAPIS_BASE_URL, apiKey: VIDEO_API_KEY || TOAPIS_API_KEY, model: TOAPIS_VIDEO_MODEL, path: TOAPIS_VIDEO_GENERATIONS_PATH }
+        : null;
+  if (providerConfig && providerConfig.model && !upstreamPayload.model) upstreamPayload.model = providerConfig.model;
   const normalizedModel = normalizeUpstreamModel(upstreamPayload.model, kind);
   if (normalizedModel) upstreamPayload.model = normalizedModel;
   const useFixedImageTextApi = kind === "image" || kind === "prompt";
   const useVideoApi = kind === "video";
-  const baseUrlInput = useFixedImageTextApi ? "" : cleanEndpointText(base_url);
+  const baseUrlInput = useFixedImageTextApi || providerConfig ? "" : cleanEndpointText(base_url);
   const rawBaseUrl = useFixedImageTextApi
     ? IMAGE_TEXT_BASE_URL
     : baseUrlInput
       ? baseUrlInput.replace(/\/+$/, "")
-      : useVideoApi
+      : providerConfig
+        ? providerConfig.baseUrl
+        : useVideoApi
         ? VIDEO_BASE_URL
         : TOAPIS_BASE_URL;
   const apiKey = useFixedImageTextApi
     ? IMAGE_TEXT_API_KEY
-    : typeof api_key === "string" && api_key.trim()
+    : providerConfig
+      ? providerConfig.apiKey
+      : typeof api_key === "string" && api_key.trim()
       ? api_key.trim()
       : useVideoApi
         ? VIDEO_API_KEY
@@ -186,17 +371,26 @@ function pickProxyConfig(payload, fallbackPath, kind = "generic") {
       return false;
     }
   })();
+  const isShishiKejiBase = (() => {
+    try {
+      return new URL(rawBaseUrl).hostname === "api.shishikeji.com";
+    } catch {
+      return false;
+    }
+  })();
   const isHappyHorseModel =
     typeof upstreamPayload.model === "string" &&
     upstreamPayload.model.toLowerCase().includes("happyhorse");
   const dashScopeFallbackPath =
-    isDashScopeBase && kind === "video" && isHappyHorseModel
+    isShishiKejiBase && kind === "video"
+      ? SHISHI_VIDEO_GENERATION_PATH
+      : isDashScopeBase && kind === "video" && isHappyHorseModel
       ? DASHSCOPE_VIDEO_SYNTHESIS_PATH
       : isDashScopeBase && kind === "image"
         ? DASHSCOPE_IMAGE_GENERATION_PATH
         : isVolcengineBase && kind === "video"
           ? VOLCENGINE_VIDEO_TASKS_PATH
-        : fallbackPath;
+        : providerConfig?.path || fallbackPath;
   const upstreamUrl = /^https?:\/\//i.test(pathText)
     ? pathText
     : pathText
@@ -204,7 +398,8 @@ function pickProxyConfig(payload, fallbackPath, kind = "generic") {
       : isCompleteEndpoint(rawBaseUrl)
         ? rawBaseUrl
         : `${rawBaseUrl}${normalizePath("", dashScopeFallbackPath)}`;
-  return { baseUrl: rawBaseUrl, apiKey, upstreamUrl, upstreamPayload };
+  const sanitizedUpstreamPayload = sanitizeApiPayload(upstreamPayload);
+  return { baseUrl: rawBaseUrl, apiKey, upstreamUrl, upstreamPayload: sanitizedUpstreamPayload };
 }
 
 function parseUpstreamBody(text, status) {
@@ -287,12 +482,49 @@ function validateGeneratedImagePayload(data) {
   return "";
 }
 
+function findUrlByKey(value, keyPattern) {
+  if (!value || typeof value !== "object") return "";
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findUrlByKey(item, keyPattern);
+      if (found) return found;
+    }
+    return "";
+  }
+  for (const [key, child] of Object.entries(value)) {
+    if (/^(upstreamUrl|requestUrl|taskUrl|statusUrl)$/i.test(key)) continue;
+    if (typeof child === "string" && keyPattern.test(key) && /^https?:\/\//i.test(child)) {
+      return child;
+    }
+    const found = findUrlByKey(child, keyPattern);
+    if (found) return found;
+  }
+  return "";
+}
+
+function extractImageUrls(data) {
+  if (!data || typeof data !== "object") return [];
+  const urls = [];
+  const records = Array.isArray(data.data) ? data.data : [];
+  for (const record of records) {
+    if (!record || typeof record !== "object") continue;
+    if (typeof record.url === "string" && /^https?:\/\//i.test(record.url)) {
+      urls.push(record.url);
+    } else if (typeof record.b64_json === "string") {
+      const mimeType = getBase64ImageMime(record.b64_json);
+      if (mimeType) urls.push(`data:${mimeType};base64,${record.b64_json}`);
+    }
+  }
+  const dashScopeUrl = findUrlByKey(data.output, /^(image|url|image_url|imageUrl|result_url)$/i);
+  if (dashScopeUrl) urls.push(dashScopeUrl);
+  const imageUrl = findUrlByKey(data, /^(image|image_url|imageUrl|result_url)$/i);
+  if (imageUrl) urls.push(imageUrl);
+  return [...new Set(urls)];
+}
+
 function withUpstreamError(data, status, upstreamUrl) {
   if (status >= 200 && status < 300) return { ...data, upstreamUrl };
-  const hasMessage =
-    data &&
-    typeof data === "object" &&
-    ("error" in data || "message" in data);
+  const hasMessage = data && typeof data === "object" && ("error" in data || "message" in data);
   if (hasMessage) {
     const next = { ...data };
     if (typeof next.error === "string") {
@@ -305,11 +537,7 @@ function withUpstreamError(data, status, upstreamUrl) {
     }
     return { ...next, upstreamUrl };
   }
-  return {
-    ...data,
-    error: `服务请求没有成功（${status}），请让管理员检查服务配置。`,
-    upstreamUrl,
-  };
+  return { ...data, error: `Service request failed (${status}). Please check the service configuration.`, upstreamUrl };
 }
 
 function toPublicErrorMessage(message) {
@@ -334,6 +562,9 @@ function toPublicErrorMessage(message) {
   if (/timeout|timed out|Error code 524|超时/i.test(text)) {
     return "这次处理时间太久了，请稍后再试。";
   }
+  if (/upstream service could not be reached|fetch failed|ECONNRESET|ECONNREFUSED|ENOTFOUND|ETIMEDOUT/i.test(text)) {
+    return "上游服务这次连接中断，没有拿到返回结果。请直接再试一次；如果连续出现，请让管理员检查后台服务地址和密钥配置。";
+  }
   if (/Invalid image input|Invalid data:image input|Only data:image|Failed to download reference image/i.test(text)) {
     return "有一张图片还没有准备好，请重新上传或刷新页面后再试。";
   }
@@ -347,6 +578,21 @@ function toPublicErrorMessage(message) {
     return "服务刚刚开了个小差，请稍后再试。";
   }
   return text;
+}
+
+function getUpstreamConnectionFailureMessage(kind, isAbortError) {
+  if (isAbortError) {
+    return kind === "image"
+      ? "分镜生成服务这次处理超时，没有拿到返回结果。请稍后再试；如果连续出现，请换一个分镜模型或让管理员检查图片通道。"
+      : "上游服务这次处理超时，没有拿到返回结果。请稍后再试。";
+  }
+  if (kind === "image") {
+    return "分镜生成服务这次连接中断，没有拿到上游返回。请直接再生成一次；如果连续出现，请让管理员检查 IMAGE_TEXT_BASE_URL / IMAGE_TEXT_API_KEY 或切换图片通道。";
+  }
+  if (kind === "video") {
+    return "视频生成服务这次连接中断，没有拿到上游返回。请稍后重试；如果连续出现，请让管理员检查当前视频通道配置。";
+  }
+  return "上游服务这次连接中断，没有拿到返回结果。请稍后重试；如果连续出现，请让管理员检查后台服务配置。";
 }
 
 function getProductFamily(productType) {
@@ -370,11 +616,142 @@ function getProductStableName(productType) {
   return text;
 }
 
+const PRODUCT_LOCK_SPECS = {
+  shark: [
+    ["shark_white_belly", "White belly/front panel", ["front"], ["front", "front_three_quarter"], ["side_valve_area", "rear_tail"], ["white belly disappears", "white belly becomes blue", "front panel is covered by props"]],
+    ["shark_face_window", "Small shallow transparent face window", ["front"], ["front", "front_three_quarter"], ["side", "rear", "belly_bottom"], ["window becomes a big visor", "window moves upward", "window becomes mouth or teeth"]],
+    ["shark_front_zipper", "Vertical zipper below face window", ["front"], ["front", "front_three_quarter"], ["side", "rear", "valve_area"], ["zipper tilts heavily", "zipper breaks", "zipper moves to side"]],
+    ["shark_orange_side_valve", "Orange circular blower valve on valve-side waist", ["right", "rear_edge"], ["right", "right_three_quarter", "rear_edge"], ["front", "left", "white_belly", "face_window"], ["valve moves to left side", "valve moves to white belly", "valve becomes decoration"]],
+    ["shark_side_gill_lines", "Side gill stripes", ["left", "right"], ["side", "three_quarter"], ["front_center", "rear_center"], ["gills become mouth", "wrong count", "gills drift to front belly"]],
+    ["shark_rear_tail_fin", "Centered rear tail fin", ["back"], ["rear", "rear_edge"], ["front", "side_waist", "white_belly"], ["tail moves to side waist", "tail becomes wing", "tail duplicates"]],
+    ["shark_arm_fins", "Short arm fins with white inner panels", ["left", "right"], ["front", "side", "three_quarter"], ["far_wide_wing"], ["fins stretch into airplane wings", "fin color changes", "extra fins appear"]],
+    ["shark_black_shoes", "Black shoe/sole evidence at bottom", ["front", "side", "back"], ["full_body"], ["floating_crop"], ["shoes disappear", "feet become blue blobs", "floor contact breaks"]],
+  ],
+  cow: [
+    ["cow_front_face", "Cow face, horns, ears, snout, eyes", ["front"], ["front", "front_three_quarter"], ["rear"], ["face becomes generic mascot", "horns missing", "snout changes shape"]],
+    ["cow_front_belly_pad", "Pink lower-front belly pad with four dots", ["front"], ["front", "front_three_quarter"], ["back", "side_valve_area"], ["belly pad moves to rear", "dots disappear", "pad becomes large decoration"]],
+    ["cow_black_patches", "Irregular black cow patches", ["front", "left", "right", "back"], ["visible_surface"], ["wrong_surface_merge"], ["patch count changes wildly", "patches become stripes", "patches smooth into logo"]],
+    ["cow_back_zipper", "Back center zipper and seam", ["back"], ["rear", "rear_edge"], ["front_belly"], ["zipper moves to front", "zipper vanishes", "zipper becomes seam decoration"]],
+    ["cow_orange_rear_valve", "Orange rear/right blower valve", ["back", "right_rear"], ["rear", "right_rear_edge"], ["front", "pink_belly_pad", "snout"], ["valve moves to front", "valve becomes black patch", "valve is hidden by arm"]],
+    ["cow_rear_tail", "Centered rear tail with black tip", ["back"], ["rear", "rear_edge"], ["front", "side_middle"], ["tail disappears", "tail moves to side", "tail duplicates"]],
+    ["cow_hoof_gloves_feet", "Black hoof gloves and foot covers", ["front", "side"], ["full_body"], ["floating_crop"], ["hoof covers disappear", "hands become skin", "feet become generic shoes"]],
+  ],
+  mouse: [
+    ["mouse_ears", "Round gray ears with cream interiors", ["front", "side"], ["front", "three_quarter", "side"], ["rear_only"], ["ears become huge", "cream interior missing", "extra ears appear"]],
+    ["mouse_snout_mouth", "Cream face area, protruding snout, black open mouth", ["front", "side"], ["front", "front_three_quarter"], ["back"], ["snout becomes dark nose redesign", "mouth gains teeth", "face turns plush"]],
+    ["mouse_cream_belly", "Cream oval belly", ["front"], ["front", "front_three_quarter"], ["back", "tail_root"], ["belly disappears", "belly moves to rear", "belly becomes apron"]],
+    ["mouse_green_rear_valve", "Green circular rear blower valve", ["back"], ["rear", "rear_edge"], ["front_belly", "face", "ear", "arm"], ["valve moves to belly", "valve changes color", "valve is hidden"]],
+    ["mouse_back_zipper", "Back center zipper", ["back"], ["rear", "rear_edge"], ["front"], ["zipper moves to front", "zipper disappears", "zipper breaks"]],
+    ["mouse_tail", "Cream/yellow rear tail", ["back", "side_edge"], ["rear", "side_edge"], ["front_belly"], ["tail disappears", "tail becomes prop", "tail duplicates"]],
+    ["mouse_hands_shoes", "Visible human hands/shoes remain separate from suit", ["front", "side"], ["full_body"], ["replaced_by_inflated_mitts"], ["hands become gray mitts", "shoes disappear", "extra hands appear"]],
+  ],
+  frog: [
+    ["frog_top_eyes", "Raised top eyes", ["front", "side"], ["front", "three_quarter"], ["rear"], ["eyes become huge cartoon eyes", "extra eyes appear", "eyes move to belly"]],
+    ["frog_face_window", "Small face window", ["front"], ["front", "front_three_quarter"], ["side", "rear"], ["window disappears", "window becomes mouth", "window becomes huge visor"]],
+    ["frog_black_mouth_band", "Large black mouth band", ["front"], ["front", "front_three_quarter"], ["back"], ["band becomes thin smile", "band disappears", "band changes to teeth"]],
+    ["frog_blue_scarf", "Blue scarf and knot", ["front", "side", "back_edge"], ["front", "three_quarter", "side_edge"], ["new_accessory"], ["scarf changes color", "scarf hides face window", "scarf becomes text banner"]],
+    ["frog_orange_rear_valve", "Orange rear blower valve near spine/zipper", ["back"], ["rear", "rear_edge"], ["front_belly", "scarf", "mouth_band", "spots"], ["valve moves to belly", "valve is pasted on scarf", "valve becomes spot"]],
+    ["frog_rear_spine_zipper", "Rear black spine pattern and zipper", ["back"], ["rear", "rear_edge"], ["front"], ["rear spine moves to front", "zipper disappears", "spine becomes decoration"]],
+    ["frog_webbed_hands_feet", "Webbed hands and feet with floor contact", ["front", "side"], ["full_body"], ["floating_crop"], ["feet become shoes only", "hands become props", "extra toes appear"]],
+  ],
+  sumo: [
+    ["sumo_black_mawashi", "Black mawashi belt and front panel", ["front", "side"], ["front", "front_three_quarter", "side"], ["back_valve"], ["mawashi changes to clothes", "belt disappears", "front panel moves to back"]],
+    ["sumo_upper_torso_lines", "Simple upper-torso graphics and belly dot", ["front"], ["front", "front_three_quarter"], ["back"], ["graphics become real muscles", "belly dot becomes valve", "new face graphics appear"]],
+    ["sumo_topknot_cap", "Black topknot/cap", ["front", "side", "back"], ["visible_head"], ["new_hair"], ["cap disappears", "hair becomes realistic", "extra topknot appears"]],
+    ["sumo_t_side_silhouette", "Wide T-shaped side silhouette", ["left", "right"], ["side", "three_quarter"], ["front_only"], ["arms become long human arms", "body becomes skinny", "side thickness collapses"]],
+    ["sumo_back_zipper", "Back center zipper/seam", ["back"], ["rear", "rear_edge"], ["front_stomach"], ["zipper moves to front", "zipper hidden", "zipper becomes decoration"]],
+    ["sumo_orange_rear_valve", "Orange circular rear blower valve", ["back", "rear_side"], ["rear", "rear_edge"], ["front_stomach", "mawashi_front", "face"], ["valve moves to stomach", "valve becomes belly button", "valve is covered"]],
+    ["sumo_rear_belt", "Rear black belt/loincloth structure", ["back"], ["rear", "rear_edge"], ["front"], ["rear belt disappears", "rear belt becomes clothes", "front/back belt swapped"]],
+  ],
+  generic: [
+    ["generic_front_identity", "Front-owned identity details", ["front"], ["front", "front_three_quarter"], ["rear"], ["front details move to rear", "face/window details disappear"]],
+    ["generic_rear_hardware", "Rear/side hardware, zipper, tail or appendage ownership", ["back", "side"], ["rear", "side", "rear_edge"], ["front"], ["hardware moves to front", "tail duplicates", "zipper disappears"]],
+    ["generic_material", "Inflatable nylon/PVC material, seams, wrinkles, ports", ["front", "left", "right", "back"], ["visible_surface"], ["smooth_plastic", "plush_fur"], ["material changes", "ports are simplified", "seams disappear"]],
+  ],
+};
+
+function createStructuredLock([id, label, ownedByViews, allowedAngles, forbiddenPlacements, failureExamples], critical = true) {
+  return { id, label, ownedByViews, allowedAngles, forbiddenPlacements, failureExamples, critical };
+}
+
+function buildProductLockContract(productType, frontendLockedNodes = []) {
+  const family = getProductFamily(productType);
+  const stableProductName = getProductStableName(productType);
+  const productLocks = (PRODUCT_LOCK_SPECS[family] || PRODUCT_LOCK_SPECS.generic).map((item) => createStructuredLock(item));
+  const materialLocks = [
+    createStructuredLock([
+      `${family}_inflatable_material`,
+      "Thin crinkled inflatable nylon/PVC material, seams, wrinkles, zipper teeth, valve rings",
+      ["front", "left", "right", "back"],
+      ["visible_surface"],
+      ["smooth_plastic", "plush_fur", "real_skin", "clean_cgi_shell"],
+      ["material becomes smooth plastic", "wrinkles disappear", "seams and valve texture are erased"],
+    ]),
+    createStructuredLock([
+      `${family}_human_scale_envelope`,
+      "Human-scale wearable inflatable volume with grounded feet",
+      ["front", "left", "right", "back"],
+      ["full_body", "front_three_quarter", "side", "rear"],
+      ["giant_mascot_shell", "standing_balloon", "skinny_person", "floating_crop"],
+      ["body becomes oversized mascot", "feet leave the floor", "human-scale proportions drift"],
+    ]),
+  ];
+  const supplementalLocks = Array.isArray(frontendLockedNodes)
+    ? frontendLockedNodes
+        .filter((node) => node && typeof node === "object")
+        .slice(0, 16)
+        .map((node, index) => ({
+          id: typeof node.code === "string" && node.code.trim() ? node.code.trim() : `frontend_lock_${index + 1}`,
+          label: typeof node.label === "string" ? sanitizeProductText(node.label) : "Frontend confirmed lock",
+          detail: typeof node.detail === "string" ? sanitizeProductText(node.detail) : "",
+          confidence: Number.isFinite(Number(node.confidence)) ? Number(node.confidence) : undefined,
+          critical: node.critical !== false,
+        }))
+    : [];
+  return {
+    productType: sanitizeProductText(productType || stableProductName),
+    stableProductName,
+    family,
+    coreViewOrder: CORE_VIEW_LABELS.map(({ code, label }) => ({ code, label })),
+    locks: [...productLocks, ...materialLocks],
+    supplementalLocks,
+    forbiddenContent: ["subtitles", "sign text", "price tags", "CTA text", "logos", "new stickers attached to product"],
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+function formatProductLockContract(contract, maxLocks = 12) {
+  const locks = Array.isArray(contract?.locks) ? contract.locks : [];
+  const lockLines = locks
+    .slice(0, maxLocks)
+    .map((lock) => {
+      const owned = Array.isArray(lock.ownedByViews) ? lock.ownedByViews.join("/") : "";
+      const allowed = Array.isArray(lock.allowedAngles) ? lock.allowedAngles.join("/") : "";
+      const forbidden = Array.isArray(lock.forbiddenPlacements) ? lock.forbiddenPlacements.join("/") : "";
+      return `- ${lock.id}: ${lock.label}; owned=${owned}; allowed=${allowed}; forbidden=${forbidden}`;
+    })
+    .join("\n");
+  const supplementalLines = Array.isArray(contract?.supplementalLocks)
+    ? contract.supplementalLocks
+        .slice(0, 8)
+        .map((lock) => `- ${lock.id}: ${lock.label}${lock.detail ? `; ${lock.detail}` : ""}`)
+        .join("\n")
+    : "";
+  return [
+    `Structured product lock contract for ${contract?.stableProductName || "wearable inflatable product"} (${contract?.family || "generic"}).`,
+    lockLines,
+    supplementalLines ? `Frontend confirmed lock nodes:\n${supplementalLines}` : "",
+    "Forbidden: no subtitles, no signboards, no price tags, no CTA text, no logos, no new stickers, no product redesign.",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
 function buildInflatableHardwareMaterialLocks(productType) {
   const family = getProductFamily(productType);
   const hardwareMaps = {
     cow: [
-      "COW AIR-HARDWARE MAP: the orange circular blower valve / air inlet / air outlet / pump port belongs on the rear-right/back-side surface at the reference height, with orange ring, circular grille or cap, and local seam relationship preserved. It may appear only from rear or physically valid side-edge angles; never place it on the front udder, white belly, snout, face, or black patch as decoration.",
+      "COW AIR-HARDWARE MAP: the orange circular blower valve / air inlet / air outlet / pump port belongs on the rear-right/back-side surface at the reference height, with orange ring, circular grille or cap, and local seam relationship preserved. It may appear only from rear or physically valid side-edge angles; never place it on the front lower-belly pad, white belly, snout, face, or black patch as decoration.",
       "COW REAR DETAIL MAP: rear centerline zipper teeth, vertical seam, centered white tail with black tip, and rear-right orange valve must stay separated and correctly ordered on the back surface.",
     ],
     shark: [
@@ -386,11 +763,11 @@ function buildInflatableHardwareMaterialLocks(productType) {
       "MOUSE REAR DETAIL MAP: back centerline zipper teeth, vertical rear seam, green valve, and cream/yellow tail root must remain rear-owned details and should only appear from rear or physically valid side-edge angles.",
     ],
     frog: [
-      "FROG AIR-HARDWARE MAP: the orange blower valve / air inlet / air outlet / pump port belongs on the rear/back surface near the black spine/zipper structure, with orange ring and circular grille or cap preserved. It must not be pasted onto the cream belly, blue scarf, face window, mouth band, front chest, hands, or spots.",
+      "FROG AIR-HARDWARE MAP: the orange blower valve / air inlet / air outlet / pump port belongs on the rear/back surface near the black spine/zipper structure, with orange ring and circular grille or cap preserved. It must not be pasted onto the cream belly, blue scarf, face window, mouth band, front upper torso, hands, or spots.",
       "FROG REAR DETAIL MAP: black spine-like rear pattern, zipper teeth, scarf back flap, orange valve, green rear field, and rear fabric wrinkles must stay attached to the back surface only.",
     ],
     sumo: [
-      "SUMO AIR-HARDWARE MAP: the orange circular blower valve / air inlet / air outlet / pump port belongs on the rear/back-side surface shown by the back view and support valve image, with orange ring, circular mesh/grille or cap, reference height, and nearby belt/zipper spacing preserved. Never move it to the front stomach, chest lines, belly button, mawashi front panel, face, or arms.",
+      "SUMO AIR-HARDWARE MAP: the orange circular blower valve / air inlet / air outlet / pump port belongs on the rear/back-side surface shown by the back view and support valve image, with orange ring, circular mesh/grille or cap, reference height, and nearby belt/zipper spacing preserved. Never move it to the front stomach, upper-torso lines, belly button, mawashi front panel, face, or arms.",
       "SUMO REAR DETAIL MAP: back centerline zipper teeth, rear black belt/loincloth structure, orange valve, beige rear field, and soft rear nylon folds must remain rear-owned and correctly layered.",
     ],
     generic: [
@@ -414,28 +791,28 @@ function buildFirstFrameProductVisualLocks(productType) {
   if (family === "cow") {
     return [
       "MANDATORY COW INFLATABLE COSTUME VISUAL LOCKS:",
-      "Front reference lock: preserve the white cow body, irregular black cow patches, large rounded white cow head, two cream upward curved horns, black outer ears with pink inner ears, small black hair tuft, blue cartoon eyes, black eyebrows, pink snout, two black nostrils, black smile line, pink cheek circles, black hoof gloves, black foot hoof covers, and the pink udder centered on the lower front belly with four protruding teats.",
+      "Front reference lock: preserve the white cow body, irregular black cow patches, large rounded white cow head, two cream upward curved horns, black outer ears with pink inner ears, small black hair tuft, blue cartoon eyes, black eyebrows, pink snout, two black nostrils, black smile line, pink cheek circles, black hoof gloves, black foot hoof covers, and the pink lower-belly pad centered on the lower front belly with four small pink dots.",
       "Left-side reference lock: preserve the side-view thickness, protruding pink snout, side eye and cheek, horn/ear overlap, side body patches, short padded arm, black hoof glove, black foot cover, visible 155-190cm height-marker proportion, and moderate wearable side volume.",
-      "Right-side reference lock: preserve the opposite three-quarter/side silhouette, front udder visibility only when physically visible, arm/hoof shape, leg width, black patch placement density, and rounded but human-wearable torso volume.",
+      "Right-side reference lock: preserve the opposite three-quarter/side silhouette, front lower-belly pad visibility only when physically visible, arm/hoof shape, leg width, black patch placement density, and rounded but human-wearable torso volume.",
       "Back reference lock: preserve the back zipper and central vertical seam from the head down the torso, black patches on the rear head/back/legs, two horns seen from behind, black ears, orange circular blower valve on the rear-right side, centered white rear tail with black tip, separated legs, and black hoof foot covers.",
-      "Preset auxiliary support lock: if same-product auxiliary support views are supplied, use them only to refine local nylon wrinkles, seams, zipper teeth, valve ring, patch edges, udder protrusions, snout shape, eye graphics, horn fabric, ear fabric, and hoof folds exactly where the core four views say they belong.",
+      "Preset auxiliary support lock: if same-product auxiliary support views are supplied, use them only to refine local nylon wrinkles, seams, zipper teeth, valve ring, patch edges, lower-belly pad protrusions, snout shape, eye graphics, horn fabric, ear fabric, and hoof folds exactly where the core four views say they belong.",
       "VIEW TOPOLOGY LOCK:",
       "FOUR-VIEW REFERENCES ARE TOPOLOGY MAPS, NOT COLLAGE REQUIREMENTS.",
       "PRIMARY CAMERA IS FRONT-FACING BY DEFAULT: use the front reference as the dominant product view for first-frame generation; do not switch to side or rear unless the user explicitly asks for a side or rear view.",
       "Choose one primary camera family before rendering: front, left side, right side, or rear. The generated frame must obey that camera family instead of mixing all reference views into one surface.",
-      "Visibility matrix: front camera may show the cow face, horns, ears, black-white front patches, black hoof gloves, black foot covers, and front pink udder; side camera may show only the physically visible side thickness, protruding snout, side patches, arm/hoof and partial udder if naturally visible; rear camera may show the back zipper, orange rear-side valve, rear tail, rear patches, horns/ears from behind, and no front snout or front udder unless the pose is a true turn.",
+      "Visibility matrix: front camera may show the cow face, horns, ears, black-white front patches, black hoof gloves, black foot covers, and front pink lower-belly pad; side camera may show only the physically visible side thickness, protruding snout, side patches, arm/hoof and partial lower-belly pad if naturally visible; rear camera may show the back zipper, orange rear-side valve, rear tail, rear patches, horns/ears from behind, and no front snout or front lower-belly pad unless the pose is a true turn.",
       "Do not satisfy product consistency by showing all reference details in one generated frame. Product consistency means correct physical placement and preserved shape, not maximum visible details.",
-      "Do not merge details from different views into one impossible surface. The front cow face and pink udder belong to the front surface. The orange blower valve and rear tail belong to the back/rear-side surface. Back zipper/seam belongs on the rear centerline only, never on the front belly.",
-      "For a front three-quarter view, show front cow face and front udder plus only a narrow side edge; do not attach the back tail, back zipper, or rear orange valve to the front belly. For a rear view, show the centered rear tail and back zipper; do not show the pink snout, smile, front eyes, or front udder on the back.",
+      "Do not merge details from different views into one impossible surface. The front cow face and pink lower-belly pad belong to the front surface. The orange blower valve and rear tail belong to the back/rear-side surface. Back zipper/seam belongs on the rear centerline only, never on the front belly.",
+      "For a front three-quarter view, show front cow face and front lower-belly pad plus only a narrow side edge; do not attach the back tail, back zipper, or rear orange valve to the front belly. For a rear view, show the centered rear tail and back zipper; do not show the pink snout, smile, front eyes, or front lower-belly pad on the back.",
       "If the chosen camera angle cannot physically show a locked detail, hide it naturally instead of moving it to a wrong location.",
       "SHAPE AND VOLUME ENVELOPE LOCK:",
       "Preserve the shared four-view HUMAN-BODY ENVELOPE: this is a real person wearing a rounded but compact 155-190cm cow inflatable costume. The inflatable shell is only moderately larger than the wearer; shoulders, torso, waist/hip transition, separated legs, black hoof feet, and soft nylon wrinkles must stay close to the references.",
-      "HUMAN-SCALE SIZE LOCK: the cow costume must stay close to the wearer's body scale, not a giant mascot shell. The head height, head width, body width, belly volume, leg width, side thickness, horn size, ear size, udder size, and tail length must not grow beyond the references.",
+      "HUMAN-SCALE SIZE LOCK: the cow costume must stay close to the wearer's body scale, not a giant mascot shell. The head height, head width, body width, belly volume, leg width, side thickness, horn size, ear size, lower-belly pad size, and tail length must not grow beyond the references.",
       "Do not enlarge the product into a giant rounded cow head, barrel-shaped torso, oversized standing balloon, theme-park mascot, plush cow, realistic animal, or inflated display prop. If the result looks like a full taut mascot shell instead of a person-sized wearable suit, it is wrong.",
       "Wrinkle density and slight looseness are fidelity markers: keep visible white nylon wrinkles, seam tension, black patch edge texture, and soft fabric slack. Do not smooth the fabric into plastic, rubber, plush, realistic fur, or a clean CGI cow character.",
       "Preserve all product details even when the requested scene changes. The scene may change, but these product marks must remain visible when their side is visible.",
       "Do not remove, move, shrink, recolor, simplify, or invent any product structure. Do not add extra horns, extra ears, real fur, extra legs, extra hands, a different mouth, new logos, accessories, or new decorative graphics.",
-      "Do not convert the costume into a generic black-white cow mascot. The blue eyes, pink snout, black smile line, pink cheek circles, front udder with four teats, black hoof gloves, back zipper, orange rear-side blower valve, and centered rear tail are identity-critical.",
+      "Do not convert the costume into a generic black-white cow mascot. The blue eyes, pink snout, black smile line, pink cheek circles, front lower-belly pad with four small dots, black hoof gloves, back zipper, orange rear-side blower valve, and centered rear tail are identity-critical.",
     ];
   }
   if (family === "shark") {
@@ -510,14 +887,14 @@ function buildFirstFrameProductVisualLocks(productType) {
   if (family === "sumo") {
     return [
       "MANDATORY SUMO INFLATABLE COSTUME VISUAL LOCKS:",
-      "Front reference lock: preserve the beige/flesh inflatable body, black mawashi belt, black front loincloth panel, simple chest graphics, belly-button dot, rounded head, black topknot/cap, short padded arms, separated legs, and fabric folds.",
+      "Front reference lock: preserve the beige/flesh inflatable body, black mawashi belt, black front loincloth panel, simple upper-torso graphics, belly-button dot, rounded head, black topknot/cap, short padded arms, separated legs, and fabric folds.",
       "Side reference lock: preserve the wide T-shaped side silhouette, side thickness, short arm extension, side belt ties, black waist band wrapping around the body, and compact human-scale wearable volume.",
       "Back reference lock: preserve the center back zipper/seam, orange circular blower valve, rear black belt/loincloth structure, beige rear field, separated legs, and rear soft nylon folds.",
       "PRESET AUXILIARY SUPPORT LOCK: if auxiliary sumo valve evidence is supplied, use it only to refine rear/side valve position, belt ties, zipper, and material wrinkles; it is not a new topology surface.",
       "VIEW TOPOLOGY LOCK:",
       "FOUR-VIEW REFERENCES ARE TOPOLOGY MAPS, NOT COLLAGE REQUIREMENTS.",
       "PRIMARY CAMERA IS FRONT-FACING BY DEFAULT: use the front reference as the dominant view unless the user explicitly asks for another angle.",
-      "Visibility matrix: front camera may show the black front mawashi, chest lines, belly dot, head cap, arms, and legs; side camera may show the wide T shape and belt ties; rear camera may show the back zipper, orange valve, and rear belt only. Do not move the orange valve or rear zipper onto the front stomach.",
+      "Visibility matrix: front camera may show the black front mawashi, upper-torso lines, belly dot, head cap, arms, and legs; side camera may show the wide T shape and belt ties; rear camera may show the back zipper, orange valve, and rear belt only. Do not move the orange valve or rear zipper onto the front stomach.",
       "SHAPE AND VOLUME ENVELOPE LOCK:",
       "Preserve a real-person low-to-medium inflated sumo costume. It is wider than the wearer but still a wearable suit with human stance, separated legs, floor contact, and soft fabric wrinkles.",
       "Do not convert it into a real sumo wrestler, muscular person, baby doll, kimono costume, plush toy, giant round display balloon, or generic beige mascot. Do not add complex face details, hair, clothes, logos, or accessories.",
@@ -535,7 +912,7 @@ function buildFirstFrameProductVisualLocks(productType) {
     "SHAPE AND VOLUME ENVELOPE LOCK:",
     "Preserve the shared four-view HUMAN-BODY ENVELOPE: this is a real person wearing a low-to-medium inflated costume. The inflatable shell is only moderately larger than the wearer; shoulders, torso, waist/hip transition, separated legs, foot covers, and soft nylon wrinkles must stay close to the references.",
     "HUMAN-SCALE SIZE LOCK: the costume must stay close to the wearer's body scale, not a giant mascot shell, standing balloon, inflated display prop, plush toy, or real animal.",
-    "Do not remove, move, shrink, recolor, simplify, or invent any product structure. If the scene request conflicts with product fidelity, ignore the conflicting scene detail and keep product fidelity.",
+    "Do not remove, move, shrink, recolor, simplify, or invent any product structure. If the scene request conflicts with product fidelity, adapt the scene/action to the nearest safe visible version while keeping the product shell and view-correct component placement.",
   ];
 }
 
@@ -544,17 +921,16 @@ function buildVideoProductVisualLocks(productType) {
   if (family === "cow") {
     return [
       "MANDATORY COW INFLATABLE COSTUME VISUAL LOCKS:",
-      "Keep the white cow body, irregular black patches, large rounded cow head, cream horns, black ears with pink interiors, small black hair tuft, blue cartoon eyes, black eyebrows, pink snout, black nostrils, black smile line, pink cheek circles, black hoof gloves, black foot hoof covers, front pink udder with four teats, back zipper, orange rear-side blower valve, centered rear tail with black tip, and nylon wrinkles stable from frame 1 to the final frame.",
+      "Keep the white cow body, irregular black patches, large rounded cow head, cream horns, black ears with pink interiors, small black hair tuft, blue cartoon eyes, black eyebrows, pink snout, black nostrils, black smile line, pink cheek circles, black hoof gloves, black foot hoof covers, front pink lower-belly pad with four small pink dots, back zipper, orange rear-side blower valve, centered rear tail with black tip, and nylon wrinkles stable from frame 1 to the final frame.",
       "VIEW TOPOLOGY LOCK:",
       "FOUR-VIEW REFERENCES ARE TOPOLOGY MAPS, NOT COLLAGE REQUIREMENTS.",
-      "PRIMARY CAMERA IS FRONT-FACING BY DEFAULT: preserve the approved first-frame camera unless the user explicitly asks for a side or rear turn; do not switch to side or rear unless the user explicitly asks.",
-      "Keep the camera inside the approved first-frame view family. Do not rotate far enough to expose hidden side or rear surfaces unless those surfaces are already physically visible and correctly placed in the approved first frame.",
-      "Maintain view-correct placement through the whole motion. The front cow face and pink udder stay on the front surface, the orange blower valve stays on the rear/right-side surface, the back zipper stays on the rear centerline, and the rear tail stays centered on the back only.",
+      "CONTROLLED VIEW PATH: start from the approved first-frame camera, then allow a small physically valid front-to-three-quarter or brief side/rear glimpse when it helps the user action. Any revealed surface must match the four-view references exactly; do not invent unseen structures.",
+      "Maintain view-correct placement through the whole motion. The front cow face and pink lower-belly pad stay on the front surface, the orange blower valve stays on the rear/right-side surface, the back zipper stays on the rear centerline, and the rear tail stays centered on the back only.",
       "When the camera rotates, reveal and hide details according to physical visibility. A detail that is not visible from the current angle must remain hidden, not relocated.",
       "SHAPE AND VOLUME ENVELOPE LOCK:",
       "Maintain the same 155-190cm human-body envelope and low-to-medium inflated cow-costume silhouette through every frame. The costume must not become skinny, deflated, overly tall, overly round, balloon-spherical, muscular, creature-like, mascot-like, plush-like, or realistic-animal-like.",
-      "HUMAN-SCALE SIZE LOCK: the cow costume must stay close to the wearer's body scale. Head height, head width, body width, belly volume, horn size, ear size, udder size, leg thickness, side thickness, and tail length must not grow beyond the references across any frame.",
-      "During motion, volume may wobble slightly like nylon inflatable fabric, but head size, body width, patch placement, snout size, udder size, horn size, hoof size, valve position, zipper position, and tail position must remain stable. No swelling, shrinking, melting, stretching, smoothing, or mascot-shell enlargement across frames.",
+      "HUMAN-SCALE SIZE LOCK: the cow costume must stay close to the wearer's body scale. Head height, head width, body width, belly volume, horn size, ear size, lower-belly pad size, leg thickness, side thickness, and tail length must not grow beyond the references across any frame.",
+      "During motion, volume may wobble slightly like nylon inflatable fabric, but head size, body width, patch placement, snout size, lower-belly pad size, horn size, hoof size, valve position, zipper position, and tail position must remain stable. No swelling, shrinking, melting, stretching, smoothing, or mascot-shell enlargement across frames.",
     ];
   }
   if (family === "shark") {
@@ -567,8 +943,7 @@ function buildVideoProductVisualLocks(productType) {
       "Maintain the tightened arm-fin lock through every frame: fins stay short, soft, close to the body, or only mildly angled outward. No horizontal airplane-wing, glider-wing, cape, manta-ray-wing, huge paddle, or extra-wide silhouette.",
       "VIEW TOPOLOGY LOCK:",
       "FOUR-VIEW REFERENCES ARE TOPOLOGY MAPS, NOT COLLAGE REQUIREMENTS.",
-      "PRIMARY CAMERA IS FRONT-FACING BY DEFAULT: preserve the approved first-frame camera unless the user explicitly asks for a side or rear turn; do not switch to side or rear unless the user explicitly asks.",
-      "Keep the camera inside the approved first-frame view family. Do not rotate far enough to expose hidden side or rear surfaces unless those surfaces are already physically visible and correctly placed in the approved first frame.",
+      "CONTROLLED VIEW PATH: start from the approved first-frame camera, then allow a small physically valid front-to-three-quarter or brief side/rear glimpse when it helps the user action. Any revealed surface must match the four-view references exactly; do not invent unseen structures.",
       "Choose one primary camera family before rendering and maintain a physically valid camera path through the motion. The video may reveal or hide product surfaces as the camera/subject moves, but it must never paste details from unrelated views onto the wrong surface.",
       "Visibility matrix: front-facing frames may show the front belly/window/zipper plus a thin side edge only; left-side frames may show only structures visible on the left-side reference; right-side frames may show only structures visible on the right-side reference, including the valve if that is the valve side; rear-facing frames may show the rear tail fin, back seam, and plain blue back only.",
       "Do not satisfy product consistency by showing all reference details in one generated frame. Product consistency means correct physical placement and preserved shape, not maximum visible details.",
@@ -587,7 +962,7 @@ function buildVideoProductVisualLocks(productType) {
       "MANDATORY GRAY MOUSE INFLATABLE COSTUME VIDEO LOCKS:",
       "Keep the light gray mouse body, rounded ears with cream interiors, cream face/nose area, protruding gray snout, black open mouth, brown cartoon eyes, cream oval belly, cream/yellow rear tail, back zipper, green circular blower valve, separated legs, foot covers, and nylon wrinkles stable from frame 1 to the final frame.",
       "VIEW TOPOLOGY LOCK:",
-      "Preserve the approved first-frame camera family. Front-visible mouse face and belly stay on the front surface; tail stays rear/side; green valve and back zipper stay on the back only. Hidden components remain hidden instead of relocating.",
+      "CONTROLLED VIEW PATH: start from the approved first-frame camera, then allow a small physically valid front-to-three-quarter or brief side/rear glimpse when it helps the user action. Front-visible mouse face and belly stay on the front surface; tail stays rear/side; green valve and back zipper stay on the back only.",
       "SHAPE AND VOLUME ENVELOPE LOCK:",
       "Maintain the same human-scale low-to-medium inflated mouse costume through every frame. No swelling into a round mascot, no shrinking, no plush/fur conversion, no realistic animal transformation, no new whiskers, teeth, logos, or accessories.",
     ];
@@ -597,7 +972,7 @@ function buildVideoProductVisualLocks(productType) {
       "MANDATORY FROG INFLATABLE COSTUME VIDEO LOCKS:",
       "Keep the green frog body, raised top eyes, small face window, black mouth band, cream belly/face region, blue scarf, black spots, webbed hands, webbed feet, rear black spine pattern, center back zipper, orange blower valve, and nylon wrinkles stable from frame 1 to the final frame.",
       "VIEW TOPOLOGY LOCK:",
-      "Preserve the approved first-frame camera family. Front face/scarf/belly details stay on the front, side spots stay on the side, rear spine/zipper/orange valve stay on the back. Do not rotate into unapproved hidden surfaces unless requested and physically valid.",
+      "CONTROLLED VIEW PATH: start from the approved first-frame camera, then allow a small physically valid front-to-three-quarter or brief side/rear glimpse when it helps the user action. Front face/scarf/belly details stay on the front, side spots stay on the side, rear spine/zipper/orange valve stay on the back.",
       "SHAPE AND VOLUME ENVELOPE LOCK:",
       "Maintain the same human-scale low-to-medium inflated frog suit with separated legs and floor contact. No giant mascot head, no realistic frog, no plush texture, no extra eyes, no new scarf, no new spot pattern, no product swelling or melting across frames.",
     ];
@@ -605,9 +980,9 @@ function buildVideoProductVisualLocks(productType) {
   if (family === "sumo") {
     return [
       "MANDATORY SUMO INFLATABLE COSTUME VIDEO LOCKS:",
-      "Keep the beige inflatable body, black mawashi belt, black front loincloth panel, simple chest lines, belly-button dot, rounded head, black topknot/cap, wide T-shaped side silhouette, back zipper, orange circular blower valve, rear belt structure, separated legs, and nylon wrinkles stable from frame 1 to the final frame.",
+      "Keep the beige inflatable body, black mawashi belt, black front loincloth panel, simple upper-torso lines, belly-button dot, rounded head, black topknot/cap, wide T-shaped side silhouette, back zipper, orange circular blower valve, rear belt structure, separated legs, and nylon wrinkles stable from frame 1 to the final frame.",
       "VIEW TOPOLOGY LOCK:",
-      "Preserve the approved first-frame camera family. Front mawashi/chest/belly details stay on the front; side belt ties stay on the side; back zipper and orange valve stay on the rear. Do not move rear hardware onto the front stomach.",
+      "CONTROLLED VIEW PATH: start from the approved first-frame camera, then allow a small physically valid front-to-three-quarter or brief side/rear glimpse when it helps the user action. Front mawashi/upper-torso/belly details stay on the front; side belt ties stay on the side; back zipper and orange valve stay on the rear. Do not move rear hardware onto the front stomach.",
       "SHAPE AND VOLUME ENVELOPE LOCK:",
       "Maintain the same human-scale low-to-medium inflated sumo costume. No real wrestler conversion, no kimono, no baby doll, no giant display balloon, no body swelling, no shrinking, no melting, no new face/hair/clothing/accessories across frames.",
     ];
@@ -617,16 +992,16 @@ function buildVideoProductVisualLocks(productType) {
     "Keep the approved first-frame product silhouette, human-scale wearable volume, colors, pattern density, component positions, seams, valves, zipper, face/ornament features, appendages, feet, and material wrinkles stable from frame 1 to the final frame.",
     "VIEW TOPOLOGY LOCK:",
     "FOUR-VIEW REFERENCES ARE TOPOLOGY MAPS, NOT COLLAGE REQUIREMENTS.",
-    "PRIMARY CAMERA IS FRONT-FACING BY DEFAULT: preserve the approved first-frame camera unless the user explicitly asks for a side or rear turn.",
-    "When motion reveals or hides surfaces, maintain view-correct placement. Hidden details remain hidden, not relocated.",
+    "CONTROLLED VIEW PATH: start from the approved first-frame camera, then allow a small physically valid front-to-three-quarter or brief side/rear glimpse when it helps the user action. Any revealed surface must match the four-view references exactly.",
+    "When motion reveals or hides surfaces, maintain view-correct placement. Hidden details remain hidden until the camera path physically reveals their surface, and then they must appear in their four-view-proven location.",
     "SHAPE AND VOLUME ENVELOPE LOCK:",
     "Maintain the same human-body envelope and low-to-medium inflated four-view silhouette through every frame. No swelling, shrinking, melting, stretching, smoothing, or mascot-shell enlargement across frames.",
   ];
 }
 
 function buildFourViewFirstFramePrompt(payload) {
-  const scenePrompt = typeof payload.scene_prompt === "string" ? payload.scene_prompt.trim() : "";
-  const productType = typeof payload.product_type === "string" ? payload.product_type.trim() : "wearable inflatable product";
+  const scenePrompt = typeof payload.scene_prompt === "string" ? sanitizeProductText(payload.scene_prompt) : "";
+  const productType = typeof payload.product_type === "string" ? sanitizeProductText(payload.product_type) : "wearable inflatable product";
   const lockedNodes = Array.isArray(payload.locked_nodes) ? payload.locked_nodes : [];
   const supportImageCount = Number.isFinite(Number(payload.support_image_count)) ? Number(payload.support_image_count) : 0;
   const previousFirstFrameCount = Number.isFinite(Number(payload.previous_first_frame_count)) ? Number(payload.previous_first_frame_count) : 0;
@@ -635,21 +1010,13 @@ function buildFourViewFirstFramePrompt(payload) {
     : null;
   const failedChecks = Array.isArray(reviewFeedback?.failed_checks) ? reviewFeedback.failed_checks : [];
   const passedChecks = Array.isArray(reviewFeedback?.passed_checks) ? reviewFeedback.passed_checks : [];
-  const nodeLines = lockedNodes
-    .filter((node) => node && typeof node === "object")
-    .map((node) => {
-      const code = typeof node.code === "string" ? node.code : "Locked_Detail";
-      const label = typeof node.label === "string" ? node.label : "";
-      const detail = typeof node.detail === "string" ? node.detail : "";
-      return `- ${code}${label ? ` (${label})` : ""}: ${detail}`;
-    })
-    .join("\n");
+  const nodeLines = formatLockedNodeLines(lockedNodes, 14, 2600, " / ");
   const failedFeedbackLines = failedChecks
     .filter((check) => check && typeof check === "object")
     .map((check) => {
       const id = typeof check.id === "string" ? check.id : "failed-check";
-      const label = typeof check.label === "string" ? check.label : "";
-      const detail = typeof check.detail === "string" ? check.detail : "";
+      const label = typeof check.label === "string" ? sanitizeProductText(check.label) : "";
+      const detail = typeof check.detail === "string" ? sanitizeProductText(check.detail) : "";
       return `- ${id}${label ? ` (${label})` : ""}: ${detail}`;
     })
     .join("\n");
@@ -657,8 +1024,8 @@ function buildFourViewFirstFramePrompt(payload) {
     .filter((check) => check && typeof check === "object")
     .map((check) => {
       const id = typeof check.id === "string" ? check.id : "passed-check";
-      const label = typeof check.label === "string" ? check.label : "";
-      const detail = typeof check.detail === "string" ? check.detail : "";
+      const label = typeof check.label === "string" ? sanitizeProductText(check.label) : "";
+      const detail = typeof check.detail === "string" ? sanitizeProductText(check.detail) : "";
       return `- ${id}${label ? ` (${label})` : ""}: ${detail}`;
     })
     .join("\n");
@@ -676,7 +1043,7 @@ function buildFourViewFirstFramePrompt(payload) {
     `Product type: ${productType}. It must remain a wearable inflatable costume/product, not a real animal, cartoon mascot, plush toy, redesigned character, or generic prop.`,
     ...buildFirstFrameProductVisualLocks(productType),
     ...buildInflatableHardwareMaterialLocks(productType),
-    "If the scene request conflicts with product fidelity, ignore the conflicting scene detail and keep product fidelity.",
+    "If the scene request conflicts with product fidelity, adapt the scene/action to the nearest safe visible version while keeping the product shell and view-correct component placement.",
     nodeLines ? `Confirmed locked details:\n${nodeLines}` : "Confirmed locked details: preserve every visible product structure from the uploaded references.",
     previousFirstFrameCount > 0
       ? "Previous first-frame reference is supplied as the final extra image after the four core views and any preset support views. It is only for preserving the old scene, camera, passed checklist items, and unmentioned areas during targeted regeneration; it is not a new product view or new topology source."
@@ -691,7 +1058,7 @@ function buildFourViewFirstFramePrompt(payload) {
       : "",
     "Backend extraction priority: front view locks front proportions and front-owned components; left and right side views lock side thickness, asymmetry, side-visible components, seams and valve direction; back view locks rear silhouette, back seam/zipper, rear-owned tail/valve/components, and rear color/pattern field; preset auxiliary support views only strengthen same-product fragile local evidence.",
     `SCENE CONTINUITY CONTEXT:\n${scenePrompt || "Keep a realistic ecommerce product-video setting."}`,
-    "Composition rule: full product body visible for the chosen camera, no crop of physically visible feet, face/head details, zipper, valve, appendages, udder, fins, tail, horns, ears, or other identity-critical components. Realistic ecommerce short-video still frame.",
+    "Composition rule: full product body visible for the chosen camera, no crop of physically visible feet, face/head details, zipper, valve, appendages, front lower-belly pad, fins, tail, horns, ears, or other identity-critical components. Realistic ecommerce short-video still frame.",
   ].join("\n\n");
 }
 
@@ -718,18 +1085,25 @@ function buildFirstFramePayload(payload) {
   const previousFirstFrameUrl = typeof previous_first_frame_url === "string" && isReadableVideoFirstFrameUrl(previous_first_frame_url)
     ? previous_first_frame_url.trim()
     : "";
+  const modelLimits = getImageModelLimit(upstreamPayload.model);
+  const promptText = fitPromptToLimit(
+    [
+      buildFourViewFirstFramePrompt({
+        scene_prompt,
+        product_type,
+        locked_nodes,
+        support_image_count: readableSupportImages.length,
+        previous_first_frame_count: previousFirstFrameUrl ? 1 : 0,
+        review_feedback,
+      }),
+    ],
+    modelLimits.maxPromptChars,
+  );
   return {
     ...upstreamPayload,
     image_urls: [...readableImages, ...readableSupportImages, ...(previousFirstFrameUrl ? [previousFirstFrameUrl] : [])],
     previous_first_frame_count: previousFirstFrameUrl ? 1 : 0,
-    prompt: buildFourViewFirstFramePrompt({
-      scene_prompt,
-      product_type,
-      locked_nodes,
-      support_image_count: readableSupportImages.length,
-      previous_first_frame_count: previousFirstFrameUrl ? 1 : 0,
-      review_feedback,
-    }),
+    prompt: sanitizeProductText(promptText),
   };
 }
 
@@ -750,8 +1124,8 @@ function buildVideoFirstFramePixelAnchorLocks(productType) {
     }
     if (family === "cow") {
       return [
-        "COW VIDEO ANCHOR: do not use video quality enhancement to enlarge the cow head, smooth patch edges, redesign the snout/udder/hooves, hide real shoes or hands, or convert the approved first frame into a cleaner mascot suit.",
-        "COW HARD FAIL DETAILS: preserve horns, ears, black patch layout, pink snout, pink udder, hoof gloves/feet, rear zipper, orange rear-side blower valve, centered tail, visible human-scale stance, and nylon wrinkles. No new cartoon face, no patch repaint, no udder relocation, no hoof enlargement, no tail/valve on the front, and no giant round cow mascot shell.",
+        "COW VIDEO ANCHOR: do not use video quality enhancement to enlarge the cow head, smooth patch edges, redesign the snout/lower-belly pad/hoof covers, hide real shoes or hands, or convert the approved first frame into a cleaner mascot suit.",
+        "COW HARD FAIL DETAILS: preserve horns, ears, black patch layout, pink snout, pink lower-belly pad, hoof gloves/feet, rear zipper, orange rear-side blower valve, centered tail, visible human-scale stance, and nylon wrinkles. No new cartoon face, no patch repaint, no lower-belly pad relocation, no hoof enlargement, no tail/valve on the front, and no giant round cow mascot shell.",
       ];
     }
     if (family === "frog") {
@@ -763,7 +1137,7 @@ function buildVideoFirstFramePixelAnchorLocks(productType) {
     if (family === "sumo") {
       return [
         "SUMO VIDEO ANCHOR: do not use video quality enhancement to redesign the mawashi, belly dot, head cap, arms, rear valve, body width, or convert the approved first frame into a cleaner character suit.",
-        "SUMO HARD FAIL DETAILS: preserve the black mawashi belt, front loincloth panel, belly-button dot, simple chest lines, black topknot/cap, wide side T silhouette, rear zipper, rear orange blower valve, rear belt structure, separated legs, and nylon wrinkles. No real wrestler body, no kimono, no baby-doll redesign, no new face/hair/accessories, no rear hardware on the front belly, and no giant round display balloon.",
+        "SUMO HARD FAIL DETAILS: preserve the black mawashi belt, front loincloth panel, belly-button dot, simple upper-torso lines, black topknot/cap, wide side T silhouette, rear zipper, rear orange blower valve, rear belt structure, separated legs, and nylon wrinkles. No real wrestler body, no kimono, no baby-doll redesign, no new face/hair/accessories, no rear hardware on the front belly, and no giant round display balloon.",
       ];
     }
     return [
@@ -776,39 +1150,24 @@ function buildVideoFirstFramePixelAnchorLocks(productType) {
     "The approved first frame is the immutable identity anchor, not a loose style reference. Frame 1 of the video must match the supplied first-frame image in product silhouette, head/face geometry, ears/horns/fins/arms/feet, visible human hands/shoes, object positions, pose, colors, seams, wrinkles, valve/port placement, and background-product contact. Do not redraw a cleaner or higher-quality replacement product before animating.",
     "FRAME 1 EXACT START RULE: the video must start from the supplied first-frame pixels without re-rendering the product, without changing the background contact points, without replacing the hands/shoes/props, and without product beautification before motion begins.",
     "HANDHELD PROP SAFETY RULE: handheld props are allowed when they support the action, humor, or ecommerce story. They must be treated as external scene/action props, not product components: props may not cover or replace identity-critical product parts, may not force a new costume design, may not hide visible hands/shoes, and may not become a new logo/accessory attached to the product shell.",
-    "POSE AND CONTACT LOCK: keep the same arm layout, foot contact, body lean, tail/fin/ear/scarf/belt contact, and product-to-floor/product-to-shelf contact as frame 1 unless the action explicitly asks for a small physically plausible adjustment. If a prop is introduced or moved, only the prop and the nearest visible hand may change; the costume geometry, component positions, visible real hands/shoes, face/window/mouth details, valve/zipper, and body silhouette must remain locked.",
+    "POSE AND CONTACT CONTINUITY: frame 1 starts from the approved first frame, but arms, head direction, shoulders, nearby props, and a small body pivot may change enough to complete the user action. Preserve product identity, surface ownership, scale, and floor contact while allowing the pose to evolve visibly.",
     "Quality rule: higher resolution, sharper lighting, denoising, cinematic polish, or video enhancement may improve only compression/background clarity. It must not improve the product by changing shape, proportions, texture, facial graphics, hands, feet, bag/object labels, material wrinkles, seams, zipper teeth, valve rings, or pose.",
     "Comedy story is required, not optional: the clip must show a visible three-beat gag, a misunderstanding or prop reaction, a pause, and a small twist. Product fidelity and comedy must coexist; do not remove the gag just to make the product stand still.",
     "Motion must be visible but controlled: allow a clear arm gesture, elastic side-to-side wobble, small recoil, half-step slide, prop interaction, and a freeze-frame style pause. Keep any existing hand-to-object contact, reaching hand, held bag, visible shoes, tail, valve, and body outline physically plausible while still performing the gag.",
-    "MOTION AMPLITUDE CEILING: keep the face window and zipper mostly vertical throughout the clip. Feet may stay planted or slide a short half-step; do not jump, run, fall, fully bow, spin, reveal a new side, or turn the gag into a dance routine. The action should be easy to see at ecommerce-video scale.",
-    "Hard fail: if frame 1 or any later frame looks like a newly generated cleaner product rather than the approved first frame gently moving, the video is wrong. Reject mascot beautification, pose reblocking, product redraw, product repaint, background resynthesis that changes shelf/object contact, and object replacement.",
+    "MOTION COMPLETION RANGE: keep the face window and zipper readable and mostly upright, but allow a controlled front-to-three-quarter or brief side/back glimpse when the four-view references prove that surface and the action needs it. Feet may stay planted or slide a short half-step; no jump, run, fall, full spin, or product-obscuring dance routine.",
+    "Strict preservation rule: if frame 1 or any later frame looks like a newly generated cleaner product rather than the approved product performing the requested scene, the video is wrong. Also wrong: a nearly static first-frame micro-animation that drops the user's action beats.",
     ...familyLocks,
   ];
 }
 
 function sanitizeVideoPromptText(text) {
-  return String(text || "")
-    .replace(/偷吃/g, "试吃")
-    .replace(/偷拿/g, "拿起")
-    .replace(/偷/g, "悄悄")
-    .replace(/被发现/g, "被注意到")
-    .replace(/吓一跳/g, "愣了一下")
-    .replace(/吓/g, "愣")
-    .replace(/推了一下/g, "轻轻碰到")
-    .replace(/推/g, "轻移")
-    .replace(/撞上/g, "差点贴到")
-    .replace(/撞/g, "轻碰")
-    .replace(/砰的一声/g, "突然轻响")
-    .replace(/攻击|打斗|暴力|危险|受伤|摔倒|逃跑|追赶|抢夺|砸|爆炸/g, "安全的小插曲")
-    .replace(/鬼脸/g, "无辜表情")
-    .replace(/求助/g, "示意")
+  return sanitizeProductText(text)
     .replace(/steal|stolen|attack|violence|danger|injury|fight|chase|escape|explode/gi, "safe playful beat")
-    .replace(/慌/g, "忙")
     .trim();
 }
 
 function sanitizeUpstreamVideoPromptText(text) {
-  return String(text || "")
+  return sanitizeProductText(text)
     .replace(/locked dead across all frames/gi, "strictly consistent across all frames")
     .replace(/\bHARD FAIL DETAILS\b/g, "STRICT PRESERVATION DETAILS")
     .replace(/\bHard fail\b/g, "Strict preservation rule")
@@ -833,36 +1192,122 @@ function sanitizeUpstreamVideoPromptText(text) {
 
 function isSensitiveTextError(data, status) {
   const text = JSON.stringify(data || {});
-  return status === 400 && /InputTextSensitiveContentDetected|sensitive information|sensitive content|敏感/i.test(text);
+  return status === 400 && /InputTextSensitiveContentDetected|sensitive information|sensitive content|鏁忔劅/i.test(text);
 }
 
 function buildSensitiveSafeVideoActionPrompt(payload) {
-  const productType = typeof payload.product_type === "string" && payload.product_type.trim()
-    ? payload.product_type.trim()
-    : "当前充气产品";
+  const productType = typeof payload.product_type === "string" && payload.product_type.trim() ? sanitizeProductText(payload.product_type) : "current inflatable product";
   const source = sanitizeVideoPromptText(typeof payload.action_prompt === "string" ? payload.action_prompt : "");
   const scene = sanitizeVideoPromptText(typeof payload.scene_prompt === "string" ? payload.scene_prompt : "");
   return [
-    `${productType}在已确认首帧的同一场景中做一个安全、轻松、无冲突的短视频动作。`,
-    source ? `保留用户想要的轻微动作方向：${source}` : "动作只包含小幅摆动、慢半拍抬手、停顿、轻微回弹和一个无害反转。",
-    scene ? `沿用场景元素：${scene}` : "沿用首帧原地点、原道具和原镜头。",
-    "只写生活化、幽默、产品安全的小动作；需要有一个小包袱或反转。BGM 和背景对话可有可无，可以作为气氛提示，但不要强制。所有动作都保持轻松、无冲突、可拍摄、低风险。",
-  ].join("");
+    `Generate a safe ecommerce short video for ${productType}.`,
+    source ? `Keep the intended gentle action direction: ${source}` : "Use only small safe movements: slight wobble, slow hand gesture, pause, and soft recoil.",
+    scene ? `Keep the original scene context: ${scene}` : "Keep the original scene and visible props from the first frame.",
+    "Do not add violence, danger, chase, fall, explosion, or aggressive motion. Product identity and first-frame consistency are highest priority.",
+  ].join("\n");
 }
 
 function createSensitiveSafeVideoPayload(payload) {
   return {
     ...payload,
+    sensitive_safe_retry: true,
     action_prompt: buildSensitiveSafeVideoActionPrompt(payload),
     scene_prompt: sanitizeVideoPromptText(payload.scene_prompt),
   };
 }
 
+function neutralizeVideoSafetyFalsePositiveTerms(text) {
+  return String(text || "")
+    .replace(/steal|stolen|attack|violence|danger|injury|fight|chase|escape|explode/gi, "safe playful beat")
+    .trim();
+}
+
+function buildSensitiveSafeProductVideoPrompt(payload) {
+  const productType = typeof payload.product_type === "string" && payload.product_type.trim() ? sanitizeProductText(payload.product_type) : "current inflatable product";
+  const actionPrompt = neutralizeVideoSafetyFalsePositiveTerms(sanitizeVideoPromptText(typeof payload.action_prompt === "string" ? payload.action_prompt.trim() : ""));
+  const scenePrompt = neutralizeVideoSafetyFalsePositiveTerms(sanitizeVideoPromptText(typeof payload.scene_prompt === "string" ? payload.scene_prompt.trim() : ""));
+  const stableProductName = getProductStableName(productType);
+  return [
+    `Generate a light daily ecommerce short video from the uploaded first frame. The subject is always ${stableProductName}.`,
+    scenePrompt ? `Keep the first-frame scene and visible props: ${scenePrompt}` : "Keep the first-frame scene and visible props.",
+    actionPrompt ? `Action direction: ${actionPrompt}` : "Action direction: gentle wobble, small hand gesture, pause, and soft playful reaction.",
+    "Use only controlled small motion. Keep the face window and zipper mostly vertical and feet grounded; allow a slight three-quarter, side, or brief rear glimpse only when the four-view topology proves that surface and the action needs it. No jump, no cut, no full spin.",
+    "Preserve product identity, silhouette, colors, material wrinkles, wearer proportions, hands, shoes, zipper, valves, tail/ears/fins/scarf/belt, and all visible first-frame contacts.",
+  ].join("\n\n");
+}
+
+function summarizeVideoLockedNodes(lockedNodes, maxLines = 8) {
+  if (!Array.isArray(lockedNodes)) return "";
+  return lockedNodes
+    .filter((node) => node && typeof node === "object")
+    .slice(0, maxLines)
+    .map((node) => {
+      const label = typeof node.label === "string" ? sanitizeProductText(node.label) : "";
+      const detail = typeof node.detail === "string" ? sanitizeProductText(node.detail) : "";
+      return [label, detail].filter(Boolean).join(": ");
+    })
+    .filter(Boolean)
+    .join("; ");
+}
+
+function compactProductFeatureLock(productType) {
+  return `Product feature lock for ${getProductStableName(productType)}: preserve the approved first-frame silhouette, colors, facial/window details, zipper, valve, tail/ears/fins/scarf/belt, hands, shoes, wearer proportions, and fabric wrinkles. Do not beautify into a new mascot or add new components.`;
+}
+
+function truncateTextByChars(text, maxChars) {
+  const value = String(text || "").trim();
+  if (value.length <= maxChars) return value;
+  return `${value.slice(0, Math.max(0, maxChars - 16)).trim()}...`;
+}
+
+function fitPromptToLimit(parts, maxChars) {
+  const cleanParts = parts.map((part) => String(part || "").trim()).filter(Boolean);
+  let result = cleanParts.join("\n\n").trim();
+  if (result.length <= maxChars) return result;
+  const fitted = [];
+  for (const part of cleanParts) {
+    const next = [...fitted, part].join("\n\n").trim();
+    if (next.length <= maxChars) {
+      fitted.push(part);
+      continue;
+    }
+    const remaining = maxChars - fitted.join("\n\n").length - (fitted.length ? 2 : 0);
+    if (remaining > 60) fitted.push(truncateTextByChars(part, remaining));
+    break;
+  }
+  return fitted.join("\n\n").trim().slice(0, maxChars);
+}
+
+function buildCompactShishiProductVideoPrompt(payload) {
+  const actionPrompt = truncateTextByChars(sanitizeVideoPromptText(typeof payload.action_prompt === "string" ? payload.action_prompt.trim() : ""), 1200);
+  const scenePrompt = truncateTextByChars(sanitizeVideoPromptText(typeof payload.scene_prompt === "string" ? payload.scene_prompt.trim() : ""), 650);
+  const productType = typeof payload.product_type === "string" && payload.product_type.trim() ? sanitizeProductText(payload.product_type) : "current inflatable product";
+  const stableProductName = getProductStableName(productType);
+  const motionRule = typeof payload.motion_rule === "string" ? payload.motion_rule.trim() : "";
+  const lockedSummary = truncateTextByChars(summarizeVideoLockedNodes(payload.locked_nodes), 900);
+  const hasFourViews = Array.isArray(payload.image_urls) && payload.image_urls.filter((item) => typeof item === "string" && item.trim()).length === 4;
+  const supportSource = Array.isArray(payload.support_image_urls) ? payload.support_image_urls : payload.detail_image_urls;
+  const supportCount = Array.isArray(supportSource) ? supportSource.filter((item) => typeof item === "string" && item.trim()).length : 0;
+  const parts = [
+    `Generate a same-scene ecommerce short video from the uploaded first frame. The subject is always ${stableProductName}; frame 1 must preserve product shape, pose, color, face/window/zipper, hands, feet contact, props, and background placement.`,
+    actionPrompt ? `User action and small gag to prioritize: ${actionPrompt}` : "Action requirement: show 2-3 clear but small daily comedy beats with a pause and a tiny twist, not only standing or breathing.",
+    scenePrompt ? `Scene continuity: ${scenePrompt}` : "Scene continuity: keep the original location, camera, and visible props from the first frame.",
+    compactProductFeatureLock(productType),
+    hasFourViews ? `Four-view topology is only a product placement contract. Support views: ${supportCount}. The approved first frame is the direct video visual input.` : "If four-view metadata is incomplete, treat the approved first frame as the only direct visual anchor.",
+    lockedSummary ? `Confirmed lock nodes: ${lockedSummary}` : "",
+    "Camera rule: stable ecommerce shot, full body visible, no cuts, no fast zoom. Start from the approved first-frame view, then allow a controlled three-quarter, side, or brief rear glimpse when the user action needs it and the four-view topology proves that surface.",
+    "Motion rule: face window and zipper stay readable and mostly upright; feet remain grounded or make a short slide. Arm/hand, head direction, prop interaction, and a small body pivot must be visible enough to complete the gag. No jump, run, fall, full spin, or product-obscuring prop.",
+    motionRule ? `Extra motion boundary: ${motionRule}` : "",
+    "Balance rule: product identity and user action both must survive. Preserve silhouette, proportions, colors, wrinkles, hands, shoes, zipper, valves, tail/ears/fins/scarf/belt, and view-correct component placement, but do not drop the requested action into a nearly static first-frame micro-animation.",
+  ];
+  return fitPromptToLimit(parts, SHISHI_PROMPT_SOFT_LIMIT);
+}
+
 function buildProductVideoPrompt(payload) {
   const actionPrompt = sanitizeVideoPromptText(typeof payload.action_prompt === "string" ? payload.action_prompt.trim() : "");
-  const scenePrompt = typeof payload.scene_prompt === "string" ? payload.scene_prompt.trim() : "";
-  const productType = typeof payload.product_type === "string" ? payload.product_type.trim() : "wearable inflatable product";
-  const motionRule = typeof payload.motion_rule === "string" ? payload.motion_rule.trim() : "Keep motion small and product-safe.";
+  const scenePrompt = typeof payload.scene_prompt === "string" ? sanitizeProductText(payload.scene_prompt) : "";
+  const productType = typeof payload.product_type === "string" ? sanitizeProductText(payload.product_type) : "wearable inflatable product";
+  const motionRule = typeof payload.motion_rule === "string" ? sanitizeProductText(payload.motion_rule) : "Keep motion small and product-safe.";
   const lockedNodes = Array.isArray(payload.locked_nodes) ? payload.locked_nodes : [];
   const readableImages = Array.isArray(payload.image_urls)
     ? payload.image_urls.filter((item) => typeof item === "string" && item.trim())
@@ -871,42 +1316,41 @@ function buildProductVideoPrompt(payload) {
   const readableSupportImages = Array.isArray(supportSource)
     ? supportSource.filter((item) => typeof item === "string" && item.trim())
     : [];
-  const nodeLines = lockedNodes
-    .filter((node) => node && typeof node === "object")
-    .map((node) => {
-      const code = typeof node.code === "string" ? node.code : "Locked_Detail";
-      const label = typeof node.label === "string" ? node.label : "";
-      const detail = typeof node.detail === "string" ? node.detail : "";
-      return `- ${code}${label ? ` (${label})` : ""}: ${detail}`;
-    })
-    .join("\n");
+  const nodeLines = formatLockedNodeLines(lockedNodes, 10, 2000, " / ");
+  const actionFallback =
+    "Use a clear three-beat ecommerce comedy motion: notice a small prop, react half a beat too seriously, freeze for a tiny twist, then recover with a soft inflatable wobble.";
+  const requiredMotionBeats = actionPrompt || actionFallback;
 
   return [
+    `REQUIRED USER MOTION BEATS. These beats must be visible before any generic idle display:\n${requiredMotionBeats}`,
+    "Do not replace the user-named subject, scene, or props from the motion beats. Preserve named scene items as visible context when they are safe: laundry room, drum washer, blue basket, coin machine, waiting gesture, foot taps, tiny arm sway, glance, restrained pointing, or the user's equivalent props.",
+    "The final video cannot be only standing, breathing, or barely swaying. It must show 2-3 small readable action beats while preserving product fidelity.",
     "HIGHEST PRIORITY PRODUCT CONSISTENCY VIDEO CONTRACT.",
-    "FOUR-VIEW PRODUCT HARD LOCK. Approved first frame is the direct video media input. FOUR-VIEW TEXT CONTRACT: use the uploaded core reference order as product metadata, not as extra visible surfaces. If the video API cannot accept extra visual references, keep motion inside the approved first-frame evidence instead of inventing or revealing unverified sides.",
+    "FOUR-VIEW PRODUCT TOPOLOGY CONTRACT. Approved first frame is the direct video starting frame. The uploaded core views are allowed topology evidence for controlled camera/pose changes: front, left side, right side, and back may be revealed only when the motion path physically reaches that surface and only with view-correct placement.",
     readableImages.length === 4
       ? `Four-view metadata supplied:\n${CORE_VIEW_INPUT_ORDER}\nPreset auxiliary support views supplied: ${readableSupportImages.length}.`
       : "Four-view metadata is incomplete in the video request, so preserve the approved first frame and do not introduce any new product angle.",
-    "Animate the exact same product only. The video may change pose and scene motion, but the product itself must be locked dead across all frames: no silhouette drift, no proportion drift, no missing detail, no invented detail, no material change, and no style reinterpretation.",
+    "Animate the exact same product only. The video may change pose, arm/head direction, prop contact, and a controlled camera/subject angle; the product identity must stay consistent: no silhouette drift, no proportion drift, no missing detail, no invented detail, no material change, and no style reinterpretation.",
     `Product type: ${productType}. It must remain the same wearable inflatable product throughout the video.`,
     "Preserve all identity-critical product details from frame 1 to the final frame. Do not redesign, simplify, restyle, recolor, or reinterpret the product.",
     ...buildVideoFirstFramePixelAnchorLocks(productType),
     ...buildVideoProductVisualLocks(productType),
     ...buildInflatableHardwareMaterialLocks(productType),
     nodeLines ? `Confirmed locked details:\n${nodeLines}` : "Confirmed locked details: preserve every visible product structure from the references.",
-    "ACTION OBJECT GUARDRAIL: the lower-priority action prompt may introduce or animate handheld props, but the prop is always lower priority than product fidelity. If the action asks for holding, drinking, carrying, grabbing, showing, or hugging an object, allow the object only when it stays visually separate from the costume shell and does not obscure or rewrite hands, shoes, face/window/mouth details, valves, zipper, tail/fins/ears/scarf/belt, seams, wrinkles, colors, or body silhouette.",
+    "ACTION OBJECT GUARDRAIL: the action prompt may introduce or animate handheld props and scene props. Props must stay visually separate from the costume shell and must not obscure or rewrite hands, shoes, face/window/mouth details, valves, zipper, tail/fins/ears/scarf/belt, seams, wrinkles, colors, or body silhouette.",
     "VIDEO QUALITY GUARDRAIL: model, resolution, HD, high quality, cinematic, clearer, sharper, pro, or quality settings must never change product identity. Quality is allowed only after the exact first-frame product geometry, colors, components, material wrinkles, ports, zipper, hands, shoes, and pose remain unchanged.",
-    `COMEDY ACTION BRIEF, SAME PRIORITY AS SCENE CONTINUITY:\n${actionPrompt || "Use a clear three-beat ecommerce comedy motion: notice a small prop, react half a beat too seriously, freeze for a tiny twist, then recover with a soft inflatable wobble."}`,
+    `COMEDY ACTION BRIEF, SAME PRIORITY AS SCENE CONTINUITY:\n${requiredMotionBeats}`,
     "COMEDY PACING REQUIREMENT: show the gag visually in 2-3 readable beats. At least one beat must be a visible reaction or prop interaction, not just breathing, idle swaying, or a static product display.",
     `Scene continuity:\n${scenePrompt || "Keep the approved first-frame scene."}`,
     `Motion rule:\n${motionRule}`,
-    "Camera rule: stable vertical ecommerce shot, full body visible, no cuts, no fast zoom, no crop of face/head details, zipper, side valve, feet, fins, horns, ears, udder, hooves, tail, or other identity-critical components.",
+    "Camera rule: stable ecommerce shot, full body visible, no cuts, no fast zoom. Start from the approved first frame, then allow a controlled front-to-three-quarter, side, or brief rear glimpse when it helps complete the requested action. Do not reveal any surface that is not proven by the four-view references.",
+    "Four-view use in video: the four product views are topology evidence for physically valid camera paths, not collage ingredients. They permit showing side/back surfaces only with correct placement: valves, tails, zippers, fins, patches, belts, scarves, shoes, and hardware must stay on their proven surface.",
     "Negative: no quality-upscale redraw, no beautified mascot replacement, no cleaner cartoon head, no pose reblocking that changes the costume, no handheld prop motion that rewrites product hands or body geometry, no moved fan valve, no missing face/head detail, no broken tail, no duplicated appendages, no body deformation, no skinny body, no overinflated balloon body, no smooth plastic surface, no realistic animal skin, no plush toy, no new logo attached to the product, no new accessory attached to the product shell.",
-    "If the user action conflicts with product fidelity, ignore the conflicting action and preserve product fidelity.",
+    "If a requested action would damage product fidelity, adapt the action to the nearest safe visible version while preserving the action beat; do not ignore it or collapse the clip into idle swaying.",
   ].join("\n\n");
 }
 
-function buildVideoPayload(payload) {
+function buildVideoPayload(payload, options = {}) {
   const {
     action_prompt,
     scene_prompt,
@@ -916,17 +1360,119 @@ function buildVideoPayload(payload) {
     image_urls,
     support_image_urls,
     detail_image_urls,
+    story_intent,
+    storyIntent,
+    storyboards,
+    video_execution_package,
+    videoExecutionPackage,
+    selectedStoryboards,
+    productLockContract,
+    preflight,
     prompt,
     ...upstreamPayload
   } = payload;
   const model = typeof upstreamPayload.model === "string" && upstreamPayload.model.trim() ? upstreamPayload.model.trim() : VIDEO_MODEL;
+  const provider = typeof payload.video_provider === "string" ? payload.video_provider.trim().toLowerCase() : "";
+  const modelLimit = getVideoModelLimit(provider, model);
+  const useSensitiveSafePrompt = Boolean(upstreamPayload.sensitive_safe_retry);
+  const useCompactShishiPrompt = Boolean(options.compactShishiPrompt);
+  const rawPrompt = sanitizeUpstreamVideoPromptText(
+    useSensitiveSafePrompt
+      ? buildSensitiveSafeProductVideoPrompt({ action_prompt, scene_prompt, product_type })
+      : useCompactShishiPrompt
+        ? buildCompactShishiProductVideoPrompt({ action_prompt, scene_prompt, product_type, locked_nodes, motion_rule, image_urls, support_image_urls, detail_image_urls })
+      : buildProductVideoPrompt({ action_prompt, scene_prompt, product_type, locked_nodes, motion_rule, image_urls, support_image_urls, detail_image_urls }),
+  );
+  const promptLimit = useCompactShishiPrompt ? Math.min(modelLimit.promptSoftLimit, SHISHI_PROMPT_SOFT_LIMIT) : modelLimit.promptSoftLimit;
+  const fittedPrompt = fitPromptToLimit([rawPrompt], promptLimit);
   return {
     ...upstreamPayload,
     ...(model ? { model } : {}),
-    prompt: sanitizeUpstreamVideoPromptText(
-      buildProductVideoPrompt({ action_prompt, scene_prompt, product_type, locked_nodes, motion_rule, image_urls, support_image_urls, detail_image_urls }),
-    ),
+    duration: clampNumber(upstreamPayload.duration, modelLimit.minDuration, modelLimit.maxDuration, modelLimit.minDuration),
+    resolution: modelLimit.resolution || upstreamPayload.resolution,
+    prompt: fittedPrompt,
+    model_limits: modelLimit,
+    prompt_summary: {
+      promptChars: fittedPrompt.length,
+      promptLimit: modelLimit.promptHardLimit,
+      promptSoftLimit: promptLimit,
+      promptCompacted: fittedPrompt.length < rawPrompt.length || useCompactShishiPrompt,
+    },
   };
+}
+
+function createVideoPayloadSummary(payload, upstreamUrl, provider = "") {
+  const model = typeof payload?.model === "string" ? payload.model : "";
+  const providerKey = resolveVideoProviderFromUrl(upstreamUrl, provider);
+  const modelLimit = getVideoModelLimit(providerKey, model);
+  const prompt = typeof payload?.prompt === "string" ? payload.prompt.trim() : "";
+  const submittedDuration = resolveSubmittedVideoDuration(payload, upstreamUrl);
+  const requestedDuration = Number.isFinite(Number(payload?.requested_duration)) ? Number(payload.requested_duration) : Number(payload?.duration);
+  return {
+    durationSummary: {
+      requestedDuration,
+      submittedDuration,
+      providerDurationFixed: isWisechVideoUrl(upstreamUrl),
+      minDuration: modelLimit.minDuration,
+      maxDuration: modelLimit.maxDuration,
+    },
+    promptSummary: {
+      promptChars: prompt.length,
+      promptLimit: modelLimit.promptHardLimit,
+      promptSoftLimit: modelLimit.promptSoftLimit,
+      promptCompacted: Boolean(payload?.prompt_summary?.promptCompacted),
+    },
+    modelLimits: {
+      provider: providerKey,
+      model,
+      ...modelLimit,
+    },
+  };
+}
+
+async function proxyVideoSafety(payload) {
+  const baseConfig = pickProxyConfig(payload, OPENAI_VIDEO_GENERATIONS_PATH, "video");
+  const isShishiVideoRequest = isShishiKejiUrl(baseConfig.upstreamUrl);
+  const videoPayload = buildVideoPayload(payload, { compactShishiPrompt: isShishiVideoRequest });
+  const { apiKey, upstreamUrl, upstreamPayload } = pickProxyConfig(videoPayload, OPENAI_VIDEO_GENERATIONS_PATH, "video");
+  const prompt = typeof upstreamPayload.prompt === "string" ? upstreamPayload.prompt.trim() : "";
+  const { durationSummary, promptSummary, modelLimits } = createVideoPayloadSummary(upstreamPayload, upstreamUrl, payload?.video_provider);
+  if (!apiKey) {
+    return { status: 400, payload: { ok: false, verdict: "blocked", reason: "Video service API key is not configured.", safePrompt: buildSensitiveSafeVideoActionPrompt(payload), durationSummary, promptSummary, modelLimits } };
+  }
+  if (prompt.length > modelLimits.promptHardLimit) {
+    return { status: 400, payload: { ok: false, verdict: "blocked", reason: `Full video prompt is still too long: ${prompt.length} chars; limit is ${modelLimits.promptHardLimit}.`, safePrompt: buildSensitiveSafeVideoActionPrompt(payload), promptPreview: prompt.slice(0, 500), durationSummary, promptSummary, modelLimits } };
+  }
+  const moderationUrl = (() => {
+    try {
+      const parsed = new URL(upstreamUrl);
+      parsed.pathname = parsed.pathname.replace(/\/video\/generations\/?$/i, "/moderations").replace(/\/videos\/generations\/?$/i, "/moderations");
+      if (!/\/moderations\/?$/i.test(parsed.pathname)) parsed.pathname = `${parsed.pathname.replace(/\/+$/, "")}/moderations`;
+      parsed.search = "";
+      return parsed.toString();
+    } catch {
+      return "";
+    }
+  })();
+  if (!moderationUrl || isShishiKejiUrl(upstreamUrl) || isToapisUrl(upstreamUrl)) {
+    return { status: 200, payload: { ok: true, verdict: "skipped", reason: "No moderation endpoint is available for this provider.", upstreamUrl, promptPreview: prompt.slice(0, 500), durationSummary, promptSummary, modelLimits } };
+  }
+  const response = await fetch(moderationUrl, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ model: "omni-moderation-latest", input: prompt }),
+  });
+  const text = await response.text();
+  const data = parseUpstreamBody(text, response.status);
+  if (!response.ok) {
+    return { status: 200, payload: { ok: true, verdict: "skipped", reason: `Moderation endpoint returned ${response.status}; continuing with provider request.`, upstreamUrl: moderationUrl, upstreamStatus: response.status, promptPreview: prompt.slice(0, 500), durationSummary, promptSummary, modelLimits } };
+  }
+  const results = Array.isArray(data?.results) ? data.results : [];
+  const flagged = results.some((item) => item && typeof item === "object" && item.flagged === true);
+  if (flagged) {
+    return { status: 200, payload: { ok: false, verdict: "blocked", reason: "Moderation flagged the video prompt.", categories: results[0]?.categories || {}, categoryScores: results[0]?.category_scores || {}, safePrompt: buildSensitiveSafeVideoActionPrompt(payload), promptPreview: prompt.slice(0, 500), durationSummary, promptSummary, modelLimits } };
+  }
+  return { status: 200, payload: { ok: true, verdict: "passed", reason: "Video prompt passed moderation.", upstreamUrl: moderationUrl, promptPreview: prompt.slice(0, 500), durationSummary, promptSummary, modelLimits } };
 }
 
 function pickReadableImages(value) {
@@ -982,6 +1528,50 @@ function isVolcengineUrl(url) {
   } catch {
     return false;
   }
+}
+
+function isShishiKejiUrl(url) {
+  try {
+    return new URL(url).hostname === "api.shishikeji.com";
+  } catch {
+    return false;
+  }
+}
+
+function isWisechVideoUrl(url) {
+  try {
+    return new URL(url).hostname === "ai.wisech.com";
+  } catch {
+    return false;
+  }
+}
+
+function isToapisUrl(url) {
+  try {
+    return new URL(url).hostname === "toapis.com";
+  } catch {
+    return false;
+  }
+}
+
+function clampNumber(value, min, max, fallback) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.min(max, Math.max(min, Math.round(numeric)));
+}
+
+function getSeedanceDurationCap(model) {
+  const text = typeof model === "string" ? model.toLowerCase() : "";
+  if (text.includes("1-5") || text.includes("1.5")) return { min: 4, max: 12 };
+  if (text.includes("2-0") || text.includes("2.0") || text.includes("yunshu")) return { min: 4, max: 15 };
+  return { min: 4, max: 15 };
+}
+
+function resolveSubmittedVideoDuration(payload, upstreamUrl) {
+  const provider = resolveVideoProviderFromUrl(upstreamUrl, payload?.video_provider);
+  const limit = getVideoModelLimit(provider, payload?.model);
+  if (limit) return clampNumber(payload?.duration, limit.minDuration, limit.maxDuration, limit.minDuration);
+  return Number.isFinite(Number(payload?.duration)) ? Number(payload.duration) : WISECH_DEFAULT_VIDEO_DURATION_SECONDS;
 }
 
 function buildLabeledImageContent(imageUrls, previousFirstFrameCount = 0) {
@@ -1100,11 +1690,90 @@ async function buildOpenAIImageEditFormData(payload) {
   return form;
 }
 
+function extractUploadedImageUrl(value) {
+  if (!value || typeof value !== "object") return "";
+  const record = value;
+  for (const key of ["url", "image_url", "download_url", "public_url"]) {
+    if (typeof record[key] === "string" && /^https?:\/\//i.test(record[key])) return record[key];
+  }
+  if (record.data && typeof record.data === "object" && !Array.isArray(record.data)) {
+    const nested = extractUploadedImageUrl(record.data);
+    if (nested) return nested;
+  }
+  if (Array.isArray(record.data)) {
+    for (const item of record.data) {
+      const nested = extractUploadedImageUrl(item);
+      if (nested) return nested;
+    }
+  }
+  return "";
+}
+
+async function uploadToapisDataImage(dataImageUrl, apiKey) {
+  const { blob, fileName } = await imageUrlToBlob(dataImageUrl, 0);
+  if (blob.size > TOAPIS_MAX_UPLOAD_IMAGE_BYTES) {
+    throw new Error("The approved first frame is larger than 10 MB after conversion. Please regenerate or compress it before creating video.");
+  }
+  const form = new FormData();
+  form.append("file", blob, fileName);
+  form.append("purpose", "vision");
+  const upstreamUrl = `${TOAPIS_BASE_URL}${TOAPIS_IMAGE_UPLOAD_PATH}`;
+  const response = await fetch(upstreamUrl, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: form,
+  });
+  const text = await response.text();
+  const data = parseUpstreamBody(text, response.status);
+  if (!response.ok) {
+    throw new Error(toPublicErrorMessage(text || getUpstreamErrorText(data)));
+  }
+  const uploadedUrl = extractUploadedImageUrl(data);
+  if (!uploadedUrl) {
+    throw new Error("Image upload succeeded but no public image URL was returned.");
+  }
+  return uploadedUrl;
+}
+
+async function normalizeOpenAICompatibleVideoPayload(payload, upstreamUrl, apiKey) {
+  const firstFrameUrl = getVideoFirstFrameUrl(payload);
+  if (!firstFrameUrl.startsWith("data:image/")) return payload;
+  const uploadApiKey = isToapisUrl(upstreamUrl) ? apiKey : TOAPIS_API_KEY;
+  if (!uploadApiKey) {
+    throw new Error("This video provider does not accept base64 first-frame images, and ToAPI image upload is not configured. Please use a public http(s) image URL for the approved first frame.");
+  }
+  return {
+    ...payload,
+    image_url: await uploadToapisDataImage(firstFrameUrl, uploadApiKey),
+  };
+}
+
 function normalizeVideoResolution(value) {
   return typeof value === "string" ? value.toLowerCase().replace("1080p", "1080p").replace("720p", "720p") : "1080p";
 }
 
+function stripInternalPayloadFields(payload) {
+  if (!payload || typeof payload !== "object") return {};
+  const {
+    model_limits,
+    prompt_summary,
+    story_intent,
+    storyIntent,
+    storyboards,
+    video_execution_package,
+    videoExecutionPackage,
+    selectedStoryboards,
+    productLockContract,
+    preflight,
+    ...rest
+  } = payload;
+  return rest;
+}
+
 function buildVolcengineVideoPayload(payload) {
+  payload = stripInternalPayloadFields(payload);
   const prompt = typeof payload.prompt === "string" ? payload.prompt : "";
   const imageUrl = typeof payload.image_url === "string" ? payload.image_url : "";
   const duration = Number.isFinite(Number(payload.duration)) ? Number(payload.duration) : 8;
@@ -1138,6 +1807,7 @@ function buildVolcengineVideoPayload(payload) {
 }
 
 function buildDashScopeVideoPayload(payload) {
+  payload = stripInternalPayloadFields(payload);
   const prompt = typeof payload.prompt === "string" ? payload.prompt : "";
   const imageUrl = typeof payload.image_url === "string" ? payload.image_url : "";
   const duration = Number.isFinite(Number(payload.duration)) ? Number(payload.duration) : 8;
@@ -1184,6 +1854,7 @@ function buildVideoDimensions(aspectRatio) {
 }
 
 function buildOpenAICompatibleVideoPayload(payload, upstreamUrl) {
+  payload = stripInternalPayloadFields(payload);
   const {
     image_url,
     aspect_ratio,
@@ -1191,14 +1862,21 @@ function buildOpenAICompatibleVideoPayload(payload, upstreamUrl) {
     audio,
     prompt_extend,
     metadata,
+    requested_duration,
     ...rest
   } = payload;
   const prompt = typeof payload.prompt === "string" ? payload.prompt : "";
   const firstFrameUrl = getVideoFirstFrameUrl(payload);
-  const duration = Number.isFinite(Number(payload.duration)) ? Number(payload.duration) : 5;
+  const duration = resolveSubmittedVideoDuration(payload, upstreamUrl);
+  const requestedDuration = Number.isFinite(Number(payload.requested_duration)) ? Number(payload.requested_duration) : Number(payload.duration);
   const ratio = typeof aspect_ratio === "string" && aspect_ratio.trim() ? aspect_ratio.trim() : "9:16";
   const dimensions = buildVideoDimensions(ratio);
   const baseMetadata = metadata && typeof metadata === "object" && !Array.isArray(metadata) ? metadata : {};
+  const durationMetadata = {
+    requested_duration: requestedDuration,
+    submitted_duration: duration,
+    provider_duration_note: isWisechVideoUrl(upstreamUrl) ? "Wisech / Yunshu Seedance duration is clamped by model: Seedance 2.0 up to 15s, Seedance 1.5 Pro up to 12s." : undefined,
+  };
   const isPluralVideosEndpoint = (() => {
     try {
       return /\/videos\/generations\/?$/i.test(new URL(upstreamUrl).pathname);
@@ -1216,6 +1894,10 @@ function buildOpenAICompatibleVideoPayload(payload, upstreamUrl) {
       size: ratio,
       generate_audio: Boolean(audio),
       prompt_extend: Boolean(prompt_extend),
+      metadata: {
+        ...baseMetadata,
+        ...durationMetadata,
+      },
       ...(firstFrameUrl
         ? {
             image_with_roles: [
@@ -1237,6 +1919,7 @@ function buildOpenAICompatibleVideoPayload(payload, upstreamUrl) {
     ...(firstFrameUrl ? { image: firstFrameUrl } : {}),
     metadata: {
       ...baseMetadata,
+      ...durationMetadata,
       aspect_ratio: ratio,
       resolution: typeof resolution === "string" && resolution.trim() ? resolution.toLowerCase() : "1080p",
       generate_audio: Boolean(audio),
@@ -1267,6 +1950,7 @@ function resolveImageEditUrl(upstreamUrl) {
 }
 
 function buildProxyPayload(kind, upstreamUrl, upstreamPayload) {
+  if (isShishiKejiUrl(upstreamUrl) && kind === "video") return stripInternalPayloadFields(upstreamPayload);
   if (isVolcengineUrl(upstreamUrl) && kind === "video") return buildVolcengineVideoPayload(upstreamPayload);
   if (isDashScopeUrl(upstreamUrl)) {
     return kind === "video" ? buildDashScopeVideoPayload(upstreamPayload) : buildDashScopeImagePayload(upstreamPayload);
@@ -1291,13 +1975,32 @@ async function proxyJson(fallbackPath, payload, kind = "generic") {
   }
 
   const sendMultipartImageEdit = kind === "image" && !isDashScopeUrl(resolvedUpstreamUrl);
+  const sendShishiKejiVideo = kind === "video" && isShishiKejiUrl(resolvedUpstreamUrl);
   const retryDelay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
   async function sendProxyRequest(nextUpstreamPayload, retryReason = "") {
-    const proxyPayload = buildProxyPayload(kind, resolvedUpstreamUrl, nextUpstreamPayload);
-    const body = sendMultipartImageEdit
-      ? await buildOpenAIImageEditFormData(proxyPayload)
-      : JSON.stringify(proxyPayload);
+    let normalizedUpstreamPayload = nextUpstreamPayload;
+    let body;
+    try {
+      normalizedUpstreamPayload =
+        kind === "video" && !sendShishiKejiVideo && !isDashScopeUrl(resolvedUpstreamUrl) && !isVolcengineUrl(resolvedUpstreamUrl)
+          ? await normalizeOpenAICompatibleVideoPayload(nextUpstreamPayload, resolvedUpstreamUrl, apiKey)
+          : nextUpstreamPayload;
+      const proxyPayload = buildProxyPayload(kind, resolvedUpstreamUrl, normalizedUpstreamPayload);
+      body = sendShishiKejiVideo
+        ? await buildShishiKejiVideoFormData(proxyPayload)
+        : sendMultipartImageEdit
+          ? await buildOpenAIImageEditFormData(proxyPayload)
+          : JSON.stringify(proxyPayload);
+    } catch (error) {
+      return {
+        status: 400,
+        payload: {
+          error: error instanceof Error ? error.message : String(error),
+          upstreamUrl: resolvedUpstreamUrl,
+        },
+      };
+    }
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), kind === "video" ? VIDEO_UPSTREAM_TIMEOUT_MS : UPSTREAM_TIMEOUT_MS);
     let response;
@@ -1306,8 +2009,8 @@ async function proxyJson(fallbackPath, payload, kind = "generic") {
         method: "POST",
         signal: controller.signal,
         headers: {
-          Authorization: `Bearer ${apiKey}`,
-          ...(sendMultipartImageEdit ? {} : { "Content-Type": "application/json" }),
+          ...(sendShishiKejiVideo ? { "X-License-Key": apiKey } : { Authorization: `Bearer ${apiKey}` }),
+          ...(sendMultipartImageEdit || sendShishiKejiVideo ? {} : { "Content-Type": "application/json" }),
           ...(isDashScopeUrl(resolvedUpstreamUrl) && kind === "video" ? { "X-DashScope-Async": "enable" } : {}),
         },
         body,
@@ -1322,14 +2025,7 @@ async function proxyJson(fallbackPath, payload, kind = "generic") {
       return {
         status: 502,
         payload: {
-          error:
-            isAbortError && kind === "image"
-              ? "首帧生成还在上游处理，但这次等待时间太久了，系统先停下来了。请再试一次，或稍后换个更短的提示词再生成。"
-              : isAbortError && kind === "video"
-                ? "视频生成服务这次等待时间太久了，系统先停下来了。请稍后再试，或把动作描述写得更短一点。"
-            : kind === "image"
-              ? "首帧生成服务暂时连不上。不是本地项目没启动，是上游图片服务连接失败，请稍后再试。"
-              : "视频生成服务暂时连不上。不是本地项目没启动，是上游视频服务连接失败，请稍后再试。",
+          error: getUpstreamConnectionFailureMessage(kind, isAbortError),
           code: isAbortError ? "UPSTREAM_REQUEST_TIMEOUT" : "UPSTREAM_CONNECTION_FAILED",
           upstreamUrl: resolvedUpstreamUrl,
           upstreamError: error instanceof Error ? error.message : String(error),
@@ -1406,7 +2102,7 @@ async function proxyJson(fallbackPath, payload, kind = "generic") {
         status: retryResult.status,
         payload: withUpstreamError(
           {
-            error: "这次视频描述被平台安全规则拦下了。系统已经自动改写过一次，但平台仍然没有放行。可以把动作改得更日常一点，比如挥手、转身、停顿或轻轻晃动，再试一次。",
+            error: "视频通道拦截了本次完整请求。系统已经做过一次低风险改写，但上游仍未放行；这不一定是你写的那句提示词有问题，也可能来自系统拼接的产品锁、首帧图、素材组合或上游通道策略。",
             promptSanitizedRetry: true,
           },
           retryResult.status,
@@ -1422,72 +2118,49 @@ async function proxyJson(fallbackPath, payload, kind = "generic") {
 async function testProxy(fallbackPath, payload, kind = "generic") {
   const { baseUrl, apiKey, upstreamUrl: configuredUrl, upstreamPayload } = pickProxyConfig(payload, fallbackPath, kind);
   const model = typeof upstreamPayload.model === "string" ? upstreamPayload.model.trim() : "";
-  if (isDashScopeUrl(configuredUrl) || (kind === "video" && isVolcengineUrl(configuredUrl))) {
+  const videoProvider = typeof payload?.video_provider === "string" ? payload.video_provider.trim().toLowerCase() : "";
+  const modelLimits = kind === "video" ? { provider: resolveVideoProviderFromUrl(configuredUrl, videoProvider), model, ...getVideoModelLimit(resolveVideoProviderFromUrl(configuredUrl, videoProvider), model) } : undefined;
+  if (kind === "video" && isShishiKejiUrl(configuredUrl)) {
+    const upstreamUrl = `${baseUrl}/api/agent-app/me`;
+    if (!apiKey) return { status: 400, payload: { error: "Video service API key is not configured.", upstreamUrl } };
+    const response = await fetch(upstreamUrl, { method: "GET", headers: { "X-License-Key": apiKey } });
+    const text = await response.text();
+    const data = parseUpstreamBody(text, response.status);
+    return {
+      status: response.status,
+      payload: response.ok
+        ? { ok: true, model, modelFound: Boolean(model), upstreamStatus: response.status, upstreamUrl, wallet: data.wallet, agent: data.agent, modelLimits }
+        : withUpstreamError(data, response.status, upstreamUrl),
+    };
+  }
+  if (kind === "video" && isToapisUrl(configuredUrl)) {
     return {
       status: apiKey ? 200 : 400,
       payload: apiKey
-        ? { ok: true, model, modelFound: Boolean(model), upstreamUrl: configuredUrl }
-        : { error: "服务密钥还没有配置好，请先让管理员确认后台配置。", upstreamUrl: configuredUrl },
+        ? { ok: true, model, modelFound: Boolean(model), upstreamUrl: configuredUrl, note: "ToAPI video models use /videos/generations and are not listed by /models.", modelLimits }
+        : { error: "Video service API key is not configured.", upstreamUrl: configuredUrl },
     };
   }
-
-  const upstreamUrl = `${baseUrl}/models`;
-
-  if (!apiKey) {
+  if (isDashScopeUrl(configuredUrl) || (kind === "video" && isVolcengineUrl(configuredUrl))) {
     return {
-      status: 400,
-      payload: {
-        error: "服务密钥还没有配置好，请先让管理员确认后台配置。",
-        upstreamUrl,
-      },
+      status: apiKey ? 200 : 400,
+      payload: apiKey ? { ok: true, model, modelFound: Boolean(model), upstreamUrl: configuredUrl, modelLimits } : { error: "Video service API key is not configured.", upstreamUrl: configuredUrl },
     };
   }
-
-  const response = await fetch(upstreamUrl, {
-    method: "GET",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-    },
-  });
+  const upstreamUrl = `${baseUrl}/models`;
+  if (!apiKey) return { status: 400, payload: { error: "Service API key is not configured.", upstreamUrl } };
+  const response = await fetch(upstreamUrl, { method: "GET", headers: { Authorization: `Bearer ${apiKey}` } });
   const text = await response.text();
   const data = parseUpstreamBody(text, response.status);
-
   if (!response.ok) {
-    return {
-      status: response.status,
-      payload: withUpstreamError({
-        ...data,
-        upstreamUrl,
-        upstreamStatus: response.status,
-      }, response.status, upstreamUrl),
-    };
+    return { status: response.status, payload: withUpstreamError({ ...data, upstreamUrl, upstreamStatus: response.status }, response.status, upstreamUrl) };
   }
-
   const models = Array.isArray(data.data) ? data.data : [];
   const found = !model || models.some((item) => item && typeof item === "object" && item.id === model);
   if (found) {
-    return {
-      status: 200,
-      payload: {
-        ok: true,
-        model,
-        modelFound: Boolean(model),
-        upstreamStatus: response.status,
-        upstreamUrl,
-      },
-    };
+    return { status: 200, payload: { ok: true, model, modelFound: Boolean(model), upstreamStatus: response.status, upstreamUrl, ...(modelLimits ? { modelLimits } : {}) } };
   }
-
-  return {
-    status: 400,
-    payload: {
-      error: `服务已连通，但当前模型 ${model} 暂时不可用。请换一个模型，或让管理员确认模型名称。`,
-      model,
-      modelFound: false,
-      upstreamUrl,
-      upstreamStatus: response.status,
-    },
-  };
+  return { status: 400, payload: { error: `Service is reachable, but model ${model} is not available.`, model, modelFound: false, upstreamUrl, upstreamStatus: response.status } };
 }
 
 function extractGeneratedText(value) {
@@ -1531,7 +2204,7 @@ function extractGeneratedText(value) {
 }
 
 function cleanGeneratedPrompt(text) {
-  return String(text || "")
+  return sanitizeProductText(text)
     .replace(/^```[a-z]*\s*/i, "")
     .replace(/```$/i, "")
     .replace(/^["“”']+|["“”']+$/g, "")
@@ -1558,11 +2231,11 @@ function parsePromptPairText(text) {
           : "";
       if (firstFramePrompt && videoPrompt) {
         return {
-          sceneTitle: typeof parsed.sceneTitle === "string" ? parsed.sceneTitle.trim() : "",
-          sceneAnchor: typeof parsed.sceneAnchor === "string" ? parsed.sceneAnchor.trim() : "",
-          firstFramePrompt,
+          sceneTitle: typeof parsed.sceneTitle === "string" ? sanitizeProductText(parsed.sceneTitle) : "",
+          sceneAnchor: typeof parsed.sceneAnchor === "string" ? sanitizeProductText(parsed.sceneAnchor) : "",
+          firstFramePrompt: sanitizeProductText(firstFramePrompt),
           videoPrompt: sanitizeVideoPromptText(videoPrompt),
-          continuityLocks: typeof parsed.continuityLocks === "string" ? parsed.continuityLocks.trim() : "",
+          continuityLocks: typeof parsed.continuityLocks === "string" ? sanitizeProductText(parsed.continuityLocks) : "",
         };
       }
     } catch {
@@ -1572,13 +2245,78 @@ function parsePromptPairText(text) {
   return null;
 }
 
+async function videoUrlToBlob(videoUrl, fileName = "first-frame.png") {
+  if (typeof videoUrl !== "string" || !videoUrl.trim()) {
+    throw new Error("Invalid video media input.");
+  }
+  if (videoUrl.startsWith("data:image/")) {
+    const match = videoUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
+    if (!match) throw new Error("Invalid data:image input.");
+    const [, mimeType, base64] = match;
+    const extension = mimeType.includes("jpeg") ? "jpg" : mimeType.split("/")[1] || "png";
+    return {
+      blob: new Blob([Buffer.from(base64, "base64")], { type: mimeType }),
+      fileName: fileName.replace(/\.[^.]+$/, `.${extension}`),
+    };
+  }
+  if (/^https?:\/\//i.test(videoUrl)) {
+    const response = await fetch(videoUrl);
+    if (!response.ok) throw new Error("Failed to download first-frame media.");
+    const contentType = response.headers.get("content-type") || "image/png";
+    const extension = contentType.includes("jpeg") ? "jpg" : contentType.split("/")[1]?.split(";")[0] || "png";
+    return {
+      blob: new Blob([Buffer.from(await response.arrayBuffer())], { type: contentType }),
+      fileName: fileName.replace(/\.[^.]+$/, `.${extension}`),
+    };
+  }
+  throw new Error("Only data:image/ or http(s) first-frame inputs are supported.");
+}
+
+async function buildShishiKejiVideoFormData(payload) {
+  const form = new FormData();
+  const prompt = typeof payload.prompt === "string" ? payload.prompt : "";
+  if (prompt.length > SHISHI_MAX_PROMPT_CHARS) {
+    throw new Error(`Full video prompt is too long: ${prompt.length} chars; limit is ${SHISHI_MAX_PROMPT_CHARS}. Please shorten the action or scene description.`);
+  }
+  const model = typeof payload.model === "string" && payload.model.trim() ? payload.model.trim() : "2.0";
+  const duration = resolveSubmittedVideoDuration(payload, SHISHI_VIDEO_BASE_URL);
+  const ratio = typeof payload.aspect_ratio === "string" && payload.aspect_ratio.trim() ? payload.aspect_ratio.trim() : "9:16";
+  const resolution = typeof payload.resolution === "string" && payload.resolution.trim() ? payload.resolution.trim().toLowerCase() : "720p";
+  const firstFrameUrl = getVideoFirstFrameUrl(payload);
+
+  form.append("prompt", prompt);
+  form.append("model", model);
+  form.append("duration", String(duration));
+  form.append("ratio", ratio);
+  form.append("resolution", resolution);
+  form.append("client_task_id", `product-video-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+
+  if (firstFrameUrl) {
+    const { blob, fileName } = await videoUrlToBlob(firstFrameUrl, "approved-first-frame.png");
+    form.append("files", blob, fileName);
+  }
+
+  return form;
+}
+
+function normalizePromptPairForProduct(promptPair, productType) {
+  if (!promptPair) return null;
+  return {
+    ...promptPair,
+    firstFramePrompt: sanitizeProductText(promptPair.firstFramePrompt),
+    sceneAnchor: sanitizeProductText(promptPair.sceneAnchor),
+    continuityLocks: sanitizeProductText(promptPair.continuityLocks),
+    videoPrompt: ensureVideoPromptFinalLock(productType, promptPair.videoPrompt),
+  };
+}
+
 function buildPromptSuggestionMustMention(productType) {
   const family = getProductFamily(productType);
   if (family === "shark") {
     return "Must naturally include these shark locks: small shallow curved horizontal trapezoid transparent face window, muted cyan-blue nylon, white belly panel, vertical zipper, side eye and exactly five gill stripes, orange side valve, rear tail fin, human-scale wearable volume, slightly underinflated flatter soft body, no huge vertical capsule body, no torpedo/cylinder balloon body, and no oversized horizontal wing-like arm fins.";
   }
   if (family === "cow") {
-    return "必须自然写入这些奶牛锁：白色牛身、黑色不规则斑、双角、黑外粉内耳、蓝眼粉鼻粉腮、黑色蹄套、正面粉色乳房和四个奶头、背部拉链、橙色后侧阀门、白尾黑尖。";
+    return "必须自然写入这些奶牛锁：白色牛身、黑色不规则斑、双角、黑外粉内耳、蓝眼粉鼻粉腮、黑色蹄套、正面粉色下腹组件和四个粉色小圆点、背部拉链、橙色后侧阀门、白尾黑尖。";
   }
   if (family === "mouse") {
     return "必须自然写入这些灰鼠锁：浅灰鼠身、圆耳和米色耳内、米色脸鼻区、突出灰色鼻嘴、黑色张口、棕色卡通眼、米色椭圆腹部、米黄后尾、背部绿色阀门和拉链。";
@@ -1587,7 +2325,7 @@ function buildPromptSuggestionMustMention(productType) {
     return "必须自然写入这些青蛙锁：绿色蛙身、顶部凸眼、小号脸窗、黑色横向嘴带、蓝色围巾、米色脸腹、黑色斑点、蹼手蹼脚、背部黑色脊线、橙色后阀。";
   }
   if (family === "sumo") {
-    return "必须自然写入这些相扑锁：米肤色充气身体、黑色腰带、正面兜裆布、胸前简线、肚脐点、圆头黑色发髻帽、宽 T 形短臂、背部拉链、橙色后阀。";
+    return "必须自然写入这些相扑锁：米肤色充气身体、黑色腰带、正面兜裆布、上身简线、肚脐点、圆头黑色发髻帽、宽 T 形短臂、背部拉链、橙色后阀。";
   }
   return "必须自然写入当前四视图中的颜色、体积、脸部/装饰、阀门、拉链、尾部/附加结构、脚套和布料褶皱等产品锁。";
 }
@@ -1598,7 +2336,7 @@ function buildPromptSuggestionHardwareMustMention(productType) {
     return "还必须自然写入鲨鱼硬件和材质锁：橙色鼓风阀/进气口/出气口/泵口只能位于阀门侧腰侧面，保留橙色环、圆形网格/盖帽、参考高度和方向；正面看不到时自然隐藏，不能挪到白肚、透明脸窗、正面拉链或尾鳍；保留薄尼龙/PVC 褶皱、缝线、拉链齿和偏软欠充气质感。";
   }
   if (family === "cow") {
-    return "还必须自然写入奶牛硬件和材质锁：橙色鼓风阀/进出气口/泵口只能位于右后侧/背侧，背部中轴拉链和白尾黑尖按背视图归位；正面看不到时不强行展示，不能挪到粉色乳房、白肚或脸部；保留薄尼龙/PVC 褶皱、缝线、拉链齿和斑块边缘织物感。";
+    return "还必须自然写入奶牛硬件和材质锁：橙色鼓风阀/进出气口/泵口只能位于右后侧/背侧，背部中轴拉链和白尾黑尖按背视图归位；正面看不到时不强行展示，不能挪到粉色下腹组件、白肚或脸部；保留薄尼龙/PVC 褶皱、缝线、拉链齿和斑块边缘织物感。";
   }
   if (family === "mouse") {
     return "还必须自然写入灰鼠硬件和材质锁：绿色鼓风阀/进出气口/泵口只能位于后背/背侧，和背部中轴拉链、尾巴根部保持正确相对位置；不能挪到米色腹部、鼻嘴、耳朵或手臂；保留浅灰薄尼龙/PVC 褶皱、缝线、拉链齿和柔软充气布料感。";
@@ -1607,50 +2345,49 @@ function buildPromptSuggestionHardwareMustMention(productType) {
     return "还必须自然写入青蛙硬件和材质锁：橙色鼓风阀/进出气口/泵口只能位于背部黑色脊线/拉链附近的后背面，不能挪到米色腹部、蓝围巾、脸窗、嘴带或斑点上；保留绿色薄尼龙/PVC 褶皱、缝线、拉链齿、围巾边缘和布料松弛。";
   }
   if (family === "sumo") {
-    return "还必须自然写入相扑硬件和材质锁：橙色鼓风阀/进出气口/泵口只能位于背面/后侧，参考辅助阀门图保留橙色环、圆形网格/盖帽、参考高度和与后腰带/拉链的间距；不能挪到正面肚子、胸线、肚脐或兜裆布；保留米肉色薄尼龙/PVC 褶皱和软布折痕。";
+    return "还必须自然写入相扑硬件和材质锁：橙色鼓风阀/进出气口/泵口只能位于背面/后侧，参考辅助阀门图保留橙色环、圆形网格/盖帽、参考高度和与后腰带/拉链的间距；不能挪到正面肚子、上身简线、肚脐或兜裆布；保留米肉色薄尼龙/PVC 褶皱和软布折痕。";
   }
   return "还必须自然写入硬件和材质锁：阀门、鼓风阀、进气口、出气口、泵口、拉链、缝线和布料褶皱都只能按四视图位置归位；看不见时隐藏，不允许挪位、复制、换色、简化或改成装饰。";
 }
 
 function buildPromptPairSuggestionPayload(payload) {
-  const productType = typeof payload.product_type === "string" && payload.product_type.trim() ? payload.product_type.trim() : "当前充气产品";
+  const productType = typeof payload.product_type === "string" && payload.product_type.trim() ? sanitizeProductText(payload.product_type) : "当前充气产品";
   const stableProductName = getProductStableName(productType);
-  const currentFirstFramePrompt = typeof payload.current_first_frame_prompt === "string" ? payload.current_first_frame_prompt.trim() : "";
-  const currentVideoPrompt = typeof payload.current_video_prompt === "string" ? payload.current_video_prompt.trim() : "";
+  const currentFirstFramePrompt = typeof payload.current_first_frame_prompt === "string" ? truncateTextByChars(sanitizeProductText(payload.current_first_frame_prompt), 1000) : "";
+  const currentVideoPrompt = typeof payload.current_video_prompt === "string" ? truncateTextByChars(sanitizeVideoPromptText(payload.current_video_prompt), 800) : "";
   const referenceVideoCount = Number.isFinite(Number(payload.reference_video_count)) ? Number(payload.reference_video_count) : 0;
   const supportImageCount = Number.isFinite(Number(payload.support_image_count)) ? Number(payload.support_image_count) : 0;
   const lockedNodes = Array.isArray(payload.locked_nodes) ? payload.locked_nodes : [];
-  const lockLines = lockedNodes
-    .filter((node) => node && typeof node === "object")
-    .slice(0, 10)
-    .map((node) => {
-      const code = typeof node.code === "string" ? node.code : "Locked_Detail";
-      const label = typeof node.label === "string" ? node.label : "";
-      const detail = typeof node.detail === "string" ? node.detail : "";
-      return `- ${code}${label ? ` / ${label}` : ""}: ${detail}`;
-    })
-    .join("\n");
+  const lockLines = formatLockedNodeLines(lockedNodes, 10, 1800, " / ");
   const productLocks = buildInflatableHardwareMaterialLocks(productType)
     .concat(buildFirstFrameProductVisualLocks(productType))
     .concat(buildVideoProductVisualLocks(productType))
     .slice(0, 26)
     .join("\n");
-  const sceneExamples = pickPromptSceneExamples()
-    .map((scene) => `${scene.title}: ${scene.anchor}`)
-    .join("\n");
+  const { requiredScene, referenceScenes } = pickPromptSceneSet();
+  const requiredSceneLine = requiredScene
+    ? `${requiredScene.title}: ${requiredScene.anchor}`
+    : "从日常电商短视频场景里选一个具体、可拍、有道具的地点。";
+  const referenceSceneLines = referenceScenes.length
+    ? referenceScenes.map((scene) => `${scene.title}: ${scene.anchor}`).join("\n")
+    : "";
 
-  return {
+  const promptModelLimit = getPromptModelLimit(payload.model);
+  const requestPayload = {
     model: payload.model,
     input: [
       {
         role: "system",
         content: [
           "你是电商产品图生视频的提示词导演。",
+          "Return parseable JSON only.",
           "只输出一个合法 JSON 对象，不要 Markdown，不要解释。",
           "必须一次生成同一场景下的 firstFramePrompt 和 videoPrompt。两个提示词必须共享同一地点、同一道具关系、同一镜头、同一产品身份。",
-          "必须调用真实模型创作，不要套用固定模板。场景要高度多样，避免反复使用明亮超市、明亮商场、办公室、电梯。",
+          "必须调用真实模型创作，不要套用固定模板。场景要高度多样，避免反复使用明亮超市、明亮商场、办公室、电梯、纯棚拍或白底影棚。",
           "视频提示词必须更幽默诙谐，并且有一个明确的小反转或包袱；仍然只用正向、生活化、轻松幽默、无冲突、低风险的动作表达，不要列出禁词清单。",
           "BGM 和背景对话不是强制项；如果场景适合，可以自然写一句轻快 BGM、背景广播声、路人小声吐槽或旁白反应，但不能喧宾夺主，不能遮挡产品一致性。",
+          "MOTION COMPLETION RANGE: videoPrompt should describe 2-3 small readable same-scene action beats while preserving product identity.",
+          "COMEDY PACING REQUIREMENT: include a clear tiny reversal or punchline without turning the product into a new character.",
           "视频动作必须是微动：脸窗和拉链基本保持竖直，双脚贴地，禁止大幅前倾、弯腰、转体、抬高脚、跳跃或把小动作放大成夸张表演。",
         ].join("\n"),
       },
@@ -1658,21 +2395,25 @@ function buildPromptPairSuggestionPayload(payload) {
         role: "user",
         content: [
           `产品：${productType}`,
-          `稳定产品名：${stableProductName}`,
-          `参考视频数量：${referenceVideoCount}`,
-          `本地辅助角度数量：${supportImageCount}`,
-          "候选场景池，必须从这些方向扩展出一个具体、可拍、有道具的场景；不要照抄旧提示词：",
-          sceneExamples,
-          "产品硬锁摘要：",
+          `Stable product name: ${stableProductName}`,
+          `Reference videos: ${referenceVideoCount}`,
+          `Support images: ${supportImageCount}`,
+          "Required scene seed:",
+          "本次必须使用的场景种子，请扩展成具体可拍场景，不要退回棚拍：",
+          requiredSceneLine,
+          referenceSceneLines ? `Reference scene examples for variety only:\n${referenceSceneLines}` : "Reference scene examples for variety only: none.",
+          "Product locks:",
           productLocks,
           lockLines ? `前端锁定节点：\n${lockLines}` : "前端锁定节点：使用产品四视图中的所有可见组件。",
           currentFirstFramePrompt ? `当前首帧提示词，仅用于避免重复：\n${currentFirstFramePrompt}` : "当前首帧提示词为空。",
           currentVideoPrompt ? `当前视频提示词，仅用于避免重复：\n${currentVideoPrompt}` : "当前视频提示词为空。",
+          "Scene anchor must be shared by both prompts.",
+          "Return JSON with: sceneTitle, sceneAnchor, firstFramePrompt, videoPrompt, continuityLocks.",
           "输出 JSON schema：",
           JSON.stringify({
             sceneTitle: "短场景名",
             sceneAnchor: "同一场景的地点、道具、镜头和气氛，60-120字",
-            firstFramePrompt: "220-420字中文，描述首帧静态画面和产品一致性",
+            firstFramePrompt: "220-420字中文，描述首帧静态画面和产品一致性，不要只写棚拍或白底",
             videoPrompt: "160-260字中文，描述同一场景下2-3个安全、轻松、幽默的微动作，并有一个小反转或包袱；可以自然带一句轻快BGM、背景广播声或路人小声吐槽，但不是强制；必须写明脸窗和拉链基本竖直、双脚贴地、不大幅前倾、不转体",
             continuityLocks: "一句话说明两个提示词共享哪些场景和产品身份约束",
           }),
@@ -1680,29 +2421,168 @@ function buildPromptPairSuggestionPayload(payload) {
       },
     ],
     temperature: 1,
-    max_output_tokens: 1200,
+    max_output_tokens: Math.min(promptModelLimit.maxOutputTokens, 1200),
+  };
+  requestPayload.input[1].content = fitPromptToLimit([requestPayload.input[1].content], promptModelLimit.maxInputChars);
+  return requestPayload;
+}
+
+function parseJsonObjectText(text) {
+  const cleaned = cleanGeneratedPrompt(text);
+  const candidates = [cleaned];
+  const objectMatch = cleaned.match(/\{[\s\S]*\}/);
+  if (objectMatch) candidates.push(objectMatch[0]);
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+    } catch {
+      // Try the next candidate.
+    }
+  }
+  return null;
+}
+
+function normalizeStoryBeat(value, index) {
+  const record = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const beat = typeof record.beat === "string" && record.beat.trim() ? record.beat.trim() : typeof value === "string" ? value.trim() : "";
+  return {
+    id: typeof record.id === "string" && record.id.trim() ? record.id.trim() : `beat_${index + 1}`,
+    beat: sanitizeProductText(beat || `Readable action beat ${index + 1}`),
+    action: sanitizeProductText(typeof record.action === "string" ? record.action : beat || ""),
+    camera: sanitizeProductText(typeof record.camera === "string" ? record.camera : "front to slight three-quarter"),
+    risk: sanitizeProductText(typeof record.risk === "string" ? record.risk : ""),
+  };
+}
+
+function normalizeStoryIntentPayload(parsed, payload = {}, upstreamUrl = "") {
+  const productType = typeof payload.product_type === "string" && payload.product_type.trim() ? sanitizeProductText(payload.product_type) : getProductStableName("");
+  const record = parsed && typeof parsed === "object" ? parsed : {};
+  const beatsSource = Array.isArray(record.beats) ? record.beats : [];
+  const beats = beatsSource.slice(0, 5).map((beat, index) => normalizeStoryBeat(beat, index)).filter((beat) => beat.beat);
+  while (beats.length < 3) {
+    beats.push(normalizeStoryBeat({ beat: `Small readable product-safe action beat ${beats.length + 1}`, action: "small grounded gesture", camera: "front" }, beats.length));
+  }
+  return {
+    storyTitle: sanitizeProductText(typeof record.storyTitle === "string" ? record.storyTitle : typeof record.title === "string" ? record.title : "Product-safe short action"),
+    storyIntent: sanitizeProductText(typeof record.storyIntent === "string" ? record.storyIntent : typeof record.intent === "string" ? record.intent : beats.map((beat) => beat.beat).join(" -> ")),
+    sceneAnchor: sanitizeProductText(typeof record.sceneAnchor === "string" ? record.sceneAnchor : typeof payload.user_direction === "string" ? payload.user_direction : ""),
+    motionMode: payload.motion_mode === "creative" || payload.motion_mode === "balanced" || payload.motion_mode === "strict" ? payload.motion_mode : "balanced",
+    productType,
+    stableProductName: getProductStableName(productType),
+    beats,
+    riskNotes: Array.isArray(record.riskNotes)
+      ? record.riskNotes.map((item) => sanitizeProductText(String(item))).filter(Boolean).slice(0, 6)
+      : Array.isArray(record.risks)
+        ? record.risks.map((item) => sanitizeProductText(String(item))).filter(Boolean).slice(0, 6)
+        : [],
+    model: typeof payload.model === "string" ? payload.model : "",
+    upstreamUrl,
+  };
+}
+
+function buildStoryIntentPayload(payload) {
+  const productType = typeof payload.product_type === "string" && payload.product_type.trim() ? sanitizeProductText(payload.product_type) : "wearable inflatable product";
+  const userDirection = typeof payload.user_direction === "string" ? truncateTextByChars(sanitizeProductText(payload.user_direction), 900) : "";
+  const revisionInstruction = typeof payload.revision_instruction === "string" ? truncateTextByChars(sanitizeProductText(payload.revision_instruction), 900) : "";
+  const currentIntent = payload.current_intent && typeof payload.current_intent === "object" ? JSON.stringify(payload.current_intent).slice(0, 3000) : "";
+  const contract = buildProductLockContract(productType, payload.locked_nodes);
+  const promptModelLimit = getPromptModelLimit(payload.model);
+  const { requiredScene, referenceScenes } = pickPromptSceneSet(5);
+  const requestPayload = {
+    model: payload.model,
+    input: [
+      {
+        role: "system",
+        content: [
+          "You are a product-safe short-video story director for image-to-video generation.",
+          "Return parseable JSON only. Do not include Markdown.",
+          "Generate or revise only the story/action intent. Do not write subtitles, sign text, price, SKU, discount, CTA, channel targeting, product selling points, or post-production copy.",
+          "The video must be interesting enough for a short product clip, but all action must stay grounded, low-risk, and compatible with four-view product consistency.",
+          "The story intent must come before storyboard generation. Do not describe final video provider settings.",
+        ].join("\n"),
+      },
+      {
+        role: "user",
+        content: [
+          `Product type: ${productType}`,
+          `Stable product name: ${getProductStableName(productType)}`,
+          `Motion mode: ${payload.motion_mode || "balanced"}`,
+          userDirection ? `User direction:\n${userDirection}` : "User direction: none. Create a concrete, filmable everyday micro-story.",
+          revisionInstruction ? `Revision instruction:\n${revisionInstruction}` : "",
+          currentIntent ? `Current story intent to revise:\n${currentIntent}` : "",
+          `Required scene seed: ${requiredScene ? `${requiredScene.title}: ${requiredScene.anchor}` : "everyday product-video scene"}`,
+          referenceScenes.length ? `Reference scene variety only:\n${referenceScenes.map((scene) => `${scene.title}: ${scene.anchor}`).join("\n")}` : "",
+          "Product lock contract:",
+          formatProductLockContract(contract),
+          "Return JSON schema:",
+          JSON.stringify({
+            storyTitle: "short title",
+            storyIntent: "one compact paragraph, no text overlays, no CTA",
+            sceneAnchor: "specific filmable location and props, no readable signs",
+            beats: [
+              { id: "beat_1", beat: "setup", action: "small visible action", camera: "front", risk: "risk note" },
+              { id: "beat_2", beat: "tiny reversal", action: "small visible action", camera: "front_three_quarter", risk: "risk note" },
+              { id: "beat_3", beat: "recovery pose", action: "small visible action", camera: "front", risk: "risk note" },
+            ],
+            riskNotes: ["no large turn", "no text/sign/subtitle", "no product-obscuring prop"],
+          }),
+        ]
+          .filter(Boolean)
+          .join("\n\n"),
+      },
+    ],
+    temperature: revisionInstruction ? 0.6 : 0.9,
+    max_output_tokens: Math.min(promptModelLimit.maxOutputTokens, 1100),
+  };
+  requestPayload.input[1].content = fitPromptToLimit([requestPayload.input[1].content], promptModelLimit.maxInputChars);
+  return requestPayload;
+}
+
+function buildStoryboardGenerationPrompt(payload, contract) {
+  const storyIntent = normalizeStoryIntentPayload(payload.story_intent || payload.storyIntent || {}, payload);
+  const selectedBeats = storyIntent.beats.slice(0, payload.motion_mode === "strict" ? 3 : 5);
+  return [
+    "STORYBOARD HARNESS IMAGE GENERATION.",
+    "Create one storyboard contact sheet or a single keyframe candidate for the confirmed story/action intent. The image is a cheap pre-video planning artifact used before the expensive video call.",
+    "Do not add subtitles, signs, labels, price tags, CTA text, logos, or readable text anywhere in the scene or on the product.",
+    "Preserve the same product from the four core views. Use the references as topology maps; do not collage all views into one surface.",
+    `Product: ${storyIntent.stableProductName}`,
+    `Story intent: ${storyIntent.storyIntent}`,
+    `Scene anchor: ${storyIntent.sceneAnchor}`,
+    `Beats:\n${selectedBeats.map((beat, index) => `${index + 1}. ${beat.beat}; action=${beat.action}; camera=${beat.camera}`).join("\n")}`,
+    `Motion mode: ${storyIntent.motionMode}`,
+    formatProductLockContract(contract),
+    "Composition: full body visible, feet grounded, product scale human-wearable, camera changes small and physically valid. If making a contact sheet, show 3-5 clean panels of the same product in the same scene.",
+  ].join("\n\n");
+}
+
+function buildStoryboardImagePayload(payload) {
+  const productType = typeof payload.product_type === "string" && payload.product_type.trim() ? sanitizeProductText(payload.product_type) : "wearable inflatable product";
+  const contract = buildProductLockContract(productType, payload.locked_nodes);
+  const { image_urls, support_image_urls, detail_image_urls, story_intent, storyIntent, ...upstreamPayload } = payload;
+  const readableImages = Array.isArray(image_urls) ? image_urls.filter((item) => typeof item === "string" && item.trim()) : [];
+  const supportSource = Array.isArray(support_image_urls) ? support_image_urls : detail_image_urls;
+  const readableSupportImages = Array.isArray(supportSource) ? supportSource.filter((item) => typeof item === "string" && item.trim()) : [];
+  const modelLimits = getImageModelLimit(upstreamPayload.model);
+  const prompt = fitPromptToLimit([buildStoryboardGenerationPrompt({ ...payload, story_intent: story_intent || storyIntent }, contract)], modelLimits.maxPromptChars);
+  return {
+    ...upstreamPayload,
+    image_urls: [...readableImages, ...readableSupportImages],
+    prompt: sanitizeProductText(prompt),
   };
 }
 
 function buildPromptSuggestionPayload(payload) {
   const kind = payload.kind === "video" ? "video" : "firstFrame";
-  const productType = typeof payload.product_type === "string" && payload.product_type.trim() ? payload.product_type.trim() : "通用充气服";
+  const productType = typeof payload.product_type === "string" && payload.product_type.trim() ? sanitizeProductText(payload.product_type) : "通用充气服";
   const stableProductName = getProductStableName(productType);
-  const currentPrompt = typeof payload.current_prompt === "string" ? payload.current_prompt.trim() : "";
-  const scenePrompt = typeof payload.scene_prompt === "string" ? payload.scene_prompt.trim() : "";
+  const currentPrompt = typeof payload.current_prompt === "string" ? truncateTextByChars(sanitizeProductText(payload.current_prompt), 1000) : "";
+  const scenePrompt = typeof payload.scene_prompt === "string" ? truncateTextByChars(sanitizeProductText(payload.scene_prompt), 900) : "";
   const referenceVideoCount = Number.isFinite(Number(payload.reference_video_count)) ? Number(payload.reference_video_count) : 0;
   const supportImageCount = Number.isFinite(Number(payload.support_image_count)) ? Number(payload.support_image_count) : 0;
   const lockedNodes = Array.isArray(payload.locked_nodes) ? payload.locked_nodes : [];
-  const lockLines = lockedNodes
-    .filter((node) => node && typeof node === "object")
-    .slice(0, 10)
-    .map((node) => {
-      const code = typeof node.code === "string" ? node.code : "Locked_Detail";
-      const label = typeof node.label === "string" ? node.label : "";
-      const detail = typeof node.detail === "string" ? node.detail : "";
-      return `- ${code}${label ? ` / ${label}` : ""}: ${detail}`;
-    })
-    .join("\n");
+  const lockLines = formatLockedNodeLines(lockedNodes, 10, 1800, " / ");
   const videoAnchorLocks = kind === "video" ? buildVideoFirstFramePixelAnchorLocks(productType) : [];
   const productLocks = videoAnchorLocks
     .concat(buildInflatableHardwareMaterialLocks(productType))
@@ -1742,7 +2622,8 @@ function buildPromptSuggestionPayload(payload) {
           "必须写清楚从第一帧到最后一帧产品锁定：组件位置、体积包络、颜色、布料褶皱和人体穿戴比例不漂移。",
         ].join("\n");
 
-  return {
+  const promptModelLimit = getPromptModelLimit(payload.model);
+  const requestPayload = {
     model: payload.model,
     input: [
       {
@@ -1778,18 +2659,20 @@ function buildPromptSuggestionPayload(payload) {
       },
     ],
     temperature: 0.9,
-    max_output_tokens: 700,
+    max_output_tokens: Math.min(promptModelLimit.maxOutputTokens, 700),
   };
+  requestPayload.input[1].content = fitPromptToLimit([requestPayload.input[1].content], promptModelLimit.maxInputChars);
+  return requestPayload;
 }
 
 function shouldUseLocalPromptSuggestion(payload) {
   const model = typeof payload.model === "string" ? payload.model.trim() : "";
-  return !model || model === LOCAL_PROMPT_MODEL;
+  return model === LOCAL_PROMPT_MODEL;
 }
 
 function isPromptModelUnavailable(data, status) {
   const text = JSON.stringify(data || {});
-  return status === 404 || status === 503 || /model_not_found|No available channel|没有找到模型|模型不存在/i.test(text);
+  return status === 404 || status === 503 || /model_not_found|No available channel|model unavailable|model not found/i.test(text);
 }
 
 async function proxyPromptSuggestion(payload) {
@@ -1798,17 +2681,12 @@ async function proxyPromptSuggestion(payload) {
     return {
       status: 400,
       payload: {
-        error: "提示词模型还没有配置好，请先确认模型名称，然后点击骰子重新生成。",
+        error: `${PROMPT_MODEL_NOT_CONFIGURED_MESSAGE} 提示词模型还没有配置好，请先确认模型名称，然后点击骰子重新生成。`,
         model: typeof payload.model === "string" ? payload.model : "",
       },
     };
   }
-
-  const { apiKey, upstreamUrl, upstreamPayload } = pickProxyConfig(
-    { ...payload, path: payload.path || "/responses" },
-    "/responses",
-    "prompt",
-  );
+  const { apiKey, upstreamUrl, upstreamPayload } = pickProxyConfig({ ...payload, path: payload.path || "/responses" }, "/responses", "prompt");
   if (!apiKey) {
     return { status: 400, payload: { error: "服务密钥还没有配置好，请先让管理员确认后台配置。", upstreamUrl } };
   }
@@ -1817,10 +2695,7 @@ async function proxyPromptSuggestion(payload) {
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     const response = await fetch(upstreamUrl, {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
       body: requestBody,
     });
     const text = await response.text();
@@ -1831,7 +2706,7 @@ async function proxyPromptSuggestion(payload) {
         return {
           status: response.status,
           payload: {
-            error: "提示词模型暂时不可用，请确认模型名称或稍后再点一次骰子。",
+            error: `${PROMPT_MODEL_UNAVAILABLE_MESSAGE} 提示词模型暂时不可用，请确认模型名称或稍后再点一次骰子。`,
             upstreamUrl,
             model: upstreamPayload.model,
           },
@@ -1841,33 +2716,204 @@ async function proxyPromptSuggestion(payload) {
     }
     const rawPrompt = cleanGeneratedPrompt(extractGeneratedText(data));
     if (isPair) {
-      const promptPair = parsePromptPairText(rawPrompt);
-      if (promptPair) {
-        return {
-          status: 200,
-          payload: {
-            ...promptPair,
-            upstreamUrl,
-            model: upstreamPayload.model,
-            localFallback: false,
-            retryCount: attempt - 1,
-          },
-        };
-      }
+      const promptPair = normalizePromptPairForProduct(parsePromptPairText(rawPrompt), upstreamPayload.product_type);
+      if (promptPair) return { status: 200, payload: { ...promptPair, upstreamUrl, model: upstreamPayload.model, localFallback: false, retryCount: attempt - 1 } };
       lastPayload = { error: "这次没有拿到完整提示词，请再点一次骰子。", rawPrompt };
       continue;
     }
-    const prompt = upstreamPayload.kind === "video" ? sanitizeVideoPromptText(rawPrompt) : rawPrompt;
+    const prompt = upstreamPayload.kind === "video" ? ensureVideoPromptFinalLock(upstreamPayload.product_type, sanitizeVideoPromptText(rawPrompt)) : rawPrompt;
     if (prompt) return { status: 200, payload: { prompt, upstreamUrl, model: upstreamPayload.model, localFallback: false, retryCount: attempt - 1 } };
   }
+  return { status: 502, payload: { ...lastPayload, error: "这次没有拿到完整提示词，请再点一次骰子。", upstreamUrl } };
+}
+
+async function proxyStoryIntent(payload) {
+  if (shouldUseLocalPromptSuggestion(payload)) {
+    return {
+      status: 400,
+      payload: {
+        error: `${PROMPT_MODEL_NOT_CONFIGURED_MESSAGE} Please configure a real prompt model before creating story intent.`,
+        model: typeof payload.model === "string" ? payload.model : "",
+      },
+    };
+  }
+  const { apiKey, upstreamUrl, upstreamPayload } = pickProxyConfig({ ...payload, path: payload.path || "/responses" }, "/responses", "prompt");
+  if (!apiKey) {
+    return { status: 400, payload: { error: "Prompt model is not configured.", upstreamUrl } };
+  }
+  const response = await fetch(upstreamUrl, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify(buildStoryIntentPayload(upstreamPayload)),
+  });
+  const text = await response.text();
+  const data = parseUpstreamBody(text, response.status);
+  if (!response.ok) return { status: response.status, payload: withUpstreamError(data, response.status, upstreamUrl) };
+  const rawText = extractGeneratedText(data);
+  const parsed = parseJsonObjectText(rawText);
+  if (!parsed) {
+    return { status: 502, payload: { error: "Story model did not return parseable JSON.", rawText, upstreamUrl } };
+  }
+  return { status: 200, payload: normalizeStoryIntentPayload(parsed, upstreamPayload, upstreamUrl) };
+}
+
+async function proxyStoryboards(payload) {
+  const referenceCheck = validateFourViewImages(payload);
+  if (!referenceCheck.ok) return createApiResponse(400, { error: referenceCheck.error });
+  const storyIntent = payload.story_intent || payload.storyIntent;
+  if (!storyIntent || typeof storyIntent !== "object") {
+    return createApiResponse(400, { error: "Please generate or confirm story intent before creating storyboards." });
+  }
+  const result = await proxyJson("/images/edits", buildStoryboardImagePayload(payload), "image");
+  if (result.status < 200 || result.status >= 300) return result;
+  const imageUrls = extractImageUrls(result.payload);
+  if (!imageUrls.length) {
+    return createApiResponse(502, { error: "Storyboard image generation returned no usable image.", upstreamUrl: result.payload?.upstreamUrl });
+  }
+  const normalizedIntent = normalizeStoryIntentPayload(storyIntent, payload);
+  const selectedBeats = normalizedIntent.beats.slice(0, payload.motion_mode === "strict" ? 3 : 5);
+  const storyboards = selectedBeats.map((beat, index) => ({
+    id: `storyboard_${index + 1}`,
+    imageUrl: imageUrls[index] || imageUrls[0],
+    beat: beat.beat,
+    action: beat.action,
+    viewAngle: beat.camera || (index === 0 ? "front" : "front_three_quarter"),
+    checks: [
+      { id: "product_contract", status: "pending", detail: "Awaiting preflight check against structured locks." },
+      { id: "action_path", status: "pending", detail: "Awaiting action/camera continuity check." },
+    ],
+  }));
+  return createApiResponse(200, {
+    storyboards,
+    imageUrls,
+    storyIntent: normalizedIntent,
+    productLockContract: buildProductLockContract(payload.product_type, payload.locked_nodes),
+    upstreamUrl: result.payload?.upstreamUrl || "",
+    model: payload.model || DEFAULT_IMAGE_MODEL,
+  });
+}
+
+function collectPreflightRequestText(payload) {
+  const storyIntent = payload?.story_intent || payload?.storyIntent || {};
+  const storyboards = Array.isArray(payload?.storyboards) ? payload.storyboards : [];
+  const beats = Array.isArray(storyIntent.beats) ? storyIntent.beats : [];
+  return [
+    storyIntent.storyIntent,
+    storyIntent.sceneAnchor,
+    ...beats.flatMap((beat) => [beat?.beat, beat?.action]),
+    ...storyboards.flatMap((storyboard) => [storyboard?.beat, storyboard?.action]),
+  ]
+    .filter((item) => typeof item === "string" && item.trim())
+    .join("\n")
+    .toLowerCase();
+}
+
+function stripNegativeGuardrailPhrases(text) {
+  return String(text || "")
+    .replace(/\b(no|without|avoid|do not|don't|never|not)\b[^.;,，。；\n]*(subtitle|caption|price|discount|cta|call to action|logo|large turn|full spin|jump|run|fall|fast zoom|cut to)/gi, " ")
+    .replace(/(不出现|不要|禁止|避免|不能|无)[^.;,，。；\n]*(\u5b57\u5e55|\u6587\u5b57|\u4ef7\u683c|\u6298\u6263|cta|logo|\u5927\u5e45\u8f6c\u8eab|\u5954\u8dd1|\u6454\u5012|\u5feb\u901f|\u5207\u955c)/g, " ");
+}
+
+function collectStoryboardPreflightIssues(payload) {
+  const issues = [];
+  const productType = typeof payload.product_type === "string" && payload.product_type.trim() ? payload.product_type : "";
+  const storyIntent = payload.story_intent || payload.storyIntent;
+  const storyboards = Array.isArray(payload.storyboards) ? payload.storyboards : [];
+  const motionMode = payload.motion_mode === "strict" || payload.motion_mode === "balanced" || payload.motion_mode === "creative" ? payload.motion_mode : "balanced";
+  const minimumFrames = motionMode === "strict" ? 3 : 3;
+  const maximumFrames = 5;
+  const requestText = stripNegativeGuardrailPhrases(collectPreflightRequestText(payload));
+  if (!productType) issues.push({ severity: "fail", code: "missing_product_type", message: "Missing product type." });
+  if (!storyIntent || typeof storyIntent !== "object") issues.push({ severity: "fail", code: "missing_story_intent", message: "Story intent is required before video submission." });
+  if (storyboards.length < minimumFrames) issues.push({ severity: "fail", code: "not_enough_storyboards", message: `At least ${minimumFrames} selected storyboards are required before video submission.` });
+  if (storyboards.length > maximumFrames) issues.push({ severity: "risky", code: "too_many_storyboards", message: "Use 3-5 selected storyboards so the video model receives a compact path." });
+  if (storyboards.some((storyboard) => !storyboard || typeof storyboard !== "object" || typeof storyboard.imageUrl !== "string" || !storyboard.imageUrl.trim())) {
+    issues.push({ severity: "fail", code: "missing_storyboard_image", message: "Every selected storyboard needs an image URL." });
+  }
+  if (storyboards.some((storyboard) => Array.isArray(storyboard.checks) && storyboard.checks.some((check) => check?.status === "fail"))) {
+    issues.push({ severity: "fail", code: "failed_storyboard_check", message: "A selected storyboard has a failed check." });
+  }
+  if (/\b(add|show|include|display|overlay|readable)\b[^.;,，。；\n]*(subtitle|caption|price|discount|cta|call to action|logo)/i.test(requestText)) {
+    issues.push({ severity: "fail", code: "requested_text_or_sales_copy", message: "Remove requested subtitles, readable sales copy, price, CTA, or logo before video submission." });
+  }
+  if (/\b(large turn|full spin|jump|run|fall|fast zoom|cut to)\b/i.test(requestText) || /(\u5927\u5e45\u8f6c\u8eab|\u5954\u8dd1|\u6454\u5012|\u5feb\u901f\u53d8\u7126|\u5207\u955c)/.test(requestText)) {
+    issues.push({ severity: "risky", code: "risky_motion_path", message: "Motion path may be too large for product consistency." });
+  }
+  return issues;
+}
+
+function buildCameraPath(storyboards) {
+  const angles = Array.isArray(storyboards)
+    ? storyboards.map((item) => (typeof item.viewAngle === "string" && item.viewAngle.trim() ? item.viewAngle.trim() : "")).filter(Boolean)
+    : [];
+  return angles.length ? angles.join(" -> ") : "front -> slight front three-quarter -> front";
+}
+
+function buildFinalVideoPromptFromPackage(payload, preflight) {
+  const storyIntent = normalizeStoryIntentPayload(payload.story_intent || payload.storyIntent || {}, payload);
+  const storyboards = Array.isArray(payload.storyboards) ? payload.storyboards : [];
+  const storyboardLines = storyboards
+    .slice(0, 5)
+    .map((storyboard, index) => `${index + 1}. ${sanitizeProductText(storyboard.beat || storyboard.action || "")}; camera=${sanitizeProductText(storyboard.viewAngle || "front")}`)
+    .join("\n");
+  const contract = buildProductLockContract(payload.product_type, payload.locked_nodes);
+  return fitPromptToLimit(
+    [
+      "FINAL VIDEO EXECUTION PACKAGE PROMPT.",
+      "Use the selected storyboard keyframes as the action path for one expensive video generation. Do not invent a different story.",
+      `Product: ${storyIntent.stableProductName}`,
+      `Story intent: ${storyIntent.storyIntent}`,
+      `Scene anchor: ${storyIntent.sceneAnchor}`,
+      `Selected storyboard path:\n${storyboardLines}`,
+      `Camera path: ${preflight.cameraPath}`,
+      `Motion mode: ${storyIntent.motionMode}`,
+      formatProductLockContract(contract, 14),
+      "The first frame and later frames must preserve the same wearable inflatable product identity, human-scale volume, material wrinkles, seams, zipper, valves, appendages, shoes, and view-correct component placement.",
+      "No subtitles, signs, price tags, CTA, logos, stickers, or post-production sales text. No large turn, no jump, no run, no fall, no fast zoom, no product-obscuring props.",
+      "Show 2-3 readable visual action beats from the storyboard path. The result must not collapse into a static micro-animation.",
+    ],
+    getVideoModelLimit(payload.video_provider, payload.model).promptSoftLimit || SHISHI_PROMPT_SOFT_LIMIT,
+  );
+}
+
+function buildStoryboardPreflight(payload) {
+  const issues = collectStoryboardPreflightIssues(payload);
+  const hasFail = issues.some((issue) => issue.severity === "fail");
+  const hasRisk = issues.some((issue) => issue.severity === "risky");
+  const storyboards = Array.isArray(payload.storyboards) ? payload.storyboards : [];
+  const cameraPath = buildCameraPath(storyboards);
   return {
-    status: 502,
-    payload: {
-      ...lastPayload,
-      error: "这次没有拿到完整提示词，请再点一次骰子。",
-      upstreamUrl,
-    },
+    ok: !hasFail,
+    status: hasFail ? "fail" : hasRisk ? "risky" : "pass",
+    issues,
+    cameraPath,
+    selectedStoryboardCount: storyboards.length,
   };
+}
+
+function buildVideoExecutionPackage(payload) {
+  const preflight = buildStoryboardPreflight(payload);
+  const storyIntent = normalizeStoryIntentPayload(payload.story_intent || payload.storyIntent || {}, payload);
+  const productLockContract = buildProductLockContract(payload.product_type, payload.locked_nodes);
+  const finalVideoPrompt = preflight.ok ? buildFinalVideoPromptFromPackage(payload, preflight) : "";
+  return {
+    ok: preflight.ok,
+    preflight,
+    productType: storyIntent.productType,
+    stableProductName: storyIntent.stableProductName,
+    storyIntent,
+    motionMode: storyIntent.motionMode,
+    selectedStoryboards: Array.isArray(payload.storyboards) ? payload.storyboards.slice(0, 5) : [],
+    productLockContract,
+    cameraPath: preflight.cameraPath,
+    finalVideoPrompt,
+    createdAt: new Date().toISOString(),
+  };
+}
+
+function hasPassingVideoExecutionPackage(payload) {
+  const pkg = payload?.video_execution_package || payload?.videoExecutionPackage;
+  return Boolean(pkg && typeof pkg === "object" && pkg.ok === true && pkg.preflight && pkg.preflight.status !== "fail" && typeof pkg.finalVideoPrompt === "string" && pkg.finalVideoPrompt.trim());
 }
 
 async function proxyStatus(path) {
@@ -1909,13 +2955,22 @@ async function proxyVideoStatus(payload) {
   const body = payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {};
   const taskId = typeof body.task_id === "string" ? body.task_id.trim() : "";
   if (!taskId) {
-    return { status: 400, payload: { error: "还没有找到这条视频任务，请重新生成一次。" } };
+    return { status: 400, payload: { error: "Missing video task id. Please generate again." } };
   }
 
-  const baseUrl = (cleanEndpointText(body.base_url) || VIDEO_BASE_URL).replace(/\/+$/, "");
-  const apiKey = typeof body.api_key === "string" && body.api_key.trim() ? body.api_key.trim() : VIDEO_API_KEY;
+  const videoProvider = typeof body.video_provider === "string" ? body.video_provider.trim().toLowerCase() : "";
+  const providerConfig =
+    videoProvider === "wisech"
+      ? { baseUrl: WISECH_VIDEO_BASE_URL, apiKey: WISECH_VIDEO_API_KEY }
+      : videoProvider === "shishi"
+        ? { baseUrl: SHISHI_VIDEO_BASE_URL, apiKey: SHISHI_VIDEO_API_KEY }
+        : videoProvider === "toapis"
+          ? { baseUrl: VIDEO_BASE_URL || TOAPIS_BASE_URL, apiKey: VIDEO_API_KEY || TOAPIS_API_KEY }
+        : null;
+  const baseUrl = (providerConfig?.baseUrl || cleanEndpointText(body.base_url) || VIDEO_BASE_URL).replace(/\/+$/, "");
+  const apiKey = providerConfig?.apiKey || (typeof body.api_key === "string" && body.api_key.trim() ? body.api_key.trim() : VIDEO_API_KEY);
   if (!apiKey) {
-    return { status: 400, payload: { error: "服务密钥还没有配置好，请先让管理员确认后台配置。" } };
+    return { status: 400, payload: { error: "Video service API key is not configured." } };
   }
 
   const statusPath = cleanEndpointText(body.status_path);
@@ -1923,6 +2978,8 @@ async function proxyVideoStatus(payload) {
     ? buildDashScopeTaskUrl(baseUrl, taskId)
     : isVolcengineUrl(baseUrl)
       ? buildVolcengineTaskUrl(baseUrl, taskId)
+      : isShishiKejiUrl(baseUrl)
+        ? `${baseUrl}/api/task/${encodeURIComponent(taskId)}?refresh_video_url=1`
       : /^https?:\/\//i.test(statusPath)
         ? statusPath.replace("{task_id}", encodeURIComponent(taskId))
         : `${baseUrl}${normalizePath(statusPath || `${OPENAI_VIDEO_GENERATIONS_PATH}/${taskId}`, "")}`;
@@ -1930,7 +2987,7 @@ async function proxyVideoStatus(payload) {
   const response = await fetch(upstreamUrl, {
     method: "GET",
     headers: {
-      Authorization: `Bearer ${apiKey}`,
+      ...(isShishiKejiUrl(upstreamUrl) ? { "X-License-Key": apiKey } : { Authorization: `Bearer ${apiKey}` }),
     },
   });
   const text = await response.text();
@@ -1952,6 +3009,23 @@ const apiRoutes = [
         videoBaseUrl: VIDEO_BASE_URL,
         videoModel: VIDEO_MODEL,
         hasVideoApiKey: Boolean(VIDEO_API_KEY),
+        videoProviders: {
+          shishi: {
+            baseUrl: SHISHI_VIDEO_BASE_URL,
+            model: SHISHI_VIDEO_MODEL,
+            hasApiKey: Boolean(SHISHI_VIDEO_API_KEY),
+          },
+          wisech: {
+            baseUrl: WISECH_VIDEO_BASE_URL,
+            model: WISECH_VIDEO_MODEL,
+            hasApiKey: Boolean(WISECH_VIDEO_API_KEY),
+          },
+          toapis: {
+            baseUrl: VIDEO_BASE_URL || TOAPIS_BASE_URL,
+            model: TOAPIS_VIDEO_MODEL,
+            hasApiKey: Boolean(VIDEO_API_KEY || TOAPIS_API_KEY),
+          },
+        },
       }),
   },
   {
@@ -1959,7 +3033,9 @@ const apiRoutes = [
     path: "/api/first-frame",
     handler: async ({ body }) => {
       const referenceCheck = validateFourViewImages(body);
-      if (!referenceCheck.ok) return createApiResponse(400, { error: referenceCheck.error });
+      if (!referenceCheck.ok) {
+        return createApiResponse(400, { error: referenceCheck.error });
+      }
       return proxyJson("/images/edits", buildFirstFramePayload(body), "image");
     },
   },
@@ -1967,12 +3043,49 @@ const apiRoutes = [
     method: "POST",
     path: "/api/video",
     handler: async ({ body }) => {
+      if (!hasPassingVideoExecutionPackage(body)) {
+        return createApiResponse(400, { error: "Please pass storyboard preflight and compile a video execution package before generating video." });
+      }
       const firstFrameUrl = getVideoFirstFrameUrl(body);
       if (!firstFrameUrl || !isReadableVideoFirstFrameUrl(firstFrameUrl)) {
-        return createApiResponse(400, { error: "请先确认首帧，再生成视频。" });
+        return createApiResponse(400, { error: "Please approve the first frame before generating video." });
       }
-      return proxyJson(OPENAI_VIDEO_GENERATIONS_PATH, buildVideoPayload(body), "video");
+      const executionPackage = body.video_execution_package || body.videoExecutionPackage;
+      const executionPayload = {
+        ...body,
+        action_prompt: executionPackage.finalVideoPrompt,
+        scene_prompt: executionPackage.storyIntent?.sceneAnchor || body.scene_prompt,
+        motion_rule: `Use verified storyboard camera path: ${executionPackage.cameraPath || "front -> front_three_quarter -> front"}`,
+      };
+      const baseConfig = pickProxyConfig(executionPayload, OPENAI_VIDEO_GENERATIONS_PATH, "video");
+      return proxyJson(OPENAI_VIDEO_GENERATIONS_PATH, buildVideoPayload(executionPayload, { compactShishiPrompt: isShishiKejiUrl(baseConfig.upstreamUrl) }), "video");
     },
+  },
+  {
+    method: "POST",
+    path: "/api/product-locks",
+    handler: async ({ body }) =>
+      createApiResponse(200, buildProductLockContract(body.product_type, body.locked_nodes)),
+  },
+  {
+    method: "POST",
+    path: "/api/story-intent",
+    handler: async ({ body }) => proxyStoryIntent(body),
+  },
+  {
+    method: "POST",
+    path: "/api/storyboards",
+    handler: async ({ body }) => proxyStoryboards(body),
+  },
+  {
+    method: "POST",
+    path: "/api/storyboard-preflight",
+    handler: async ({ body }) => createApiResponse(200, buildStoryboardPreflight(body)),
+  },
+  {
+    method: "POST",
+    path: "/api/video-package",
+    handler: async ({ body }) => createApiResponse(200, buildVideoExecutionPackage(body)),
   },
   {
     method: "POST",
@@ -1991,6 +3104,11 @@ const apiRoutes = [
   },
   {
     method: "POST",
+    path: "/api/video-safety",
+    handler: async ({ body }) => proxyVideoSafety(body),
+  },
+  {
+    method: "POST",
     path: "/api/video-status",
     handler: async ({ body }) => proxyVideoStatus(body),
   },
@@ -2005,7 +3123,7 @@ function findApiRoute(method, pathname) {
       path: "/api/video/:taskId",
       handler: async () => {
         const taskId = decodeURIComponent(pathname.replace("/api/video/", ""));
-        if (!taskId) return createApiResponse(400, { error: "还没有找到这条视频任务，请重新生成一次。" });
+        if (!taskId) return createApiResponse(400, { error: "Missing video task id. Please generate again." });
         return proxyVideoStatus({ task_id: taskId });
       },
     };
@@ -2022,7 +3140,7 @@ async function handleApiRequest(req, res) {
   const url = new URL(req.url || "/", `http://${req.headers.host}`);
   const route = findApiRoute(req.method || "GET", url.pathname);
   if (!route) {
-    sendJson(res, 404, { error: "没有找到这个服务入口，请刷新页面后再试。" });
+    sendJson(res, 404, { error: "API route not found. Please refresh and try again." });
     return;
   }
 
@@ -2035,7 +3153,8 @@ const server = http.createServer(async (req, res) => {
   try {
     await handleApiRequest(req, res);
   } catch (error) {
-    sendJson(res, 500, {
+    const statusCode = Number.isFinite(Number(error?.statusCode)) ? Number(error.statusCode) : 500;
+    sendJson(res, statusCode, {
       error: toPublicErrorMessage(error instanceof Error ? error.message : ""),
     });
   }

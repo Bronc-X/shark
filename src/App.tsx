@@ -7,7 +7,6 @@ import {
   Dices,
   FileImage,
   Film,
-  Image,
   KeyRound,
   LoaderCircle,
   Play,
@@ -22,18 +21,125 @@ import {
 import { AnimatePresence, motion } from "motion/react";
 import type { LucideIcon } from "lucide-react";
 import type { DragEvent } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
-type StepId = "upload" | "firstFrame" | "video" | "qa";
+type StepId = "upload" | "storyboard" | "video";
 type MotionMode = "strict" | "balanced" | "creative";
 type VideoStatus = "idle" | "submitted" | "polling" | "succeeded" | "failed";
-type PromptPairMeta = {
-  sceneTitle: string;
-  sceneAnchor: string;
-  continuityLocks: string;
-  model: string;
-  upstreamUrl: string;
+type WorkflowJobKind = "storyIntent" | "storyboard" | "video";
+type JobEventType =
+  | "job.started"
+  | "step.started"
+  | "tool.started"
+  | "tool.completed"
+  | "artifact.created"
+  | "step.failed"
+  | "job.completed";
+
+type ProgressEvent = {
+  id: string;
+  jobId: string;
+  type: JobEventType;
+  title: string;
+  detail: string;
+  status: "running" | "done" | "failed";
+  at: string;
 };
+type StoryBeat = {
+  id: string;
+  beat: string;
+  action: string;
+  camera: string;
+  risk?: string;
+};
+
+type StoryIntent = {
+  storyTitle: string;
+  storyIntent: string;
+  sceneAnchor: string;
+  motionMode: MotionMode;
+  productType: string;
+  stableProductName: string;
+  beats: StoryBeat[];
+  riskNotes: string[];
+  model?: string;
+  upstreamUrl?: string;
+};
+
+type ProductLockContract = {
+  productType: string;
+  stableProductName: string;
+  family: string;
+  locks: Array<{
+    id: string;
+    label: string;
+    ownedByViews: string[];
+    allowedAngles: string[];
+    forbiddenPlacements: string[];
+    failureExamples: string[];
+    critical: boolean;
+  }>;
+  supplementalLocks: Array<{ id: string; label: string; detail?: string; critical?: boolean }>;
+  forbiddenContent: string[];
+};
+
+type StoryboardCheck = {
+  id: string;
+  status: "pending" | "pass" | "risky" | "fail";
+  detail: string;
+};
+
+type StoryboardFrame = {
+  id: string;
+  imageUrl: string;
+  beat: string;
+  action: string;
+  viewAngle: string;
+  checks?: StoryboardCheck[];
+};
+
+type StoryboardPreflightIssue = {
+  severity: "fail" | "risky" | "info";
+  code: string;
+  message: string;
+};
+
+type StoryboardPreflight = {
+  ok: boolean;
+  status: "pass" | "risky" | "fail";
+  issues: StoryboardPreflightIssue[];
+  cameraPath: string;
+  selectedStoryboardCount: number;
+};
+
+type VideoExecutionPackage = {
+  ok: boolean;
+  preflight: StoryboardPreflight;
+  productType: string;
+  stableProductName: string;
+  storyIntent: StoryIntent;
+  motionMode: MotionMode;
+  selectedStoryboards: StoryboardFrame[];
+  productLockContract: ProductLockContract;
+  cameraPath: string;
+  finalVideoPrompt: string;
+  createdAt: string;
+};
+
+function redactStoryboardImageForSubmit(storyboard: StoryboardFrame): StoryboardFrame {
+  return {
+    ...storyboard,
+    imageUrl: storyboard.imageUrl ? "[storyboard image omitted from submit payload]" : "",
+  };
+}
+
+function createSlimVideoExecutionPackage(pkg: VideoExecutionPackage | null): VideoExecutionPackage | null {
+  if (!pkg) return null;
+  return {
+    ...pkg,
+    selectedStoryboards: pkg.selectedStoryboards.map(redactStoryboardImageForSubmit),
+  };
+}
 
 type UploadSlot = {
   id: string;
@@ -61,6 +167,7 @@ type LockNode = {
 type ApiSettings = {
   imagePath: string;
   imageModel: string;
+  videoProvider: "shishi" | "wisech" | "toapis";
   videoBaseUrl: string;
   videoPath: string;
   videoApiKey: string;
@@ -70,7 +177,7 @@ type ApiSettings = {
 
 type HistoryItem = {
   id: string;
-  type: "首帧" | "视频";
+  type: "分镜" | "首帧" | "视频";
   title: string;
   time: string;
   createdAt: string;
@@ -82,6 +189,7 @@ type HistoryItem = {
   model?: string;
   aspectRatio?: string;
   duration?: number;
+  requestedDuration?: number;
   motionMode?: MotionMode;
   taskId?: string;
   detailUrl?: string;
@@ -89,7 +197,6 @@ type HistoryItem = {
   videoUrl?: string;
   productViewUrls?: string[];
   supportImageUrls?: string[];
-  referenceVideoUrls?: string[];
   error?: string;
 };
 
@@ -100,18 +207,12 @@ type ProductAsset = {
   viewMode: "四视图";
   viewUrls: string[];
   supportViewUrls: string[];
-  referenceVideoUrls: string[];
   lockedNodeCodes: string[];
   updatedAt: string;
 };
 
 type ProductPresetView = {
   slotId: string;
-  fileName: string;
-  localUrl: string;
-};
-
-type ProductReferenceVideo = {
   fileName: string;
   localUrl: string;
 };
@@ -125,7 +226,6 @@ type ProductPreset = {
   productType: string;
   views: readonly ProductPresetView[];
   supportViews?: readonly ProductPresetSupportView[];
-  referenceVideos: readonly ProductReferenceVideo[];
   lockNodes: readonly LockNode[];
 };
 
@@ -141,13 +241,47 @@ const FIRST_FRAME_REFERENCE_MAX_BYTES = 900_000;
 const FIRST_FRAME_REFERENCE_JPEG_QUALITY = 0.86;
 const DEFAULT_PROMPT_MODEL = "gpt-5.4-mini";
 const DEFAULT_IMAGE_MODEL = "gpt-image-2";
-const DEFAULT_VIDEO_MODEL = "doubao-seedance-2-0-260128";
+const DEFAULT_VIDEO_BASE_URL = "https://api.shishikeji.com";
+const DEFAULT_VIDEO_MODEL = "2.0";
+const SENSITIVE_PRODUCT_WORD_REPLACEMENTS: Array<[RegExp, string]> = [
+  [new RegExp("\\u5976\\u5934", "g"), "粉色小圆点"],
+  [new RegExp("\\u4e73\\u623f", "g"), "粉色下腹组件"],
+  [new RegExp("\\u80f8\\u8179", "g"), "侧面躯干"],
+  [new RegExp("\\u80f8\\u53e3", "g"), "上身正面"],
+  [new RegExp("\\u80f8\\u7ebf", "g"), "上身简线"],
+  [new RegExp("\\u80f8\\u90e8", "g"), "上身"],
+  [new RegExp("\\u80f8", "g"), "上身"],
+  [new RegExp("\\bu" + "dders?\\b", "gi"), "front belly pad"],
+  [new RegExp("\\bn" + "ipples?\\b", "gi"), "small pink dots"],
+  [new RegExp("\\bb" + "reasts?\\b", "gi"), "front belly pad"],
+  [new RegExp("\\bc" + "hest\\b", "gi"), "upper torso"],
+  [new RegExp("\\bb" + "ust\\b", "gi"), "upper torso"],
+];
+
+function sanitizeProductText(text: string) {
+  return SENSITIVE_PRODUCT_WORD_REPLACEMENTS.reduce((value, [pattern, replacement]) => value.replace(pattern, replacement), String(text || ""))
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+function sanitizeLockNode(node: LockNode): LockNode {
+  return {
+    ...node,
+    label: sanitizeProductText(node.label),
+    detail: sanitizeProductText(node.detail),
+  };
+}
+
+const VIDEO_PROVIDER_DURATION_CAPS: Record<ApiSettings["videoProvider"], { min: number; max: number; note: string }> = {
+  shishi: { min: 5, max: 15, note: "石狮通道会按所选秒数提交，实际成片仍以上游返回为准。" },
+  wisech: { min: 4, max: 15, note: "Wisech / 云书 Seedance 2.0 按官方区间可提交 4-15 秒；实际成片仍以上游返回为准。" },
+  toapis: { min: 4, max: 15, note: "ToAPI video models use the backend key; the final clip length follows the upstream model response." },
+};
 
 const steps: Array<{ id: StepId; label: string; shortLabel: string; description: string; icon: LucideIcon }> = [
   { id: "upload", label: "上传产品四视图", shortLabel: "上传", description: "正面、左侧、右侧、背面四张核心图", icon: Upload },
-  { id: "firstFrame", label: "合成首帧", shortLabel: "首帧", description: "根据核心四视图生成一致首帧", icon: Image },
-  { id: "video", label: "生成视频", shortLabel: "视频", description: "基于人工确认首帧提交视频任务", icon: Film },
-  { id: "qa", label: "视频质检", shortLabel: "质检", description: "播放成片并检查产品一致性", icon: ClipboardCheck },
+  { id: "storyboard", label: "生成分镜", shortLabel: "分镜", description: "先生成剧情意图，再生成可预检分镜", icon: ClipboardCheck },
+  { id: "video", label: "生成视频", shortLabel: "视频", description: "通过执行包预检后一次提交", icon: Film },
 ];
 const visibleSteps = steps;
 
@@ -170,20 +304,11 @@ const SHARK_INFLATABLE_PRESET_VIEWS = [
   { slotId: "back", fileName: "shark-back.jpg", localUrl: "/product-presets/shark-inflatable/back.jpg" },
 ] as const;
 
-const SHARK_INFLATABLE_REFERENCE_VIDEOS = [
-  { fileName: "shark-reference-01.mp4", localUrl: "/product-presets/shark-inflatable/reference-01.mp4" },
-  { fileName: "shark-reference-02.mp4", localUrl: "/product-presets/shark-inflatable/reference-02.mp4" },
-] as const;
-
 const BULL_INFLATABLE_PRESET_VIEWS = [
   { slotId: "front", fileName: "bull-front.jpg", localUrl: "/product-presets/bull-inflatable/front.jpg" },
   { slotId: "leftSide", fileName: "bull-left.jpg", localUrl: "/product-presets/bull-inflatable/left.jpg" },
   { slotId: "rightSide", fileName: "bull-right.jpg", localUrl: "/product-presets/bull-inflatable/right.jpg" },
   { slotId: "back", fileName: "bull-back.jpg", localUrl: "/product-presets/bull-inflatable/back.jpg" },
-] as const;
-
-const BULL_INFLATABLE_REFERENCE_VIDEOS = [
-  { fileName: "bull-reference-01.mp4", localUrl: "/product-presets/bull-inflatable/reference-01.mp4" },
 ] as const;
 
 const GRAY_MOUSE_INFLATABLE_PRESET_VIEWS = [
@@ -192,8 +317,6 @@ const GRAY_MOUSE_INFLATABLE_PRESET_VIEWS = [
   { slotId: "rightSide", fileName: "gray-mouse-right.jpg", localUrl: "/product-presets/gray-mouse-inflatable/right.jpg" },
   { slotId: "back", fileName: "gray-mouse-back.jpg", localUrl: "/product-presets/gray-mouse-inflatable/back.jpg" },
 ] as const;
-
-const GRAY_MOUSE_INFLATABLE_REFERENCE_VIDEOS = [] as readonly ProductReferenceVideo[];
 
 const FROG_INFLATABLE_PRESET_VIEWS = [
   { slotId: "front", fileName: "frog-front.jpg", localUrl: "/product-presets/frog-inflatable/front.jpg" },
@@ -206,8 +329,6 @@ const FROG_INFLATABLE_SUPPORT_VIEWS = [
   { fileName: "frog-support-right-alt.jpg", localUrl: "/product-presets/frog-inflatable/support-right-alt.jpg" },
 ] as const;
 
-const FROG_INFLATABLE_REFERENCE_VIDEOS = [] as readonly ProductReferenceVideo[];
-
 const SUMO_INFLATABLE_PRESET_VIEWS = [
   { slotId: "front", fileName: "sumo-front.jpg", localUrl: "/product-presets/sumo-inflatable/front.jpg" },
   { slotId: "leftSide", fileName: "sumo-left.jpg", localUrl: "/product-presets/sumo-inflatable/left.jpg" },
@@ -218,8 +339,6 @@ const SUMO_INFLATABLE_PRESET_VIEWS = [
 const SUMO_INFLATABLE_SUPPORT_VIEWS = [
   { fileName: "sumo-support-rear-valve.jpg", localUrl: "/product-presets/sumo-inflatable/support-rear-valve.jpg" },
 ] as const;
-
-const SUMO_INFLATABLE_REFERENCE_VIDEOS = [] as readonly ProductReferenceVideo[];
 
 const SHARK_INFLATABLE_LOCK_NODES: LockNode[] = [
   {
@@ -280,7 +399,7 @@ const SHARK_INFLATABLE_LOCK_NODES: LockNode[] = [
     id: "body-volume-envelope",
     label: "体积包络 / 身宽比例",
     code: "Body_Volume_Envelope",
-    detail: "正面白色腹部宽度约占身体总宽 45%-55%；头部宽高、躯干宽度、手鳍长度和侧面厚度不得超过四视图参考；身体要接近轻度欠充气的柔软尼龙套服，侧面胸腹是可穿戴服厚度，不是竖直胶囊、圆柱气球或饱满鱼雷；背面不能膨胀成无结构圆柱。",
+    detail: "正面白色腹部宽度约占身体总宽 45%-55%；头部宽高、躯干宽度、手鳍长度和侧面厚度不得超过四视图参考；身体要接近轻度欠充气的柔软尼龙套服，侧面躯干是可穿戴服厚度，不是竖直胶囊、圆柱气球或饱满鱼雷；背面不能膨胀成无结构圆柱。",
     confidence: 0.93,
     critical: true,
     confirmed: true,
@@ -326,10 +445,10 @@ const BULL_INFLATABLE_LOCK_NODES: LockNode[] = [
     confirmed: true,
   },
   {
-    id: "cow-front-udder",
-    label: "正面粉色乳房 / 四个奶头",
-    code: "Cow_Front_Udder",
-    detail: "正面下腹中央必须保留粉色圆形凸起乳房和四个粉色奶头，位置在腹部偏下、两腿上方；不能移动到侧面、背面、胸口，也不能省略或改成口袋装饰。",
+    id: "cow-front-belly-pad",
+    label: "正面粉色下腹组件 / 四个小圆点",
+    code: "Cow_Front_Belly_Pad",
+    detail: "正面下腹中央必须保留粉色圆形凸起下腹组件和四个粉色小圆点，位置在腹部偏下、两腿上方；不能移动到侧面、背面、上身正面，也不能省略或改成口袋装饰。",
     confidence: 0.97,
     critical: true,
     confirmed: true,
@@ -365,7 +484,7 @@ const BULL_INFLATABLE_LOCK_NODES: LockNode[] = [
     id: "cow-view-topology",
     label: "视角拓扑 / 奶牛组件归位",
     code: "Cow_View_Topology_Placement",
-    detail: "正面拥有脸部、粉色乳房和前身斑块；侧面显示鼻口凸出、侧身厚度、手臂和侧身斑块；背面拥有拉链、橙色阀门和尾巴。看不见的结构自然隐藏，不能为了展示挪位。",
+    detail: "正面拥有脸部、粉色下腹组件和前身斑块；侧面显示鼻口凸出、侧身厚度、手臂和侧身斑块；背面拥有拉链、橙色阀门和尾巴。看不见的结构自然隐藏，不能为了展示挪位。",
     confidence: 0.97,
     critical: true,
     confirmed: true,
@@ -395,7 +514,7 @@ const GRAY_MOUSE_INFLATABLE_LOCK_NODES: LockNode[] = [
     id: "mouse-back-zipper-valve",
     label: "背部拉链 / 绿色鼓风阀",
     code: "Mouse_Back_Zipper_Green_Valve",
-    detail: "背面中轴拉链、后背缝线和绿色圆形鼓风阀必须按背视图归位；正面镜头不可把绿色阀门或背部拉链挪到腹部或胸口。",
+    detail: "背面中轴拉链、后背缝线和绿色圆形鼓风阀必须按背视图归位；正面镜头不可把绿色阀门或背部拉链挪到腹部或上身正面。",
     confidence: 0.94,
     critical: true,
     confirmed: true,
@@ -482,7 +601,7 @@ const SUMO_INFLATABLE_LOCK_NODES: LockNode[] = [
     id: "sumo-front-body-belt",
     label: "相扑正面身体 / 黑色腰带兜裆",
     code: "Sumo_Front_Body_Mawashi",
-    detail: "保留米肉色充气身体、黑色腰带/相扑兜裆、正面黑色垂片、简单胸部线条和肚脐点；不能改成武士服、胖娃娃、普通肌肉人或重新设计的衣服。",
+    detail: "保留米肉色充气身体、黑色腰带/相扑兜裆、正面黑色垂片、简单上身线条和肚脐点；不能改成武士服、胖娃娃、普通肌肉人或重新设计的衣服。",
     confidence: 0.96,
     critical: true,
     confirmed: true,
@@ -509,7 +628,7 @@ const SUMO_INFLATABLE_LOCK_NODES: LockNode[] = [
     id: "sumo-back-zipper-valve",
     label: "背部拉链 / 橙色阀门",
     code: "Sumo_Back_Zipper_Orange_Valve",
-    detail: "背面必须保留中轴拉链/竖缝、黑色后腰带/后兜裆和橙色圆形鼓风阀；橙色阀门不能被移到正面肚子或胸口，拉链不能出现在正面。",
+    detail: "背面必须保留中轴拉链/竖缝、黑色后腰带/后兜裆和橙色圆形鼓风阀；橙色阀门不能被移到正面肚子或上身正面，拉链不能出现在正面。",
     confidence: 0.96,
     critical: true,
     confirmed: true,
@@ -527,7 +646,7 @@ const SUMO_INFLATABLE_LOCK_NODES: LockNode[] = [
     id: "sumo-view-topology",
     label: "相扑视角拓扑 / 组件归位",
     code: "Sumo_View_Topology_Placement",
-    detail: "正面拥有黑色腰带兜裆、胸线和肚脐；侧面拥有厚度、T 形手臂和腰带系结；背面拥有拉链、橙色阀门和后腰带。看不见的结构隐藏，不挪位。",
+    detail: "正面拥有黑色腰带兜裆、上身简线和肚脐；侧面拥有厚度、T 形手臂和腰带系结；背面拥有拉链、橙色阀门和后腰带。看不见的结构隐藏，不挪位。",
     confidence: 0.97,
     critical: true,
     confirmed: true,
@@ -569,13 +688,13 @@ function getAirHardwareMaterialLockNodes(productType: string): LockNode[] {
     productType === SHARK_INFLATABLE_TYPE
       ? "鲨鱼橙色鼓风阀/进气口/出气口/泵口只能位于阀门侧腰侧面，保留橙色环、圆形网格/盖帽、参考高度和方向；正面看不见时自然隐藏，不能挪到白肚、透明脸窗、正面拉链、尾鳍或鳃线。"
       : productType === BULL_INFLATABLE_TYPE
-        ? "奶牛橙色鼓风阀/进气口/出气口/泵口只能位于右后侧/背侧，和背部中轴拉链、白尾黑尖保持正确相对位置；不能挪到粉色乳房、白肚、鼻口或脸部。"
+        ? "奶牛橙色鼓风阀/进气口/出气口/泵口只能位于右后侧/背侧，和背部中轴拉链、白尾黑尖保持正确相对位置；不能挪到粉色下腹组件、白肚、鼻口或脸部。"
         : productType === GRAY_MOUSE_INFLATABLE_TYPE
           ? "灰鼠绿色鼓风阀/进气口/出气口/泵口只能位于后背/背侧，和背部中轴拉链、米黄尾巴根部保持正确相对位置；不能挪到米色腹部、鼻嘴、耳朵或手臂。"
           : productType === FROG_INFLATABLE_TYPE
             ? "青蛙橙色鼓风阀/进气口/出气口/泵口只能位于背部黑色脊线/拉链附近的后背面；不能挪到米色腹部、蓝围巾、脸窗、嘴带、手脚或斑点上。"
             : productType === SUMO_INFLATABLE_TYPE
-              ? "相扑橙色鼓风阀/进气口/出气口/泵口只能位于背面/后侧，并按后阀辅助图保留与后腰带、拉链、米肉色背面褶皱的间距；不能挪到正面肚子、胸线、肚脐或兜裆布。"
+              ? "相扑橙色鼓风阀/进气口/出气口/泵口只能位于背面/后侧，并按后阀辅助图保留与后腰带、拉链、米肉色背面褶皱的间距；不能挪到正面肚子、上身简线、肚脐或兜裆布。"
               : "阀门、鼓风阀、进气口、出气口、泵口、充放气口、风扇网格、盖帽和拉链只能按四视图定义的表面、数量、颜色、尺寸和高度归位。";
 
   return [
@@ -607,35 +726,30 @@ const productPresets: readonly ProductPreset[] = [
     productType: SHARK_INFLATABLE_TYPE,
     views: SHARK_INFLATABLE_PRESET_VIEWS,
     supportViews: [],
-    referenceVideos: SHARK_INFLATABLE_REFERENCE_VIDEOS,
     lockNodes: SHARK_INFLATABLE_LOCK_NODES,
   },
   {
     productType: BULL_INFLATABLE_TYPE,
     views: BULL_INFLATABLE_PRESET_VIEWS,
     supportViews: [],
-    referenceVideos: BULL_INFLATABLE_REFERENCE_VIDEOS,
     lockNodes: BULL_INFLATABLE_LOCK_NODES,
   },
   {
     productType: GRAY_MOUSE_INFLATABLE_TYPE,
     views: GRAY_MOUSE_INFLATABLE_PRESET_VIEWS,
     supportViews: [],
-    referenceVideos: GRAY_MOUSE_INFLATABLE_REFERENCE_VIDEOS,
     lockNodes: GRAY_MOUSE_INFLATABLE_LOCK_NODES,
   },
   {
     productType: FROG_INFLATABLE_TYPE,
     views: FROG_INFLATABLE_PRESET_VIEWS,
     supportViews: FROG_INFLATABLE_SUPPORT_VIEWS,
-    referenceVideos: FROG_INFLATABLE_REFERENCE_VIDEOS,
     lockNodes: FROG_INFLATABLE_LOCK_NODES,
   },
   {
     productType: SUMO_INFLATABLE_TYPE,
     views: SUMO_INFLATABLE_PRESET_VIEWS,
     supportViews: SUMO_INFLATABLE_SUPPORT_VIEWS,
-    referenceVideos: SUMO_INFLATABLE_REFERENCE_VIDEOS,
     lockNodes: SUMO_INFLATABLE_LOCK_NODES,
   },
 ] as const;
@@ -650,7 +764,7 @@ function cloneLockNodes(nodes: readonly LockNode[]) {
 
 function getProductLockNodes(productType: string) {
   const preset = getProductPreset(productType);
-  return cloneLockNodes([...(preset?.lockNodes || GENERIC_INFLATABLE_LOCK_NODES), ...getAirHardwareMaterialLockNodes(productType)]);
+  return cloneLockNodes([...(preset?.lockNodes || GENERIC_INFLATABLE_LOCK_NODES), ...getAirHardwareMaterialLockNodes(productType)]).map(sanitizeLockNode);
 }
 
 function createPresetSlots(productType: string): UploadSlot[] {
@@ -664,93 +778,95 @@ function createPresetSlots(productType: string): UploadSlot[] {
   });
 }
 
-const firstFrameReviewChecks = [
-  {
-    id: "human-body-envelope",
-    label: "人体体型包络 / 不过度鼓胀",
-    detail: "必须像真人穿着充气服：肩宽、腰胯、分腿和黑鞋接近四视图；一旦变成巨大圆顶、桶状身体、站立气球或吉祥物外壳就判错误。",
-    critical: true,
-  },
-  {
-    id: "shape-volume",
-    label: "尺寸 / 比例 / 充气体积正确",
-    detail: "保持四视图里的轻到中度充气体量，不变瘦、不鼓成球、不变成展示道具，不能把产品放大到超过真人穿戴尺度。",
-    critical: true,
-  },
-  {
-    id: "front-window-zipper",
-    label: "正面核心组件归位",
-    detail: "正面图定义的脸部、窗口、图案、拉链、乳房或其他核心组件只属于正面，不挪到侧面或背面。",
-    critical: true,
-  },
-  {
-    id: "valve-tail-visibility",
-    label: "侧面 / 背面组件按视角可见",
-    detail: "阀门、尾部、背部拉链、侧面图案和侧边结构只在物理可见时出现；不可为了展示而挪位。",
-    critical: true,
-  },
-  {
-    id: "air-hardware-material",
-    label: "进出气口泵口 / 材质细节正确",
-    detail: "阀门、鼓风阀、进气口、出气口、泵口、充放气口、风扇网格、盖帽必须按四视图的颜色、数量、尺寸、高度和侧/背归属出现；薄尼龙/PVC 褶皱、缝线、拉链齿、色块针脚和阀门环必须清楚，不能变成光滑塑料、毛绒或 CGI 外壳。",
-    critical: true,
-  },
-  {
-    id: "no-invented-parts",
-    label: "没有新增或丢失结构",
-    detail: "无新增表情、额外肢体、额外装饰、错位阀门、错位尾部、缺失脸部、缺失斑块或缺失关键组件。",
-    critical: true,
-  },
-] as const;
-
-type ReviewCheckId = (typeof firstFrameReviewChecks)[number]["id"];
-type ReviewDecision = "pending" | "pass" | "fail";
-type FirstFrameReviewState = Record<ReviewCheckId, ReviewDecision>;
-
-function createFirstFrameReviewState(): FirstFrameReviewState {
-  return Object.fromEntries(firstFrameReviewChecks.map((check) => [check.id, "pending"])) as FirstFrameReviewState;
-}
-
-function createPassedFirstFrameReviewState(): FirstFrameReviewState {
-  return Object.fromEntries(firstFrameReviewChecks.map((check) => [check.id, "pass"])) as FirstFrameReviewState;
-}
-
-function createFirstFrameReviewFeedback(reviewState: FirstFrameReviewState) {
-  const failedChecks = firstFrameReviewChecks.filter((check) => reviewState[check.id] === "fail");
-  const passedChecks = firstFrameReviewChecks.filter((check) => reviewState[check.id] === "pass");
-  return {
-    mode: "targeted-first-frame-regeneration",
-    instruction:
-      "The first-frame prompt and scene are unchanged. Only correct the failed checklist items. Keep passed checklist items and all unmentioned areas as close as possible to the previous first frame.",
-    failed_checks: failedChecks.map((check) => ({
-      id: check.id,
-      label: check.label,
-      detail: check.detail,
-      critical: check.critical,
-    })),
-    passed_checks: passedChecks.map((check) => ({
-      id: check.id,
-      label: check.label,
-      detail: check.detail,
-      critical: check.critical,
-    })),
-  };
-}
-
 const defaultApiSettings: ApiSettings = {
   imagePath: "",
   imageModel: DEFAULT_IMAGE_MODEL,
-  videoBaseUrl: "https://ai.wisech.com/v1",
+  videoProvider: "shishi",
+  videoBaseUrl: DEFAULT_VIDEO_BASE_URL,
   videoPath: "",
   videoApiKey: "",
   videoModel: DEFAULT_VIDEO_MODEL,
   promptModel: DEFAULT_PROMPT_MODEL,
 };
 
-const VIDEO_MODEL_OPTIONS = [
-  "doubao-seedance-1-5-pro-251215",
-  "doubao-seedance-2-0-260128",
+const VIDEO_MODEL_OPTIONS: Record<ApiSettings["videoProvider"], readonly { value: string; label: string }[]> = {
+  shishi: [
+    { value: "fast", label: "fast - \u00a50.29/\u79d2 (3.5 \u79ef\u5206/\u79d2)" },
+    { value: "2.0", label: "2.0 - \u00a50.50/\u79d2 (6 \u79ef\u5206/\u79d2)" },
+    { value: "transit9-fast", label: "\u7279\u4ef7 fast - \u00a50.22/\u79d2 (40 \u79ef\u5206/\u6761\u6309 15s \u6298)" },
+    { value: "transit9-2.0", label: "\u7279\u4ef7 2.0 - \u00a50.33/\u79d2 (60 \u79ef\u5206/\u6761\u6309 15s \u6298)" },
+  ],
+  wisech: [
+    { value: "yunshu-2-0-260128-1080p", label: "\u4e91\u4e66 Seedance 2.0 - 1080p - \u00a52.48/\u79d2 - yunshu-2-0-260128-1080p" },
+    { value: "yunshu-2-0-260128-720p", label: "\u4e91\u4e66 Seedance 2.0 - 720p - \u00a50.99/\u79d2 - yunshu-2-0-260128-720p" },
+  ],
+  toapis: [
+    { value: "kling-v3", label: "kling-v3 - \u00a50.84/\u79d2 (12 credits/\u79d2)" },
+    { value: "seedance-2-fast", label: "seedance-2-fast - \u00a51.44/\u79d2 (20.5714 credits/\u79d2)" },
+    { value: "doubao-seedance-1-5-pro", label: "doubao-seedance-1-5-pro - \u00a50.62/\u79d2 (8.8 credits/\u79d2)" },
+    { value: "grok-video-3", label: "grok-video-3 - \u00a50.14/\u79d2 (12 credits/\u6b21\u6309 6s \u6298)" },
+  ],
+} as const;
+
+const VIDEO_PROVIDER_OPTIONS = [
+  { value: "shishi", label: "石狮接口", baseUrl: "https://api.shishikeji.com", model: "2.0" },
+  { value: "wisech", label: "Wisech / 云书 Seedance", baseUrl: "https://ai.wisech.com/v1", model: "yunshu-2-0-260128-1080p" },
+  { value: "toapis", label: "ToAPI", baseUrl: "https://toapis.com/v1", model: "kling-v3" },
 ] as const;
+
+function getVideoProviderOption(value: ApiSettings["videoProvider"]) {
+  return VIDEO_PROVIDER_OPTIONS.find((provider) => provider.value === value) || VIDEO_PROVIDER_OPTIONS[0];
+}
+
+function getVideoDurationCap(provider: ApiSettings["videoProvider"]) {
+  return VIDEO_PROVIDER_DURATION_CAPS[provider] || VIDEO_PROVIDER_DURATION_CAPS.shishi;
+}
+
+function getVideoModelDurationCap(provider: ApiSettings["videoProvider"], model: string) {
+  if (provider === "toapis" && /grok-video-3/i.test(model)) {
+    return { min: 6, max: 6, note: "ToAPI grok-video-3 is treated as a fixed 6-second model; the backend clamps requests before submission." };
+  }
+  if (provider === "toapis" && /1-5|1\.5/i.test(model)) {
+    return { min: 4, max: 12, note: "ToAPI Seedance 1.5 Pro requests are clamped to 4-12 seconds before submission." };
+  }
+  if (provider === "wisech" && /1-5|1\.5/i.test(model)) {
+    return { min: 4, max: 12, note: "Seedance 1.5 Pro 官方 duration 区间为 4-12 秒，或设置为 -1 由模型自选。" };
+  }
+  if (provider === "wisech") {
+    return { min: 4, max: 15, note: "Seedance 2.0 系列官方 duration 区间为 4-15 秒，或设置为 -1 由模型自选。" };
+  }
+  return getVideoDurationCap(provider);
+}
+
+function getVideoModelOptions(provider: ApiSettings["videoProvider"]) {
+  return VIDEO_MODEL_OPTIONS[provider] || VIDEO_MODEL_OPTIONS.shishi;
+}
+
+function getDefaultVideoModel(provider: ApiSettings["videoProvider"]) {
+  return getVideoProviderOption(provider).model || getVideoModelOptions(provider)[0]?.value || "";
+}
+
+function getVideoModelResolution(provider: ApiSettings["videoProvider"], model: string) {
+  if (provider === "shishi") return "720p";
+  if (provider === "wisech" && /720p/i.test(model)) return "720p";
+  return "1080p";
+}
+
+function isVideoModelAllowed(provider: ApiSettings["videoProvider"], model: string) {
+  return getVideoModelOptions(provider).some((option) => option.value === model);
+}
+
+function clampVideoDuration(provider: ApiSettings["videoProvider"], value: number) {
+  const cap = getVideoDurationCap(provider);
+  const numeric = Number.isFinite(value) ? value : cap.min;
+  return Math.min(cap.max, Math.max(cap.min, Math.round(numeric)));
+}
+
+function clampVideoDurationForModel(provider: ApiSettings["videoProvider"], model: string, value: number) {
+  const cap = getVideoModelDurationCap(provider, model);
+  const numeric = Number.isFinite(value) ? value : cap.min;
+  return Math.min(cap.max, Math.max(cap.min, Math.round(numeric)));
+}
 
 const productAssetPlan: ProductAsset[] = [
   {
@@ -760,7 +876,6 @@ const productAssetPlan: ProductAsset[] = [
     viewMode: "四视图",
     viewUrls: SHARK_INFLATABLE_PRESET_VIEWS.map((view) => view.localUrl),
     supportViewUrls: [],
-    referenceVideoUrls: SHARK_INFLATABLE_REFERENCE_VIDEOS.map((video) => video.localUrl),
     lockedNodeCodes: getProductLockNodes(SHARK_INFLATABLE_TYPE).map((node) => node.code),
     updatedAt: "本地预设",
   },
@@ -771,7 +886,6 @@ const productAssetPlan: ProductAsset[] = [
     viewMode: "四视图",
     viewUrls: BULL_INFLATABLE_PRESET_VIEWS.map((view) => view.localUrl),
     supportViewUrls: [],
-    referenceVideoUrls: BULL_INFLATABLE_REFERENCE_VIDEOS.map((video) => video.localUrl),
     lockedNodeCodes: getProductLockNodes(BULL_INFLATABLE_TYPE).map((node) => node.code),
     updatedAt: "本地预设",
   },
@@ -782,7 +896,6 @@ const productAssetPlan: ProductAsset[] = [
     viewMode: "四视图",
     viewUrls: GRAY_MOUSE_INFLATABLE_PRESET_VIEWS.map((view) => view.localUrl),
     supportViewUrls: [],
-    referenceVideoUrls: GRAY_MOUSE_INFLATABLE_REFERENCE_VIDEOS.map((video) => video.localUrl),
     lockedNodeCodes: getProductLockNodes(GRAY_MOUSE_INFLATABLE_TYPE).map((node) => node.code),
     updatedAt: "本地预设",
   },
@@ -793,7 +906,6 @@ const productAssetPlan: ProductAsset[] = [
     viewMode: "四视图",
     viewUrls: FROG_INFLATABLE_PRESET_VIEWS.map((view) => view.localUrl),
     supportViewUrls: FROG_INFLATABLE_SUPPORT_VIEWS.map((view) => view.localUrl),
-    referenceVideoUrls: FROG_INFLATABLE_REFERENCE_VIDEOS.map((video) => video.localUrl),
     lockedNodeCodes: getProductLockNodes(FROG_INFLATABLE_TYPE).map((node) => node.code),
     updatedAt: "本地预设",
   },
@@ -804,7 +916,6 @@ const productAssetPlan: ProductAsset[] = [
     viewMode: "四视图",
     viewUrls: SUMO_INFLATABLE_PRESET_VIEWS.map((view) => view.localUrl),
     supportViewUrls: SUMO_INFLATABLE_SUPPORT_VIEWS.map((view) => view.localUrl),
-    referenceVideoUrls: SUMO_INFLATABLE_REFERENCE_VIDEOS.map((video) => video.localUrl),
     lockedNodeCodes: getProductLockNodes(SUMO_INFLATABLE_TYPE).map((node) => node.code),
     updatedAt: "本地预设",
   },
@@ -838,20 +949,41 @@ function loadApiSettings(): ApiSettings {
     if (merged.imagePath === "/images/generations") merged.imagePath = "";
     if (merged.videoPath === "/videos/generations") merged.videoPath = "";
     const normalizedVideoBaseUrl = typeof merged.videoBaseUrl === "string" ? merged.videoBaseUrl.replace(/\/+$/, "") : "";
+    if (parsed.videoProvider !== "wisech" && parsed.videoProvider !== "shishi" && parsed.videoProvider !== "toapis") {
+      merged.videoProvider =
+        normalizedVideoBaseUrl === "https://ai.wisech.com/v1"
+          ? "wisech"
+          : normalizedVideoBaseUrl === "https://toapis.com/v1"
+            ? "toapis"
+            : "shishi";
+    }
     if (
       !normalizedVideoBaseUrl ||
+      normalizedVideoBaseUrl === "https://ai.wisech.com/v1" ||
       normalizedVideoBaseUrl === "https://dashscope.aliyuncs.com/api/v1" ||
-      normalizedVideoBaseUrl === "https://dashscope.aliyuncs.com/api/v1/services/aigc/video-generation/video-synthesis"
+      normalizedVideoBaseUrl === "https://dashscope.aliyuncs.com/api/v1/services/aigc/video-generation/video-synthesis" ||
+      normalizedVideoBaseUrl === "https://api.shishikeji.com" ||
+      normalizedVideoBaseUrl === "https://toapis.com/v1"
     ) {
       merged.videoBaseUrl = defaultApiSettings.videoBaseUrl;
     }
-    const videoModelText = typeof merged.videoModel === "string" ? merged.videoModel : "";
-    if (!videoModelText || videoModelText.startsWith("happyhorse-1.0") || videoModelText === "doubao-seedance-2-0-fast-260128") {
-      merged.videoModel = defaultApiSettings.videoModel;
+    const provider = getVideoProviderOption(merged.videoProvider);
+    merged.videoBaseUrl = provider.baseUrl;
+    const videoModelText = typeof merged.videoModel === "string" ? merged.videoModel.trim() : "";
+    if (
+      !videoModelText ||
+      videoModelText.startsWith("happyhorse-1.0") ||
+      videoModelText === "fofo" ||
+      videoModelText === "doubao-seedance-1-5-pro-251215" ||
+      videoModelText === "doubao-seedance-2-0-260128" ||
+      videoModelText === "doubao-seedance-2-0-fast-260128" ||
+      !isVideoModelAllowed(merged.videoProvider, videoModelText)
+    ) {
+      merged.videoModel = getDefaultVideoModel(merged.videoProvider);
+    } else {
+      merged.videoModel = videoModelText;
     }
-    if (merged.videoBaseUrl === defaultApiSettings.videoBaseUrl && merged.videoModel === defaultApiSettings.videoModel) {
-      merged.videoApiKey = "";
-    }
+    merged.videoApiKey = "";
     if (
       !merged.promptModel ||
       merged.promptModel === "gpt-4.1-mini" ||
@@ -882,7 +1014,7 @@ function isHistoryItem(value: unknown): value is HistoryItem {
   const record = value as Record<string, unknown>;
   return (
     typeof record.id === "string" &&
-    (record.type === "首帧" || record.type === "视频") &&
+    (record.type === "分镜" || record.type === "首帧" || record.type === "视频") &&
     typeof record.title === "string" &&
     typeof record.time === "string" &&
     (record.status === "成功" || record.status === "失败" || record.status === "处理中")
@@ -936,8 +1068,8 @@ function createHistoryItem(
   const now = new Date();
   return {
     id,
-    type: kind === "firstFrame" ? "首帧" : "视频",
-    title: kind === "firstFrame" ? "首帧生成" : "视频生成",
+    type: kind === "firstFrame" ? "分镜" : "视频",
+    title: kind === "firstFrame" ? "分镜生成" : "视频生成",
     time: formatHistoryTime(now),
     createdAt: now.toISOString(),
     status,
@@ -1120,7 +1252,7 @@ function findUrlByKey(value: unknown, keyPattern: RegExp): string {
 
 function extractVideoUrl(data: unknown) {
   if (!data || typeof data !== "object") return "";
-  const direct = findUrlByKey(data, /^(video_url|videoUrl|output_video|file_url|result_url|content_url)$/i);
+  const direct = findUrlByKey(data, /^(video_url|videoUrl|official_video_url|stable_video_url|output_video|file_url|result_url|content_url)$/i);
   if (direct) return direct;
   const fallback = findUrlByKey(data, /^url$/i);
   if (/\.(mp4|mov|webm|m3u8)(\?|$)/i.test(fallback)) return fallback;
@@ -1163,8 +1295,12 @@ function getBase64ImageMime(base64: string) {
   return "";
 }
 
-function extractErrorMessage(data: unknown) {
-  if (!data || typeof data !== "object") return "这次请求没有成功，请稍后再试。";
+function extractErrorMessage(data: unknown, status = 0) {
+  const fallback =
+    status === 404
+      ? "页面没有接到后端接口。请确认本项目的 API 服务正在运行，并且前端代理或线上路由已经把 /api 指到后端。"
+      : "这次请求没有成功，请稍后再试。";
+  if (!data || typeof data !== "object") return fallback;
   const record = data as Record<string, unknown>;
   const error = record.error;
   if (typeof error === "string") return toUserMessage(error);
@@ -1178,7 +1314,28 @@ function extractErrorMessage(data: unknown) {
   if (typeof record.raw === "string" && record.raw.includes("Error code 524")) {
     return "这次处理时间太久了，请稍后再试。";
   }
-  return "这次请求没有成功，请稍后再试；如果一直失败，请让管理员检查服务配置。";
+  return status === 404 ? fallback : "这次请求没有成功，请稍后再试；如果一直失败，请让管理员检查服务配置。";
+}
+
+function extractSafePrompt(data: unknown) {
+  if (!data || typeof data !== "object") return "";
+  const record = data as Record<string, unknown>;
+  const value = record.safePrompt || record.rewrittenPrompt || record.prompt;
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function extractPromptSummary(data: unknown) {
+  if (!data || typeof data !== "object") return "";
+  const record = data as Record<string, unknown>;
+  const summary = record.promptSummary;
+  if (!summary || typeof summary !== "object") return "";
+  const summaryRecord = summary as Record<string, unknown>;
+  const chars = Number(summaryRecord.promptChars);
+  const limit = Number(summaryRecord.promptLimit);
+  const compacted = summaryRecord.promptCompacted === true;
+  if (!Number.isFinite(chars)) return "";
+  const limitText = Number.isFinite(limit) ? ` / 上限 ${limit}` : "";
+  return `完整视频提示词：${chars} 字符${limitText}${compacted ? "，已使用石狮压缩产品锁。" : "。"}`;
 }
 
 function toUserMessage(message: string) {
@@ -1192,7 +1349,7 @@ function toUserMessage(message: string) {
     return `上游服务这次内部处理失败，系统已经停止本次任务。可以直接重试一次${requestId ? `；请求编号：${requestId}` : ""}。`;
   }
   if (/InputTextSensitiveContentDetected|sensitive information|sensitive content|敏感/i.test(text)) {
-    return "这次视频描述被平台安全规则拦下了。可以把动作改得更日常一点，比如挥手、转身、停顿或轻轻晃动，再试一次。";
+    return "视频通道拦截了本次完整请求。这不一定是你输入的单句提示词有问题，也可能来自系统拼接后的产品锁、起始分镜图、素材组合或上游通道策略。";
   }
   if (/api key|unauthorized|forbidden|not configured|missing key|请先填写 API Key/i.test(text)) {
     return "服务密钥还没有配置好，请先让管理员确认后台配置。";
@@ -1203,7 +1360,7 @@ function toUserMessage(message: string) {
   if (/model_not_found|No available channel|没有找到模型|模型不存在|模型不可用|model .*not/i.test(text)) {
     return "当前模型暂时不可用，请换一个模型，或让管理员确认模型名称。";
   }
-  if (/上游图片服务连接失败|上游视频服务连接失败|首帧生成服务暂时连不上|视频生成服务暂时连不上/i.test(text)) {
+  if (/上游图片服务连接失败|上游视频服务连接失败|分镜生成服务暂时连不上|视频生成服务暂时连不上/i.test(text)) {
     return text;
   }
   if (/timeout|timed out|Error code 524|超时/i.test(text)) {
@@ -1219,7 +1376,7 @@ function toUserMessage(message: string) {
     return "本地预设图片没有加载成功，请刷新页面或重新选择产品。";
   }
   if (/image\/url|图片地址|image_url|b64_json/i.test(text)) {
-    return "这次没有拿到首帧图片结果，请稍后再试，或换一个首帧模型。";
+    return "这次没有拿到分镜图片结果，请稍后再试，或换一个分镜模型。";
   }
   if (/视频地址|任务号|video url|task id/i.test(text)) {
     return "这次没有拿到视频结果，也没有拿到可查询的任务号，请重新生成一次。";
@@ -1352,26 +1509,23 @@ export function App() {
   const [duration, setDuration] = useState(8);
   const [aspectRatio, setAspectRatio] = useState("9:16");
   const [motionMode, setMotionMode] = useState<MotionMode>("strict");
-  const [scenePrompt, setScenePrompt] = useState("");
-  const [videoActionPrompt, setVideoActionPrompt] = useState("");
-  const [approvedFirstFrameUrl, setApprovedFirstFrameUrl] = useState("");
-  const [firstFrameApproved, setFirstFrameApproved] = useState(false);
-  const [firstFrameReviewState, setFirstFrameReviewState] = useState<FirstFrameReviewState>(() => createFirstFrameReviewState());
-  const [firstFrameError, setFirstFrameError] = useState("");
+  const [storyDirection, setStoryDirection] = useState("");
+  const [storyRevision, setStoryRevision] = useState("");
+  const [storyIntent, setStoryIntent] = useState<StoryIntent | null>(null);
+  const [storyboards, setStoryboards] = useState<StoryboardFrame[]>([]);
+  const [selectedStoryboardIds, setSelectedStoryboardIds] = useState<string[]>([]);
+  const [storyboardPreflight, setStoryboardPreflight] = useState<StoryboardPreflight | null>(null);
+  const [videoExecutionPackage, setVideoExecutionPackage] = useState<VideoExecutionPackage | null>(null);
+  const [storyboardError, setStoryboardError] = useState("");
   const [videoError, setVideoError] = useState("");
   const [videoTaskId, setVideoTaskId] = useState("");
   const [videoStatus, setVideoStatus] = useState<VideoStatus>("idle");
   const [videoUrl, setVideoUrl] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [testing, setTesting] = useState<"image" | "video" | "">("");
-  const [suggestingPrompt, setSuggestingPrompt] = useState<"pair" | "">("");
-  const [promptPairMeta, setPromptPairMeta] = useState<PromptPairMeta>({
-    sceneTitle: "",
-    sceneAnchor: "",
-    continuityLocks: "",
-    model: DEFAULT_PROMPT_MODEL,
-    upstreamUrl: "",
-  });
+  const [activeJob, setActiveJob] = useState<WorkflowJobKind | "">("");
+  const [progressEvents, setProgressEvents] = useState<ProgressEvent[]>([]);
+  const currentJobIdRef = useRef("");
 
   useEffect(() => {
     saveApiSettings(apiSettings);
@@ -1410,7 +1564,7 @@ export function App() {
         setSupportImageUrls(loadedSupportImages);
       })
       .catch((error) => {
-        if (!cancelled) setFirstFrameError(error instanceof Error ? error.message : "Preset images failed to load.");
+        if (!cancelled) setStoryboardError(error instanceof Error ? error.message : "Preset images failed to load.");
       });
     return () => {
       cancelled = true;
@@ -1426,17 +1580,19 @@ export function App() {
 
   const allLocksConfirmed = lockNodes.every((node) => node.confirmed);
   const autoLockedNodes = useMemo(() => lockNodes.map((node) => ({ ...node, confirmed: true })), [lockNodes]);
-  const failedFirstFrameReviewChecks = firstFrameReviewChecks.filter((check) => firstFrameReviewState[check.id] === "fail");
-  const hasFailedFirstFrameReviewChecks = failedFirstFrameReviewChecks.length > 0;
-  const allFirstFrameReviewChecksResolved = firstFrameReviewChecks.every((check) => firstFrameReviewState[check.id] !== "pending");
   const requiredUrls = slots.map(getSlotImageUrl).filter(Boolean);
   const currentProductPreset = getProductPreset(costumeType);
-  const currentReferenceVideos = currentProductPreset?.referenceVideos || [];
   const currentSupportViewCount = currentProductPreset?.supportViews?.length || 0;
   const uploadReady = requiredUrls.length === slots.length;
-  const promptsReady = Boolean(scenePrompt.trim()) && Boolean(videoActionPrompt.trim());
-  const firstFrameReady = uploadReady && allLocksConfirmed && promptsReady;
-  const videoReady = firstFrameReady && Boolean(approvedFirstFrameUrl.trim()) && firstFrameApproved;
+  const selectedStoryboards = storyboards.filter((storyboard) => selectedStoryboardIds.includes(storyboard.id));
+  const storyIntentReady = Boolean(storyIntent?.storyIntent?.trim());
+  const storyIntentCanGenerate = uploadReady && allLocksConfirmed;
+  const storyboardReady = storyIntentCanGenerate && storyIntentReady;
+  const selectedStoryboardAnchor = selectedStoryboards[0]?.imageUrl || "";
+  const videoReady = uploadReady && Boolean(videoExecutionPackage?.ok) && Boolean(selectedStoryboardAnchor);
+  const videoDurationCap = getVideoModelDurationCap(apiSettings.videoProvider, apiSettings.videoModel);
+  const requestedVideoDuration = Number.isFinite(duration) ? duration : videoDurationCap.min;
+  const actualVideoDuration = clampVideoDurationForModel(apiSettings.videoProvider, apiSettings.videoModel, requestedVideoDuration);
 
   function createHistoryDetail(
     kind: "firstFrame" | "video",
@@ -1445,18 +1601,18 @@ export function App() {
   ) {
     return {
       productType: costumeType,
-      sceneTitle: promptPairMeta.sceneTitle || "",
-      scenePrompt,
-      videoPrompt: videoActionPrompt,
+      sceneTitle: storyIntent?.storyTitle || "",
+      scenePrompt: storyIntent?.storyIntent || storyDirection,
+      videoPrompt: videoExecutionPackage?.finalVideoPrompt || storyIntent?.storyIntent || "",
       model: kind === "firstFrame" ? apiSettings.imageModel : apiSettings.videoModel,
       aspectRatio,
-      duration: kind === "video" ? duration : undefined,
+      duration: kind === "video" ? actualVideoDuration : undefined,
+      requestedDuration: kind === "video" ? requestedVideoDuration : undefined,
       motionMode: kind === "video" ? motionMode : undefined,
-      firstFrameUrl: approvedFirstFrameUrl || undefined,
+      firstFrameUrl: selectedStoryboardAnchor || undefined,
       videoUrl: kind === "video" ? videoUrl || undefined : undefined,
       productViewUrls: slots.map((slot) => slot.localUrl).filter(Boolean),
       supportImageUrls,
-      referenceVideoUrls: currentReferenceVideos.map((video) => video.localUrl),
       ...detail,
       status,
     };
@@ -1464,64 +1620,95 @@ export function App() {
 
   const completedSteps: Record<StepId, boolean> = {
     upload: uploadReady,
-    firstFrame: Boolean(approvedFirstFrameUrl.trim()) && firstFrameApproved,
+    storyboard: Boolean(videoExecutionPackage?.ok),
     video: videoStatus === "succeeded" || Boolean(videoUrl),
-    qa: activeStep === "qa" && Boolean(videoUrl),
   };
 
   const motionText =
     motionMode === "strict"
-      ? "Controlled visible comedy beats: one clear arm gesture, a small recoil or elastic wobble, and a freeze-pause twist; keep camera fixed, no scene cut, no product redesign."
+      ? "Controlled visible comedy beats: one clear arm gesture, a small prop interaction, a small recoil or elastic wobble, and a freeze-pause twist; start from the approved first-frame view and allow a slight three-quarter shift if needed; no product redesign."
       : motionMode === "balanced"
-        ? "Readable ecommerce comedy motion: one small half-step, prop reaction, elastic wobble, and a clear pause; preserve the approved first-frame product."
-        : "More playful comedy timing with a visible prop gag or reversal, while still preserving every locked product node.";
+        ? "Readable ecommerce comedy motion: one small half-step or body pivot, prop reaction, elastic wobble, and a clear pause; product surfaces must follow the four-view topology."
+        : "More playful comedy timing with a visible prop gag, controlled angle change, or reversal, while preserving every locked product node and view-correct component placement.";
 
-  const firstFramePayload = {
+  const lockedNodePayload = lockNodes.map(({ code, label, detail, confidence, confirmed, critical }) => ({
+    code,
+    label,
+    detail,
+    confidence,
+    confirmed,
+    critical,
+  }));
+
+  const storyboardPayload = {
     model: apiSettings.imageModel,
-    scene_prompt: scenePrompt,
     product_type: costumeType,
     image_urls: requiredUrls,
     support_image_urls: supportImageUrls,
-    locked_nodes: lockNodes.map(({ code, label, detail, confidence, confirmed }) => ({
-      code,
-      label,
-      detail,
-      confidence,
-      confirmed,
-    })),
+    locked_nodes: lockedNodePayload,
+    story_intent: storyIntent,
+    motion_mode: motionMode,
     aspect_ratio: aspectRatio,
   };
 
   const normalizedVideoBaseUrlForRequest = typeof apiSettings.videoBaseUrl === "string" ? apiSettings.videoBaseUrl.trim().replace(/\/+$/, "") : "";
   const usesFixedVideoBackend =
+    apiSettings.videoProvider === "shishi" ||
+    apiSettings.videoProvider === "wisech" ||
+    apiSettings.videoProvider === "toapis" ||
     !normalizedVideoBaseUrlForRequest ||
     normalizedVideoBaseUrlForRequest === defaultApiSettings.videoBaseUrl;
   const videoBaseUrlForRequest = usesFixedVideoBackend ? "" : apiSettings.videoBaseUrl;
   const videoApiKeyForRequest = usesFixedVideoBackend ? "" : apiSettings.videoApiKey;
+  const videoResolution = getVideoModelResolution(apiSettings.videoProvider, apiSettings.videoModel);
+  const slimVideoExecutionPackage = createSlimVideoExecutionPackage(videoExecutionPackage);
 
   const videoPayload = {
+    video_provider: apiSettings.videoProvider,
     base_url: videoBaseUrlForRequest,
     api_key: videoApiKeyForRequest,
     model: apiSettings.videoModel,
-    action_prompt: videoActionPrompt,
-    scene_prompt: scenePrompt,
+    action_prompt: videoExecutionPackage?.finalVideoPrompt || storyIntent?.storyIntent || "",
+    scene_prompt: storyIntent?.sceneAnchor || "",
     product_type: costumeType,
     image_urls: requiredUrls,
     support_image_urls: supportImageUrls,
-    locked_nodes: lockNodes.map(({ code, label, detail, confidence, confirmed }) => ({
-      code,
-      label,
-      detail,
-      confidence,
-      confirmed,
-    })),
-    motion_rule: motionText,
-    image_url: approvedFirstFrameUrl || "PASTE_APPROVED_FIRST_FRAME_URL",
-    duration,
+    locked_nodes: lockedNodePayload,
+    story_intent: storyIntent,
+    storyboards: selectedStoryboards,
+    video_execution_package: videoExecutionPackage,
+    motion_rule: videoExecutionPackage?.cameraPath ? `Use verified storyboard camera path: ${videoExecutionPackage.cameraPath}` : motionText,
+    image_url: selectedStoryboardAnchor || "PASTE_APPROVED_FIRST_FRAME_URL",
+    duration: actualVideoDuration,
+    requested_duration: requestedVideoDuration,
     aspect_ratio: aspectRatio,
-    resolution: "1080p",
+    resolution: videoResolution,
     audio: true,
     prompt_extend: false,
+    metadata: {
+      requested_duration: requestedVideoDuration,
+      submitted_duration: actualVideoDuration,
+      video_provider: apiSettings.videoProvider,
+    },
+  };
+  const videoSubmitPayload = {
+    ...videoPayload,
+    image_urls: [],
+    support_image_urls: [],
+    detail_image_urls: [],
+    storyboards: selectedStoryboards.map(redactStoryboardImageForSubmit),
+    video_execution_package: slimVideoExecutionPackage,
+  };
+  const videoSafetyPayload = {
+    ...videoSubmitPayload,
+    image_url: "",
+    storyboards: [],
+    video_execution_package: slimVideoExecutionPackage
+      ? {
+          ...slimVideoExecutionPackage,
+          selectedStoryboards: [],
+        }
+      : null,
   };
 
   const videoStatusText =
@@ -1535,11 +1722,62 @@ export function App() {
             ? "生成失败"
             : "";
 
+  function createJobId(kind: WorkflowJobKind) {
+    return `${kind}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  }
+
+  function resetProgress(kind: WorkflowJobKind, title: string) {
+    const jobId = createJobId(kind);
+    currentJobIdRef.current = jobId;
+    const event: ProgressEvent = {
+      id: `${jobId}-start`,
+      jobId,
+      type: "job.started",
+      title,
+      detail: "任务已创建，等待执行真实步骤。",
+      status: "running",
+      at: new Date().toISOString(),
+    };
+    setProgressEvents([event]);
+    return jobId;
+  }
+
+  function addProgressEvent(type: JobEventType, title: string, detail: string, status: ProgressEvent["status"] = "running") {
+    const jobId = currentJobIdRef.current || createJobId("video");
+    const event: ProgressEvent = {
+      id: `${jobId}-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      jobId,
+      type,
+      title,
+      detail,
+      status,
+      at: new Date().toISOString(),
+    };
+    currentJobIdRef.current = jobId;
+    setProgressEvents((current) => [...current.slice(-11), event]);
+  }
+
   function invalidateGeneratedOutputs() {
-    setApprovedFirstFrameUrl("");
-    setFirstFrameApproved(false);
-    setFirstFrameReviewState(createFirstFrameReviewState());
-    setFirstFrameError("");
+    setStoryIntent(null);
+    setStoryRevision("");
+    setStoryboards([]);
+    setSelectedStoryboardIds([]);
+    setStoryboardPreflight(null);
+    setVideoExecutionPackage(null);
+    setStoryboardError("");
+    invalidateVideoOutputs();
+  }
+
+  function invalidateStoryboardOutputs(keepIntent = true) {
+    if (!keepIntent) {
+      setStoryIntent(null);
+      setStoryRevision("");
+    }
+    setStoryboards([]);
+    setSelectedStoryboardIds([]);
+    setStoryboardPreflight(null);
+    setVideoExecutionPackage(null);
+    setStoryboardError("");
     invalidateVideoOutputs();
   }
 
@@ -1564,100 +1802,188 @@ export function App() {
   }
 
   function updateApiSettings(patch: Partial<ApiSettings>) {
-    setApiSettings((current) => ({ ...current, ...patch, imagePath: "", videoPath: "" }));
+    setApiSettings((current) => {
+      const next = { ...current, ...patch, imagePath: "", videoPath: "" };
+      if (patch.videoProvider) {
+        const provider = getVideoProviderOption(patch.videoProvider);
+        next.videoBaseUrl = provider.baseUrl;
+        next.videoApiKey = "";
+        next.videoModel = provider.model;
+      } else if (patch.videoModel && !isVideoModelAllowed(next.videoProvider, patch.videoModel)) {
+        next.videoModel = getDefaultVideoModel(next.videoProvider);
+      }
+      return next;
+    });
   }
 
   function updateProductType(value: string) {
     invalidateGeneratedOutputs();
     setCostumeType(value);
     setLockNodes(getProductLockNodes(value));
-    setScenePrompt("");
-    setVideoActionPrompt("");
-    setPromptPairMeta({
-      sceneTitle: "",
-      sceneAnchor: "",
-      continuityLocks: "",
-      model: apiSettings.promptModel || DEFAULT_PROMPT_MODEL,
-      upstreamUrl: "",
-    });
+    setStoryDirection("");
     setActiveStep("upload");
   }
 
-  function updateScenePrompt(value: string) {
-    invalidateGeneratedOutputs();
-    setScenePrompt(value);
+  function updateStoryDirection(value: string) {
+    setStoryDirection(value);
+    invalidateStoryboardOutputs(false);
   }
 
-  function updateVideoActionPrompt(value: string) {
+  function updateVideoDuration(value: number) {
     invalidateVideoOutputs();
-    setVideoActionPrompt(value);
+    setDuration(clampVideoDurationForModel(apiSettings.videoProvider, apiSettings.videoModel, value));
   }
 
   function updateAspectRatio(value: string) {
     if (value === aspectRatio) return;
     invalidateGeneratedOutputs();
     setAspectRatio(value);
-    if (activeStep !== "upload") setActiveStep("firstFrame");
+    if (activeStep !== "upload") setActiveStep("storyboard");
   }
 
-  async function requestPromptPairSuggestion() {
-    setSuggestingPrompt("pair");
-    setFirstFrameError("");
+  async function requestStoryIntent(revisionInstruction = "") {
+    setActiveJob("storyIntent");
+    resetProgress("storyIntent", revisionInstruction ? "剧情意图改写" : "剧情意图生成");
+    setStoryboardError("");
     setVideoError("");
     try {
-      const response = await fetch("/api/prompt-suggestion", {
+      addProgressEvent("step.started", "调用剧情模型", "根据产品锁点、动作模式和用户方向生成可拍的小剧情。");
+      const response = await fetch("/api/story-intent", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           model: apiSettings.promptModel,
-          kind: "pair",
           product_type: costumeType,
-          current_first_frame_prompt: scenePrompt,
-          current_video_prompt: videoActionPrompt,
-          reference_video_count: currentReferenceVideos.length,
-          support_image_count: currentSupportViewCount,
-          locked_nodes: lockNodes.map(({ code, label, detail, confidence, critical }) => ({
-            code,
-            label,
-            detail,
-            confidence,
-            critical,
-          })),
+          user_direction: storyDirection,
+          revision_instruction: revisionInstruction,
+          current_intent: storyIntent,
+          motion_mode: motionMode,
+          locked_nodes: lockedNodePayload,
         }),
       });
       const data: unknown = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(extractErrorMessage(data));
-      const record = data && typeof data === "object" ? (data as Record<string, unknown>) : {};
-      if (record.localFallback) throw new Error("提示词没有由模型生成成功，请稍后再点一次骰子。");
-      const firstFramePrompt = typeof record.firstFramePrompt === "string" ? record.firstFramePrompt.trim() : "";
-      const nextVideoPrompt = typeof record.videoPrompt === "string" ? record.videoPrompt.trim() : "";
-      if (!firstFramePrompt || !nextVideoPrompt) throw new Error("这次没有拿到完整提示词，请再点一次骰子。");
-      invalidateGeneratedOutputs();
-      setScenePrompt(firstFramePrompt);
-      setVideoActionPrompt(nextVideoPrompt);
-      setPromptPairMeta({
-        sceneTitle: typeof record.sceneTitle === "string" ? record.sceneTitle.trim() : "",
-        sceneAnchor: typeof record.sceneAnchor === "string" ? record.sceneAnchor.trim() : "",
-        continuityLocks: typeof record.continuityLocks === "string" ? record.continuityLocks.trim() : "",
-        model: typeof record.model === "string" && record.model.trim() ? record.model.trim() : apiSettings.promptModel || DEFAULT_PROMPT_MODEL,
-        upstreamUrl: typeof record.upstreamUrl === "string" ? record.upstreamUrl.trim() : "",
-      });
-      setFirstFrameError("首帧和视频提示词已一起更新。");
+      if (!response.ok) throw new Error(extractErrorMessage(data, response.status));
+      const nextIntent = data as StoryIntent;
+      if (!nextIntent.storyIntent || !Array.isArray(nextIntent.beats)) throw new Error("Story model did not return a usable intent.");
+      invalidateStoryboardOutputs(true);
+      setStoryIntent(nextIntent);
+      setStoryRevision("");
+      addProgressEvent("artifact.created", "剧情意图已生成", nextIntent.storyTitle || "Story intent ready", "done");
+      addProgressEvent("job.completed", "剧情意图完成", "可以继续生成候选分镜。", "done");
     } catch (error) {
-      const message = error instanceof Error ? toUserMessage(error.message) : "这次没有拿到提示词，请再试一次。";
-      setFirstFrameError(message);
+      const message = error instanceof Error ? toUserMessage(error.message) : "剧情意图没有生成成功，请稍后再试。";
+      addProgressEvent("step.failed", "剧情意图失败", message, "failed");
+      setStoryboardError(message);
     } finally {
-      setSuggestingPrompt("");
+      setActiveJob("");
     }
+  }
+
+  async function requestStoryboards() {
+    if (!storyIntent) {
+      setStoryboardError("请先生成或确认剧情意图，再生成分镜。");
+      return;
+    }
+    setActiveJob("storyboard");
+    resetProgress("storyboard", "分镜生成");
+    setStoryboardError("");
+    setVideoError("");
+    try {
+      addProgressEvent("step.started", "整理四视图和剧情", "把四张核心视图、辅助角度、结构化锁点和剧情意图打包给图片模型。");
+      const requestPayload = {
+        ...(await prepareFirstFramePayloadForSubmit(storyboardPayload)),
+        story_intent: storyIntent,
+      };
+      addProgressEvent("tool.started", "提交分镜模型", "分镜可以多次生成，用来在低成本阶段收敛动作路径。");
+      const response = await fetch("/api/storyboards", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(requestPayload),
+      });
+      const data: unknown = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(extractErrorMessage(data, response.status));
+      const record = data && typeof data === "object" ? (data as Record<string, unknown>) : {};
+      const nextStoryboards = Array.isArray(record.storyboards) ? (record.storyboards as StoryboardFrame[]) : [];
+      if (nextStoryboards.length < 3) throw new Error("分镜模型没有返回足够的候选分镜。");
+      setStoryboards(nextStoryboards);
+      setSelectedStoryboardIds(nextStoryboards.slice(0, motionMode === "strict" ? 3 : 5).map((storyboard) => storyboard.id));
+      setStoryboardPreflight(null);
+      setVideoExecutionPackage(null);
+      invalidateVideoOutputs();
+      addProgressEvent("artifact.created", "候选分镜已返回", `${nextStoryboards.length} 张分镜候选已生成。`, "done");
+      addProgressEvent("job.completed", "分镜生成完成", "下一步会在提交视频前做执行包预检。", "done");
+    } catch (error) {
+      const message = error instanceof Error ? toUserMessage(error.message) : "分镜没有生成成功，请稍后再试。";
+      addProgressEvent("step.failed", "分镜生成失败", message, "failed");
+      setStoryboardError(message);
+    } finally {
+      setActiveJob("");
+    }
+  }
+
+  async function compileVideoPackage() {
+    if (!storyIntent || selectedStoryboards.length < 3) {
+      setStoryboardError("请先生成并选择至少 3 张分镜，再编译视频执行包。");
+      return;
+    }
+    setActiveJob("storyboard");
+    resetProgress("storyboard", "执行包预检");
+    setStoryboardError("");
+    setVideoError("");
+    try {
+      const payload = {
+        product_type: costumeType,
+        story_intent: storyIntent,
+        storyboards: selectedStoryboards,
+        locked_nodes: lockedNodePayload,
+        motion_mode: motionMode,
+        video_provider: apiSettings.videoProvider,
+        model: apiSettings.videoModel,
+      };
+      addProgressEvent("tool.started", "提交前预检", "检查分镜数量、文字禁用项、动作路径和失败分镜。");
+      const response = await fetch("/api/video-package", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data: unknown = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(extractErrorMessage(data, response.status));
+      const pkg = data as VideoExecutionPackage;
+      setStoryboardPreflight(pkg.preflight);
+      setVideoExecutionPackage(pkg.ok ? pkg : null);
+      if (!pkg.ok) {
+        throw new Error(pkg.preflight?.issues?.[0]?.message || "执行包预检没有通过。");
+      }
+      addProgressEvent("tool.completed", "预检通过", `镜头路径：${pkg.cameraPath}`, "done");
+      addProgressEvent("artifact.created", "视频执行包已编译", "视频页将使用这份执行包一次性提交给视频模型。", "done");
+      addProgressEvent("job.completed", "执行包完成", "可以进入视频生成。", "done");
+      setActiveStep("video");
+    } catch (error) {
+      const message = error instanceof Error ? toUserMessage(error.message) : "执行包预检没有通过。";
+      addProgressEvent("step.failed", "执行包预检失败", message, "failed");
+      setStoryboardError(message);
+    } finally {
+      setActiveJob("");
+    }
+  }
+
+  function toggleStoryboardSelection(id: string) {
+    setSelectedStoryboardIds((current) => {
+      const next = current.includes(id) ? current.filter((item) => item !== id) : [...current, id];
+      return next.slice(0, 5);
+    });
+    setStoryboardPreflight(null);
+    setVideoExecutionPackage(null);
+    invalidateVideoOutputs();
   }
 
   function completeUploadStep() {
     if (!uploadReady) {
-      setFirstFrameError("请先上传正面、左侧、右侧、背面四张核心产品图。");
+      setStoryboardError("请先上传正面、左侧、右侧、背面四张核心产品图。");
       return;
     }
     setLockNodes(autoLockedNodes);
-    setActiveStep("firstFrame");
+    setActiveStep("storyboard");
   }
 
   function selectStep(step: StepId) {
@@ -1665,71 +1991,67 @@ export function App() {
       setActiveStep("upload");
       return;
     }
-    if (step === "firstFrame" && uploadReady) {
-      setActiveStep("firstFrame");
+    if (step === "storyboard" && uploadReady) {
+      setActiveStep("storyboard");
       return;
     }
     if (step === "video" && videoReady) {
       setActiveStep("video");
       return;
     }
-    if (step === "qa" && Boolean(videoUrl)) {
-      setActiveStep("qa");
-      return;
-    }
     if (!uploadReady) {
       setActiveStep("upload");
-      setFirstFrameError("请先上传正面、左侧、右侧、背面四张核心产品图。");
+      setStoryboardError("请先上传正面、左侧、右侧、背面四张核心产品图。");
     }
-  }
-
-  function updateFirstFrameReviewCheck(id: ReviewCheckId, decision: ReviewDecision) {
-    setFirstFrameApproved(false);
-    if (decision === "fail") {
-      setFirstFrameError("首帧审核未通过。请重新生成首帧。");
-    }
-    setFirstFrameReviewState((current) => {
-      const next = { ...current, [id]: decision };
-      const failed = firstFrameReviewChecks.filter((check) => next[check.id] === "fail");
-      if (failed.length > 0) {
-        setFirstFrameError(`首帧审核未通过：${failed.map((check) => check.label).join("、")}。请重新生成首帧。`);
-      } else {
-        setFirstFrameError("");
-      }
-      return next;
-    });
-  }
-
-  function approveFirstFrameAndOpenVideoStep() {
-    if (!approvedFirstFrameUrl.trim()) {
-      setFirstFrameError("请先生成首帧，再通过首帧进入视频设置。");
-      return;
-    }
-    setFirstFrameReviewState(createPassedFirstFrameReviewState());
-    setFirstFrameApproved(true);
-    setActiveStep("video");
-    setFirstFrameError("首帧已通过，请在视频页确认模型、参数和动作强度后手动生成。");
   }
 
   function applyHistoryItemToCurrentFlow(item: HistoryItem) {
-    if (item.scenePrompt) setScenePrompt(item.scenePrompt);
-    if (item.videoPrompt) setVideoActionPrompt(item.videoPrompt);
+    if (item.scenePrompt) setStoryDirection(item.scenePrompt);
     if (item.aspectRatio) setAspectRatio(item.aspectRatio);
-    if (item.duration) setDuration(item.duration);
+    if (item.duration) setDuration(item.requestedDuration || item.duration);
     if (item.motionMode) setMotionMode(item.motionMode);
     if (item.taskId) setVideoTaskId(item.taskId);
-    if (item.firstFrameUrl) setApprovedFirstFrameUrl(item.firstFrameUrl);
+    if (item.firstFrameUrl) {
+      const restoredStoryboard: StoryboardFrame = {
+        id: `history-storyboard-${item.id}`,
+        imageUrl: item.firstFrameUrl,
+        beat: item.scenePrompt || "历史分镜起始图",
+        action: item.videoPrompt || "历史执行包动作",
+        viewAngle: "front",
+        checks: [],
+      };
+      setStoryboards([restoredStoryboard]);
+      setSelectedStoryboardIds([restoredStoryboard.id]);
+    }
     if (item.videoUrl) setVideoUrl(item.videoUrl);
-    setFirstFrameApproved(Boolean(item.videoUrl));
     setVideoStatus(item.videoUrl ? "succeeded" : item.type === "视频" && item.status === "处理中" ? "polling" : "idle");
-    setFirstFrameReviewState(item.firstFrameUrl ? createPassedFirstFrameReviewState() : createFirstFrameReviewState());
-    setFirstFrameError(item.firstFrameUrl ? "已从历史记录载入首帧资产。" : "");
+    setStoryboardError(item.firstFrameUrl ? "已从历史记录载入起始分镜资产。" : "");
     setVideoError(item.videoUrl ? "已从历史记录载入视频资产。" : item.error || "");
-    setActiveStep(item.videoUrl ? "qa" : "firstFrame");
+    setActiveStep(item.videoUrl ? "video" : "storyboard");
   }
 
   async function openHistoryItem(item: HistoryItem) {
-    const resolvedItem = await resolveHistoryItemAssets(item);
+    let resolvedItem = await resolveHistoryItemAssets(item);
+    if (!resolvedItem.videoUrl && resolvedItem.taskId) {
+      try {
+        const response = await fetch("/api/video-status", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            task_id: resolvedItem.taskId,
+            video_provider: resolvedItem.model?.toLowerCase().includes("yunshu") ? "wisech" : "shishi",
+          }),
+        });
+        const data: unknown = await response.json().catch(() => ({}));
+        const recoveredVideoUrl = response.ok ? extractVideoUrl(data) : "";
+        if (recoveredVideoUrl) {
+          resolvedItem = { ...resolvedItem, status: "成功", detailUrl: recoveredVideoUrl, videoUrl: recoveredVideoUrl };
+          setHistoryItems((current) => current.map((historyItem) => (historyItem.id === resolvedItem.id ? resolvedItem : historyItem)));
+        }
+      } catch {
+        // Keep the original history item if the recovery check cannot complete.
+      }
+    }
     if (isHistoryAssetRef(resolvedItem.firstFrameUrl) || isHistoryAssetRef(resolvedItem.videoUrl) || isHistoryAssetRef(resolvedItem.detailUrl)) {
       setHistoryError("这条历史记录的图片或视频还在本机资产库里恢复中，请稍后再试一次。");
       return;
@@ -1744,121 +2066,79 @@ export function App() {
     applyHistoryItemToCurrentFlow(resolvedItem);
   }
 
-  async function regenerateFirstFrameFromReview() {
-    if (!approvedFirstFrameUrl.trim()) {
-      setFirstFrameError("请先生成首帧，再进入重新生成。");
+  async function callBackend(kind: "video") {
+    if (kind !== "video") return;
+    if (!videoExecutionPackage?.ok || !selectedStoryboardAnchor) {
+      setVideoError("请先在分镜页通过预检并生成视频执行包。");
       return;
     }
-    if (!hasFailedFirstFrameReviewChecks) {
-      setFirstFrameError("当前没有错误项；如果首帧没问题，请点击通过首帧进入视频设置。");
-      return;
-    }
-    setFirstFrameApproved(false);
-    setActiveStep("firstFrame");
-    const previousFirstFrameUrl = approvedFirstFrameUrl;
-    await callBackend("firstFrame", {
-      ...firstFramePayload,
-      previous_first_frame_url: previousFirstFrameUrl,
-      prompt_unchanged: true,
-      review_feedback: createFirstFrameReviewFeedback(firstFrameReviewState),
-    });
-  }
-
-  async function callBackend(kind: "firstFrame" | "video", firstFramePayloadOverride?: Record<string, unknown>) {
-    if (kind === "firstFrame" && !scenePrompt.trim()) {
-      setFirstFrameError("请先点击骰子生成首帧和视频提示词，再生成首帧。");
-      return;
-    }
-    if (kind === "video" && !videoActionPrompt.trim()) {
-      setVideoError("请先在首帧页用骰子生成视频提示词，再生成视频。");
-      return;
-    }
+    resetProgress("video", "视频生成");
     setIsSubmitting(true);
-    setFirstFrameError("");
     setVideoError("");
-    if (kind === "firstFrame") {
-      setApprovedFirstFrameUrl("");
-      setFirstFrameApproved(false);
-      setFirstFrameReviewState(createFirstFrameReviewState());
-    }
-    if (kind === "video") {
-      setVideoTaskId("");
-      setVideoUrl("");
-      setVideoStatus("submitted");
-    }
+    setVideoTaskId("");
+    setVideoUrl("");
+    setVideoStatus("submitted");
     try {
-      const requestPayload =
-        kind === "firstFrame"
-          ? await prepareFirstFramePayloadForSubmit(firstFramePayloadOverride || firstFramePayload)
-          : videoPayload;
-      const response = await fetch(kind === "firstFrame" ? "/api/first-frame" : "/api/video", {
+      addProgressEvent("step.started", "输入检查", "检查执行包、起始分镜、视频模型和时长。");
+      const requestPayload = videoSubmitPayload;
+      addProgressEvent("tool.completed", "视频请求整理完成", "已把入选分镜、产品锁点、动作路径和执行包组合成完整请求。", "done");
+      addProgressEvent("tool.started", "安全预检", "先检测完整视频请求；这一步发生在正式提交视频前。");
+      const safetyResponse = await fetch("/api/video-safety", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(videoSafetyPayload),
+      });
+      const safetyData: unknown = await safetyResponse.json().catch(() => ({}));
+      if (!safetyResponse.ok) throw new Error(extractErrorMessage(safetyData, safetyResponse.status));
+      const safetyRecord = safetyData && typeof safetyData === "object" ? (safetyData as Record<string, unknown>) : {};
+      if (safetyRecord.verdict === "blocked" || safetyRecord.ok === false) {
+        throw new Error(typeof safetyRecord.reason === "string" ? safetyRecord.reason : "完整视频请求没有通过安全预检。");
+      }
+      const promptSummary = extractPromptSummary(safetyData);
+      if (promptSummary) addProgressEvent("tool.completed", "提示词长度", promptSummary, "done");
+      addProgressEvent("tool.started", "提交上游", "正在一次性提交视频生成服务。");
+      const response = await fetch("/api/video", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(requestPayload),
       });
       const data: unknown = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(extractErrorMessage(data));
-      }
-
-      const imageUrl = kind === "firstFrame" ? extractImageUrl(data) : "";
-      if (kind === "firstFrame") {
-        if (!imageUrl) {
-          throw new Error("这次没有拿到首帧图片，请稍后再试，或换一个首帧模型。");
-        }
-        setApprovedFirstFrameUrl(imageUrl);
-        setFirstFrameApproved(false);
-        setFirstFrameReviewState(createFirstFrameReviewState());
-        setFirstFrameError("首帧已生成，请人工核对产品尺寸、比例和外形；首帧不过审，不进入视频。");
-      }
+      if (!response.ok) throw new Error(extractErrorMessage(data, response.status));
       const newTaskId = extractTaskId(data);
-      if (kind === "video") {
-        const immediateVideoUrl = extractVideoUrl(data);
-        if (immediateVideoUrl) {
-          setVideoUrl(immediateVideoUrl);
-          setVideoStatus("succeeded");
-          setActiveStep("qa");
-        } else if (newTaskId) {
-          setVideoTaskId(newTaskId);
-          setVideoStatus("polling");
-          setVideoError(`视频已经开始生成，任务号是 ${newTaskId}。`);
-        } else {
-          setVideoStatus("failed");
-          throw new Error("这次没有拿到视频结果，也没有拿到可查询的任务号，请重新生成一次。");
-        }
+      const immediateVideoUrl = extractVideoUrl(data);
+      if (immediateVideoUrl) {
+        setVideoUrl(immediateVideoUrl);
+        setVideoStatus("succeeded");
+        addProgressEvent("artifact.created", "视频已返回", "上游直接返回了视频地址。", "done");
+      } else if (newTaskId) {
+        setVideoTaskId(newTaskId);
+        setVideoStatus("polling");
+        setVideoError(`视频已经开始生成，任务号是 ${newTaskId}。`);
+        addProgressEvent("tool.completed", "任务号已返回", `视频任务号：${newTaskId}`, "done");
+      } else {
+        setVideoStatus("failed");
+        throw new Error("这次没有拿到视频结果，也没有拿到可查询的任务号，请稍后再试。");
       }
-      const nextHistoryStatus: HistoryItem["status"] =
-        kind === "firstFrame" || videoStatus === "succeeded" || Boolean(extractVideoUrl(data)) ? "成功" : "处理中";
-      const historyDetail = createHistoryDetail(kind, nextHistoryStatus, {
+      const nextHistoryStatus: HistoryItem["status"] = immediateVideoUrl ? "成功" : "处理中";
+      const historyDetail = createHistoryDetail("video", nextHistoryStatus, {
         taskId: newTaskId || undefined,
-        detailUrl: kind === "firstFrame" ? imageUrl : extractVideoUrl(data),
-        firstFrameUrl: kind === "firstFrame" ? imageUrl : approvedFirstFrameUrl || undefined,
-        videoUrl: kind === "video" ? extractVideoUrl(data) || undefined : undefined,
+        detailUrl: immediateVideoUrl,
+        firstFrameUrl: selectedStoryboardAnchor || undefined,
+        videoUrl: immediateVideoUrl || undefined,
       });
-      setHistoryItems((current) =>
-        upsertHistoryItem(current, createHistoryItem(newTaskId || `LOCAL-${Date.now()}`, kind, nextHistoryStatus, historyDetail)),
-      );
+      setHistoryItems((current) => upsertHistoryItem(current, createHistoryItem(newTaskId || `LOCAL-${Date.now()}`, "video", nextHistoryStatus, historyDetail)));
+      if (immediateVideoUrl) addProgressEvent("job.completed", "视频任务完成", "本次任务已经拿到可用产物。", "done");
     } catch (error) {
       const message = error instanceof Error ? toUserMessage(error.message) : "这次请求没有成功，请稍后再试。";
-      if (kind === "firstFrame") {
-        setFirstFrameError(message);
-        setHistoryItems((current) =>
-          upsertHistoryItem(current, createHistoryItem(`LOCAL-${Date.now()}`, kind, "失败", createHistoryDetail(kind, "失败", { error: message }))),
-        );
-      }
-      if (kind === "video") {
-        setVideoStatus("failed");
-        setVideoError(message);
-        const failedId = videoTaskId || `LOCAL-${Date.now()}`;
-        setHistoryItems((current) =>
-          upsertHistoryItem(current, createHistoryItem(failedId, kind, "失败", createHistoryDetail(kind, "失败", { taskId: videoTaskId || undefined, error: message }))),
-        );
-      }
+      addProgressEvent("step.failed", "视频任务失败", message, "failed");
+      setVideoStatus("failed");
+      setVideoError(message);
+      const failedId = videoTaskId || `LOCAL-${Date.now()}`;
+      setHistoryItems((current) => upsertHistoryItem(current, createHistoryItem(failedId, "video", "失败", createHistoryDetail("video", "失败", { taskId: videoTaskId || undefined, error: message }))));
     } finally {
       setIsSubmitting(false);
     }
   }
-
   useEffect(() => {
     if (!videoTaskId || videoStatus !== "polling") return;
     let stopped = false;
@@ -1868,18 +2148,20 @@ export function App() {
     async function pollVideoStatus() {
       attempts += 1;
       try {
+        addProgressEvent("tool.started", "查询视频进度", `第 ${attempts} 次查询上游任务状态。`);
         const response = await fetch("/api/video-status", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             task_id: videoTaskId,
+            video_provider: apiSettings.videoProvider,
             base_url: videoBaseUrlForRequest,
             api_key: videoApiKeyForRequest,
           }),
         });
         const data: unknown = await response.json().catch(() => ({}));
         if (!response.ok) {
-          throw new Error(extractErrorMessage(data));
+          throw new Error(extractErrorMessage(data, response.status));
         }
 
         const status = extractTaskStatus(data);
@@ -1891,23 +2173,27 @@ export function App() {
           setVideoUrl(nextVideoUrl);
           setVideoStatus("succeeded");
           setVideoError("视频生成好了。");
+          addProgressEvent("artifact.created", "视频地址已返回", "上游任务完成，已拿到视频播放地址。", "done");
+          addProgressEvent("job.completed", "视频任务完成", "视频生成流程已完成。", "done");
           setHistoryItems((current) =>
-            current.map((item) => (item.id === videoTaskId ? { ...item, status: "成功", detailUrl: nextVideoUrl } : item)),
+            current.map((item) => (item.id === videoTaskId ? { ...item, status: "成功", detailUrl: nextVideoUrl, videoUrl: nextVideoUrl } : item)),
           );
-          setActiveStep("qa");
+          setActiveStep("video");
           return;
         }
 
         if (status === "FAILED" || status === "ERROR" || status === "CANCELED" || status === "UNKNOWN") {
-          throw new Error(extractErrorMessage(data));
+          throw new Error(extractErrorMessage(data, response.status));
         }
 
         setVideoError(`视频还在生成中，已检查 ${attempts} 次。`);
+        addProgressEvent("tool.completed", "进度查询完成", `上游仍在处理，已检查 ${attempts} 次。`, "done");
         if (!stopped) timer = window.setTimeout(pollVideoStatus, 3500);
       } catch (error) {
         const message = error instanceof Error ? toUserMessage(error.message) : "暂时查不到视频进度，请稍后再试。";
         setVideoStatus("failed");
         setVideoError(message);
+        addProgressEvent("step.failed", "视频进度查询失败", message, "failed");
         setHistoryItems((current) =>
           current.map((item) => (item.id === videoTaskId ? { ...item, status: "失败", error: message } : item)),
         );
@@ -1919,28 +2205,28 @@ export function App() {
       stopped = true;
       if (timer) window.clearTimeout(timer);
     };
-  }, [videoApiKeyForRequest, videoBaseUrlForRequest, videoStatus, videoTaskId]);
+  }, [apiSettings.videoProvider, videoApiKeyForRequest, videoBaseUrlForRequest, videoStatus, videoTaskId]);
 
   async function testApi(kind: "image" | "video") {
     setTesting(kind);
-    setFirstFrameError("");
+    setStoryboardError("");
     setVideoError("");
     try {
       const response = await fetch(kind === "image" ? "/api/test-image" : "/api/test-video", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(kind === "image" ? firstFramePayload : videoPayload),
+        body: JSON.stringify(kind === "image" ? storyboardPayload : videoPayload),
       });
       const data: unknown = await response.json().catch(() => ({}));
       if (!response.ok) {
-        throw new Error(extractErrorMessage(data));
+        throw new Error(extractErrorMessage(data, response.status));
       }
-      const message = kind === "image" ? "首帧服务连接正常。" : "视频服务连接正常。";
-      if (kind === "image") setFirstFrameError(message);
+      const message = kind === "image" ? "分镜服务连接正常。" : "视频服务连接正常。";
+      if (kind === "image") setStoryboardError(message);
       if (kind === "video") setVideoError(message);
     } catch (error) {
       const message = error instanceof Error ? toUserMessage(error.message) : "服务测试没有通过，请稍后再试。";
-      if (kind === "image") setFirstFrameError(message);
+      if (kind === "image") setStoryboardError(message);
       if (kind === "video") setVideoError(message);
     } finally {
       setTesting("");
@@ -1950,36 +2236,36 @@ export function App() {
   return (
     <div className="min-h-[100dvh] overflow-hidden bg-[#eef4f4] text-[#0d1d20]">
       <div className="pointer-events-none fixed inset-0 -z-10 bg-[radial-gradient(circle_at_8%_10%,rgba(0,126,145,0.18),transparent_32%),radial-gradient(circle_at_92%_6%,rgba(15,109,243,0.12),transparent_34%),linear-gradient(120deg,#f7fbfb_0%,#edf4f4_48%,#f4f1f3_100%)]" />
-      <header className="sticky top-0 z-50 border-b border-white/65 bg-white/70 px-5 py-3 shadow-[0_12px_44px_rgba(12,57,65,0.07)] backdrop-blur-2xl">
-        <div className="mx-auto flex max-w-[1500px] items-center justify-between gap-4">
+      <header className="sticky top-0 z-50 border-b border-white/65 bg-white/76 px-8 py-4 shadow-[0_12px_44px_rgba(12,57,65,0.07)] backdrop-blur-2xl">
+        <div className="mx-auto flex max-w-[1880px] items-center justify-between gap-6">
           <div className="flex min-w-0 items-center gap-4">
-            <div className="grid h-11 w-11 place-items-center rounded-lg bg-[#007e91] text-white shadow-[0_18px_36px_rgba(0,126,145,0.22)]">
-              <Film size={21} />
+            <div className="grid h-[52px] w-[52px] place-items-center rounded-lg bg-[#007e91] text-white shadow-[0_18px_36px_rgba(0,126,145,0.22)]">
+              <Film size={24} />
             </div>
             <div className="min-w-0">
-              <strong className="block truncate text-[20px] font-black tracking-[0] text-[#07363d]">Product Lock Video Studio</strong>
-              <span className="block truncate text-[12px] font-bold text-[#607276]">四视图锁定 · 首帧审核 · 视频生成</span>
+              <strong className="block truncate text-[26px] font-black tracking-[0] text-[#07363d]">Product Lock Video Studio</strong>
+              <span className="block truncate text-[14px] font-bold text-[#607276]">四视图锁定  -  剧情分镜  -  视频生成</span>
             </div>
           </div>
         </div>
       </header>
 
-      <div className="mx-auto grid max-w-[1500px] grid-cols-1 gap-5 px-4 py-5 pb-32 lg:grid-cols-[280px_minmax(0,1fr)] lg:px-6">
+      <div className="mx-auto grid max-w-[1880px] grid-cols-1 gap-8 px-8 py-7 pb-32 lg:grid-cols-[380px_minmax(0,1fr)]">
         <motion.aside
-          className="rounded-lg border border-white/70 bg-white/58 p-4 shadow-[0_24px_70px_rgba(12,57,65,0.08)] backdrop-blur-2xl lg:sticky lg:top-24 lg:h-[calc(100dvh-132px)]"
+          className="flex min-h-0 flex-col rounded-lg border border-white/70 bg-white/62 p-5 shadow-[0_24px_70px_rgba(12,57,65,0.08)] backdrop-blur-2xl lg:sticky lg:top-28 lg:h-[calc(100dvh-150px)]"
           initial={{ opacity: 0, x: -18 }}
           animate={{ opacity: 1, x: 0 }}
           transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
         >
-          <div className="rounded-lg bg-[#07363d] p-4 text-white">
+          <div className="rounded-lg bg-[#07363d] p-5 text-white">
             <div className="mb-8 flex items-center justify-between">
-              <span className="text-[12px] font-black uppercase tracking-[0.14em] text-white/58">Current Run</span>
-              <FileImage size={18} />
+              <span className="text-[13px] font-black uppercase tracking-[0.14em] text-white/58">Current Run</span>
+              <FileImage size={20} />
             </div>
-            <strong className="block text-[22px] font-black leading-tight">{costumeType}</strong>
-            <span className="mt-2 block text-[13px] font-semibold text-white/68">{requiredUrls.length}/4 核心视图 · {currentSupportViewCount} 辅助角度</span>
+            <strong className="block text-[28px] font-black leading-tight">{costumeType}</strong>
+            <span className="mt-3 block text-[15px] font-semibold text-white/70">{requiredUrls.length}/4 核心视图  -  {currentSupportViewCount} 辅助角度</span>
           </div>
-          <div className="mt-4 grid gap-3">
+          <div className="mt-5 grid gap-3">
             {visibleSteps.map((step, index) => {
               const isActive = activeStep === step.id;
               const isDone = completedSteps[step.id];
@@ -1987,7 +2273,7 @@ export function App() {
               return (
                 <button
                   className={cn(
-                    "group grid grid-cols-[38px_1fr_auto] items-center gap-3 rounded-lg border border-transparent px-3 py-3 text-left transition active:scale-[0.99]",
+                    "group grid min-h-[74px] grid-cols-[48px_1fr_auto] items-center gap-4 rounded-lg border border-transparent px-4 py-4 text-left transition active:scale-[0.99]",
                     isActive && "border-[#b8dce1] bg-white shadow-[0_12px_28px_rgba(12,57,65,0.08)]",
                     !isActive && "hover:bg-white/55",
                   )}
@@ -1995,30 +2281,31 @@ export function App() {
                   key={step.id}
                   onClick={() => selectStep(step.id)}
                 >
-                  <span className={cn("grid h-9 w-9 place-items-center rounded-lg bg-[#e9f4f5] text-[#007e91]", isActive && "bg-[#007e91] text-white")}>
-                    <Icon size={18} />
+                  <span className={cn("grid h-12 w-12 place-items-center rounded-lg bg-[#e9f4f5] text-[#007e91]", isActive && "bg-[#007e91] text-white")}>
+                    <Icon size={22} />
                   </span>
                   <span className="min-w-0">
-                    <strong className="block text-[14px] font-black text-[#18363a]">{step.shortLabel}</strong>
-                    <small className="block truncate text-[12px] font-semibold text-[#607276]">{step.description}</small>
+                    <strong className="block text-[17px] font-black text-[#18363a]">{step.shortLabel}</strong>
+                    <small className="block truncate text-[14px] font-semibold text-[#607276]">{step.description}</small>
                   </span>
-                  <span className={cn("text-[12px] font-black", isDone ? "text-[#167a3a]" : "text-[#9caeb2]")}>{isDone ? "OK" : String(index + 1).padStart(2, "0")}</span>
+                  <span className={cn("text-[13px] font-black", isDone ? "text-[#167a3a]" : "text-[#9caeb2]")}>{isDone ? "OK" : String(index + 1).padStart(2, "0")}</span>
                 </button>
               );
             })}
           </div>
-          <button className="mt-4 w-full rounded-lg border border-[#d7e5e6] bg-white/70 px-4 py-3 text-[14px] font-black text-[#456064] transition active:scale-[0.98]">
+          <button className="mt-5 w-full rounded-lg border border-[#d7e5e6] bg-white/70 px-4 py-4 text-[16px] font-black text-[#456064] transition active:scale-[0.98]">
             新建流程
           </button>
-          <button
-            className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg border border-[#b8dce1] bg-white px-4 py-3 text-[14px] font-black text-[#007e91] shadow-[0_12px_24px_rgba(0,126,145,0.08)] transition active:scale-[0.98]"
-            type="button"
-            onClick={() => setHistoryOpen(true)}
-          >
-            <Database size={16} />
-            历史记录
-            {historyItems.length > 0 && <span className="rounded-md bg-[#e6f5f6] px-2 py-0.5 text-[11px]">{historyItems.length}</span>}
-          </button>
+          <HistoryInlinePanel
+            items={historyItems}
+            error={historyError}
+            onClear={() => {
+              setHistoryError("");
+              setHistoryItems([]);
+            }}
+            onRemove={(id) => setHistoryItems((current) => current.filter((item) => item.id !== id))}
+            onOpenItem={openHistoryItem}
+          />
         </motion.aside>
 
         <main className="min-w-0">
@@ -2034,7 +2321,6 @@ export function App() {
                 <UploadStep
                   slots={slots}
                   costumeType={costumeType}
-                  referenceVideos={currentReferenceVideos}
                   supportViewCount={currentSupportViewCount}
                   setCostumeType={updateProductType}
                   onFile={updateSlotFile}
@@ -2042,42 +2328,45 @@ export function App() {
                   onComplete={() => completeUploadStep()}
                 />
               )}
-              {activeStep === "firstFrame" && (
-                <FirstFrameStep
-                  prompt={scenePrompt}
-                  setPrompt={updateScenePrompt}
-                  videoPrompt={videoActionPrompt}
-                  setVideoPrompt={updateVideoActionPrompt}
-                  promptMeta={promptPairMeta}
+              {activeStep === "storyboard" && (
+                <StoryboardStep
+                  storyDirection={storyDirection}
+                  setStoryDirection={updateStoryDirection}
+                  storyRevision={storyRevision}
+                  setStoryRevision={setStoryRevision}
+                  storyIntent={storyIntent}
+                  storyboards={storyboards}
+                  selectedStoryboardIds={selectedStoryboardIds}
+                  preflight={storyboardPreflight}
+                  videoPackage={videoExecutionPackage}
                   apiSettings={apiSettings}
                   updateApiSettings={updateApiSettings}
                   aspectRatio={aspectRatio}
                   setAspectRatio={updateAspectRatio}
+                  motionMode={motionMode}
+                  setMotionMode={setMotionMode}
                   productViews={slots}
-                  approvedUrl={approvedFirstFrameUrl}
-                  isApproved={firstFrameApproved}
-                  reviewChecks={firstFrameReviewChecks}
-                  reviewState={firstFrameReviewState}
-                  allReviewChecksResolved={allFirstFrameReviewChecksResolved}
-                  failedReviewChecks={failedFirstFrameReviewChecks}
-                  hasFailedReviewChecks={hasFailedFirstFrameReviewChecks}
-                  onReviewCheck={updateFirstFrameReviewCheck}
-                  onApproveAllAndGenerate={approveFirstFrameAndOpenVideoStep}
-                  onRegenerate={regenerateFirstFrameFromReview}
-                  error={firstFrameError}
-                  canGenerate={firstFrameReady}
+                  error={storyboardError}
+                  canGenerate={storyIntentCanGenerate}
                   isSubmitting={isSubmitting}
-                  isSuggesting={suggestingPrompt === "pair"}
-                  onSuggestPrompt={requestPromptPairSuggestion}
-                  onGenerate={() => callBackend("firstFrame")}
+                  progressEvents={progressEvents}
+                  activeJob={activeJob}
+                  onGenerateIntent={() => requestStoryIntent()}
+                  onReviseIntent={() => requestStoryIntent(storyRevision)}
+                  onGenerateStoryboards={requestStoryboards}
+                  onCompilePackage={compileVideoPackage}
+                  onToggleStoryboard={toggleStoryboardSelection}
+                  onTestImage={() => testApi("image")}
+                  isTestingImage={testing === "image"}
                 />
               )}
               {activeStep === "video" && (
                 <VideoStep
                   apiSettings={apiSettings}
                   updateApiSettings={updateApiSettings}
-                  duration={duration}
-                  setDuration={setDuration}
+                  duration={actualVideoDuration}
+                  requestedDuration={requestedVideoDuration}
+                  setDuration={updateVideoDuration}
                   motionMode={motionMode}
                   setMotionMode={setMotionMode}
                   canGenerate={videoReady}
@@ -2085,42 +2374,89 @@ export function App() {
                   isTesting={testing === "video"}
                   error={videoError}
                   aspectRatio={aspectRatio}
-                  firstFrameUrl={approvedFirstFrameUrl}
+                  firstFrameUrl={selectedStoryboardAnchor}
                   status={videoStatus}
                   statusText={videoStatusText}
                   taskId={videoTaskId}
                   videoUrl={videoUrl}
+                  videoPrompt={videoExecutionPackage?.finalVideoPrompt || ""}
+                  progressEvents={progressEvents}
                   onGenerate={() => callBackend("video")}
                   onTest={() => testApi("video")}
                 />
               )}
-              {activeStep === "qa" && <QaStep videoUrl={videoUrl} aspectRatio={aspectRatio} />}
             </motion.div>
           </AnimatePresence>
         </main>
       </div>
-      {historyOpen && (
-        <HistoryDrawer
-          items={historyItems}
-          products={productAssets}
-          error={historyError}
-          onClose={() => setHistoryOpen(false)}
-          onClear={() => {
-            setHistoryError("");
-            setHistoryItems([]);
-          }}
-          onRemove={(id) => setHistoryItems((current) => current.filter((item) => item.id !== id))}
-          onOpenItem={openHistoryItem}
-        />
-      )}
     </div>
+  );
+}
+
+function HistoryInlinePanel(props: {
+  items: HistoryItem[];
+  error: string;
+  onClear: () => void;
+  onRemove: (id: string) => void;
+  onOpenItem: (item: HistoryItem) => Promise<void>;
+}) {
+  const [expandedId, setExpandedId] = useState("");
+
+  useEffect(() => {
+    if (expandedId && !props.items.some((item) => item.id === expandedId)) {
+      setExpandedId("");
+    }
+  }, [expandedId, props.items]);
+
+  return (
+    <section className="history-inline-panel" aria-label="历史记录">
+      <div className="history-inline-head">
+        <div>
+          <span>历史记录</span>
+          <strong>{props.items.length} 条</strong>
+        </div>
+        <button className="icon-action subtle" type="button" onClick={props.onClear} disabled={props.items.length === 0} aria-label="清空历史记录">
+          <Trash2 size={17} />
+        </button>
+      </div>
+      {props.error && <div className="history-error">{props.error}</div>}
+      <div className="history-list inline-history-list">
+        {props.items.length === 0 ? (
+          <div className="history-empty">暂无记录</div>
+        ) : (
+          props.items.map((item) => (
+            <article className={cn("history-item", expandedId === item.id && "expanded")} key={item.id}>
+              <button
+                className="history-item-main"
+                type="button"
+                onClick={() => setExpandedId((current) => (current === item.id ? "" : item.id))}
+                aria-expanded={expandedId === item.id}
+              >
+                <div>
+                  <span className="history-type">{item.type}</span>
+                  <strong>{item.title}</strong>
+                  <small>{item.time}</small>
+                </div>
+                <div className="history-side">
+                  <span className={cn("history-status", item.status === "成功" && "ok", item.status === "失败" && "fail")}>{item.status}</span>
+                  <ChevronDown size={17} />
+                </div>
+              </button>
+              {expandedId === item.id && <HistoryDetail item={item} onOpenItem={() => props.onOpenItem(item)} />}
+              <button className="icon-action subtle history-remove" aria-label="删除记录" onClick={() => props.onRemove(item.id)}>
+                <Trash2 size={16} />
+              </button>
+            </article>
+          ))
+        )}
+      </div>
+    </section>
   );
 }
 
 function UploadStep(props: {
   slots: UploadSlot[];
   costumeType: string;
-  referenceVideos: readonly ProductReferenceVideo[];
   supportViewCount: number;
   setCostumeType: (value: string) => void;
   onFile: (id: string, file?: File) => void;
@@ -2135,7 +2471,7 @@ function UploadStep(props: {
   return (
     <section className="stage-panel">
       <StageHeader eyebrow="第 1 步" title="上传产品四视图" />
-      <div className="lock-note">核心四视图上传后才进入首帧。正面、左侧、右侧、背面用于锁定尺寸、比例、外形和拓扑；选择本地预设产品时，已保存的辅助角度会在后台自动作为一致性证据进入模型。</div>
+      <div className="lock-note">核心四视图上传后才进入剧情和分镜。正面、左侧、右侧、背面用于锁定尺寸、比例、外形和拓扑；选择本地预设产品时，已保存的辅助角度会在后台自动作为一致性证据进入模型。</div>
       <div className="field-grid">
         <label>
           产品类型
@@ -2145,7 +2481,6 @@ function UploadStep(props: {
             <option>灰色老鼠充气服</option>
             <option>青蛙充气服</option>
             <option>相扑充气服</option>
-            <option>通用充气服</option>
           </select>
         </label>
       </div>
@@ -2181,14 +2516,6 @@ function UploadStep(props: {
           </article>
         ))}
       </div>
-      {props.referenceVideos.length > 0 && (
-        <div className="preset-reference-note">
-          <strong>已绑定参考视频</strong>
-          <span>
-            {props.referenceVideos.length} 个长期样片：{props.referenceVideos.map((video) => video.fileName).join("、")}
-          </span>
-        </div>
-      )}
       {props.supportViewCount > 0 && (
         <div className="preset-reference-note">
           <strong>已绑定辅助角度</strong>
@@ -2205,95 +2532,83 @@ function UploadStep(props: {
   );
 }
 
-function FirstFrameStep(props: {
-  prompt: string;
-  setPrompt: (value: string) => void;
-  videoPrompt: string;
-  setVideoPrompt: (value: string) => void;
-  promptMeta: PromptPairMeta;
+function StoryboardStep(props: {
+  storyDirection: string;
+  setStoryDirection: (value: string) => void;
+  storyRevision: string;
+  setStoryRevision: (value: string) => void;
+  storyIntent: StoryIntent | null;
+  storyboards: StoryboardFrame[];
+  selectedStoryboardIds: string[];
+  preflight: StoryboardPreflight | null;
+  videoPackage: VideoExecutionPackage | null;
   apiSettings: ApiSettings;
   updateApiSettings: (patch: Partial<ApiSettings>) => void;
   aspectRatio: string;
   setAspectRatio: (value: string) => void;
+  motionMode: MotionMode;
+  setMotionMode: (value: MotionMode) => void;
   productViews: UploadSlot[];
-  approvedUrl: string;
-  isApproved: boolean;
-  reviewChecks: typeof firstFrameReviewChecks;
-  reviewState: FirstFrameReviewState;
-  allReviewChecksResolved: boolean;
-  failedReviewChecks: typeof firstFrameReviewChecks[number][];
-  hasFailedReviewChecks: boolean;
-  onReviewCheck: (id: ReviewCheckId, decision: ReviewDecision) => void;
-  onApproveAllAndGenerate: () => void;
-  onRegenerate: () => void;
   error: string;
   canGenerate: boolean;
   isSubmitting: boolean;
-  isSuggesting: boolean;
-  onSuggestPrompt: () => void;
-  onGenerate: () => void;
+  progressEvents: ProgressEvent[];
+  activeJob: WorkflowJobKind | "";
+  onGenerateIntent: () => void;
+  onReviseIntent: () => void;
+  onGenerateStoryboards: () => void;
+  onCompilePackage: () => void;
+  onToggleStoryboard: (id: string) => void;
+  onTestImage: () => void;
+  isTestingImage: boolean;
 }) {
-  const generatedFrame = (
-    <div className={cn("generated-frame", `media-ratio-${props.aspectRatio.replace(":", "-")}`)}>
-      <div className="render-badges">
-        <span className={props.approvedUrl ? "render-ok" : ""}>{props.approvedUrl ? "已载入" : "待生成"}</span>
-        <span>{props.isApproved ? "已过审" : "首帧不过审，不进入视频"}</span>
-      </div>
-      {props.approvedUrl ? (
-        <img className="preview-image" src={props.approvedUrl} alt="首帧预览" />
-      ) : (
-        <div className="frame-placeholder">
-          <Wand2 size={44} />
-          <strong>首帧预览</strong>
-        </div>
-      )}
-    </div>
-  );
-
   return (
     <section className="stage-panel">
-      <StageHeader eyebrow="第 2 步" title="四视图合成首帧" />
-      <div className="lock-note">一致性规则：正面、左侧、右侧、背面四张核心视图优先于场景创意。人体体型包络、尺寸、比例、轮廓必须接近四视图，不能变成巨大圆顶、桶状身体、站立气球或吉祥物外壳；阀门方向、尾鳍、鳃线、脸窗必须归位，看不见的结构隐藏，不挪位。</div>
+      <StageHeader eyebrow="第 2 步" title="剧情意图与候选分镜" />
+      <div className="lock-note">视频提交前先收敛剧情、动作路径、入选分镜和产品锁点；执行包预检未通过时不会提交视频模型。</div>
       <div className="two-col">
         <div className="stack">
-          {props.approvedUrl && generatedFrame}
           <div className="scenario-card prompt-card prompt-pair-card">
             <div className="prompt-label-row">
-              <span>同步提示词</span>
-              <button
-                className="dice-action"
-                type="button"
-                title="同步随机首帧和视频提示词"
-                aria-label="同步随机首帧和视频提示词"
-                disabled={props.isSuggesting}
-                onClick={props.onSuggestPrompt}
-              >
-                {props.isSuggesting ? <LoaderCircle className="spin" size={16} /> : <Dices size={17} />}
+              <span>剧情 / 动作意图</span>
+              <button className="dice-action" type="button" title="调用模型生成剧情意图" aria-label="调用模型生成剧情意图" disabled={props.activeJob === "storyIntent"} onClick={props.onGenerateIntent}>
+                {props.activeJob === "storyIntent" ? <LoaderCircle className="spin" size={16} /> : <Dices size={17} />}
               </button>
             </div>
-            {props.promptMeta.sceneAnchor && <p className="prompt-scene-anchor">{props.promptMeta.sceneAnchor}</p>}
             <div className="prompt-pair-grid">
               <label>
-                <span>首帧提示词</span>
-                <textarea
-                  value={props.prompt}
-                  onChange={(event) => props.setPrompt(event.target.value)}
-                  placeholder="点击骰子生成"
-                />
+                <span>方向</span>
+                <textarea value={props.storyDirection} onChange={(event) => props.setStoryDirection(event.target.value)} placeholder="可留空，也可以写一句方向" />
               </label>
               <label>
-                <span>视频提示词</span>
-                <textarea
-                  value={props.videoPrompt}
-                  onChange={(event) => props.setVideoPrompt(event.target.value)}
-                  placeholder="点击骰子生成"
-                />
+                <span>修改意见</span>
+                <textarea value={props.storyRevision} onChange={(event) => props.setStoryRevision(event.target.value)} placeholder="生成后可让模型改写" />
               </label>
             </div>
-            {props.promptMeta.continuityLocks && <p className="prompt-continuity">{props.promptMeta.continuityLocks}</p>}
+            <div className="review-flow-actions">
+              <button className="primary-action compact-action" type="button" disabled={!props.canGenerate || props.activeJob === "storyIntent"} onClick={props.onGenerateIntent}>
+                {props.activeJob === "storyIntent" ? <LoaderCircle className="spin" size={15} /> : <Wand2 size={15} />}
+                生成剧情意图
+              </button>
+              <button className="secondary-action compact-action" type="button" disabled={!props.storyIntent || !props.storyRevision.trim() || props.activeJob === "storyIntent"} onClick={props.onReviseIntent}>
+                {props.activeJob === "storyIntent" ? <LoaderCircle className="spin" size={15} /> : <Sparkles size={15} />}
+                用模型修改
+              </button>
+            </div>
+            {props.storyIntent && (
+              <div className="story-intent-card">
+                <strong>{props.storyIntent.storyTitle}</strong>
+                <p>{props.storyIntent.storyIntent}</p>
+                <small>{props.storyIntent.sceneAnchor}</small>
+                <div className="story-beat-list">
+                  {props.storyIntent.beats.map((beat) => (
+                    <span key={beat.id}>{beat.beat}</span>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
-          {!props.approvedUrl && generatedFrame}
-          <div className="first-frame-review">
+          <div className="storyboard-reference-grid">
             {props.productViews.map((slot) => (
               <div className="review-pane" key={slot.id}>
                 <div className="review-pane-head">
@@ -2311,83 +2626,50 @@ function FirstFrameStep(props: {
               </div>
             ))}
           </div>
-          {props.approvedUrl && (
-            <div className="review-checklist">
-              <div className="review-checklist-head">
-                <strong>首帧关键审核</strong>
-                <div className="review-flow-actions">
-                  <button
-                    className="primary-action compact-action"
-                    type="button"
-                    disabled={props.isSubmitting}
-                    onClick={props.onApproveAllAndGenerate}
-                  >
-                    {props.isSubmitting ? <LoaderCircle className="spin" size={15} /> : <ShieldCheck size={15} />}
-                    通过首帧，进入视频设置
-                  </button>
-                  {props.hasFailedReviewChecks && (
-                    <button
-                      className="secondary-action compact-action"
-                      type="button"
-                      disabled={props.isSubmitting}
-                      onClick={props.onRegenerate}
-                    >
-                      {props.isSubmitting ? <LoaderCircle className="spin" size={15} /> : <Wand2 size={15} />}
-                      按错误项重新生成首帧
-                    </button>
-                  )}
-                </div>
+          <div className="storyboard-grid">
+            {props.storyboards.length === 0 ? (
+              <div className="frame-placeholder storyboard-empty">
+                <Wand2 size={38} />
+                <strong>等待分镜</strong>
               </div>
-              {props.hasFailedReviewChecks && (
-                <div className="review-fail-banner">
-                  首帧审核未通过：{props.failedReviewChecks.map((check) => check.label).join("、")}。请重新生成首帧。
-                </div>
-              )}
-              {props.reviewChecks.map((check) => (
-                <div className={cn("review-check", props.reviewState[check.id] === "fail" && "failed")} key={check.id}>
-                  <span>
-                    <strong>{check.label}</strong>
-                    <small>{check.detail}</small>
-                  </span>
-                  <div className="review-decision" aria-label={`${check.label}审核结果`}>
-                    <button
-                      type="button"
-                      className={props.reviewState[check.id] === "pass" ? "active pass" : ""}
-                      onClick={() => props.onReviewCheck(check.id, "pass")}
-                    >
-                      正确
-                    </button>
-                    <button
-                      type="button"
-                      className={props.reviewState[check.id] === "fail" ? "active fail" : ""}
-                      onClick={() => props.onReviewCheck(check.id, "fail")}
-                    >
-                      错误
-                    </button>
-                  </div>
-                </div>
+            ) : (
+              props.storyboards.map((storyboard) => {
+                const selected = props.selectedStoryboardIds.includes(storyboard.id);
+                return (
+                  <button className={cn("storyboard-card", selected && "selected")} type="button" key={storyboard.id} onClick={() => props.onToggleStoryboard(storyboard.id)}>
+                    <img src={storyboard.imageUrl} alt={storyboard.beat} />
+                    <span>{storyboard.viewAngle}</span>
+                    <strong>{storyboard.beat}</strong>
+                    <small>{storyboard.action}</small>
+                  </button>
+                );
+              })
+            )}
+          </div>
+          {(props.preflight || props.videoPackage) && (
+            <div className={cn("preflight-card", props.preflight?.status || "pass")}>
+              <strong>执行包预检：{props.preflight?.status || "pass"}</strong>
+              <span>{props.preflight?.cameraPath || props.videoPackage?.cameraPath}</span>
+              {props.preflight?.issues.map((issue) => (
+                <small key={issue.code}>{issue.message}</small>
               ))}
             </div>
           )}
         </div>
         <div className="parameter-panel">
-          <h3>生成参数</h3>
+          <h3>分镜参数</h3>
           <label>
             提示词模型
-            <input
-              value={props.apiSettings.promptModel}
-              onChange={(event) => props.updateApiSettings({ promptModel: event.target.value })}
-              placeholder={DEFAULT_PROMPT_MODEL}
-            />
+            <input value={props.apiSettings.promptModel} onChange={(event) => props.updateApiSettings({ promptModel: event.target.value })} placeholder={DEFAULT_PROMPT_MODEL} />
           </label>
           <label>
-            首帧模型
-            <input
-              value={props.apiSettings.imageModel}
-              onChange={(event) => props.updateApiSettings({ imageModel: event.target.value })}
-              placeholder={DEFAULT_IMAGE_MODEL}
-            />
+            分镜模型
+            <input value={props.apiSettings.imageModel} onChange={(event) => props.updateApiSettings({ imageModel: event.target.value })} placeholder={DEFAULT_IMAGE_MODEL} />
           </label>
+          <button className="secondary-action full-width" type="button" onClick={props.onTestImage} disabled={props.isTestingImage}>
+            {props.isTestingImage ? <LoaderCircle className="spin" size={16} /> : <Sparkles size={16} />}
+            测试分镜接口
+          </button>
           <div className="api-fixed-note">
             <strong>图片 / 文字接口</strong>
             <span>后台固定配置</span>
@@ -2400,28 +2682,36 @@ function FirstFrameStep(props: {
             画面比例
             <div className="ratio-grid">
               {["16:9", "1:1", "9:16"].map((ratio) => (
-                <button
-                  type="button"
-                  className={props.aspectRatio === ratio ? "active" : ""}
-                  onClick={() => props.setAspectRatio(ratio)}
-                  key={ratio}
-                >
+                <button type="button" className={props.aspectRatio === ratio ? "active" : ""} onClick={() => props.setAspectRatio(ratio)} key={ratio}>
                   <i data-ratio={ratio} />
                   {ratio}
                 </button>
               ))}
             </div>
           </label>
-          {!props.approvedUrl && (
-            <button className="primary-action" disabled={!props.canGenerate || props.isSubmitting} onClick={props.onGenerate}>
-              {props.isSubmitting ? <LoaderCircle className="spin" size={16} /> : <Send size={16} />}
-              根据核心四视图生成首帧
-            </button>
-          )}
+          <div className="segmented">
+            {[
+              ["strict", "高一致性"],
+              ["balanced", "平衡"],
+              ["creative", "创意"],
+            ].map(([value, label]) => (
+              <button key={value} className={props.motionMode === value ? "active" : ""} onClick={() => props.setMotionMode(value as MotionMode)}>
+                {label}
+              </button>
+            ))}
+          </div>
+          <button className="primary-action" disabled={!props.storyIntent || props.activeJob === "storyboard"} onClick={props.onGenerateStoryboards}>
+            {props.activeJob === "storyboard" ? <LoaderCircle className="spin" size={16} /> : <Send size={16} />}
+            生成候选分镜
+          </button>
+          <button className="secondary-action full-width" disabled={props.selectedStoryboardIds.length < 3 || props.activeJob === "storyboard"} onClick={props.onCompilePackage}>
+            {props.activeJob === "storyboard" ? <LoaderCircle className="spin" size={16} /> : <ShieldCheck size={16} />}
+            预检并编译执行包
+          </button>
           {props.error && <div className={cn("field-error", getStatusMessageTone(props.error))}>{props.error}</div>}
-          {!props.canGenerate && !props.approvedUrl && (
-            <div className="field-hint">请先点击骰子生成首帧和视频提示词，再生成首帧。</div>
-          )}
+          {!props.canGenerate && <div className="field-hint">请先确认四张核心视图已加载。</div>}
+          {props.canGenerate && !props.storyIntent && <div className="field-hint">先生成或确认剧情意图，再生成候选分镜。</div>}
+          <ProgressPanel events={props.progressEvents} emptyText="生成剧情、分镜或执行包时会显示真实步骤。" />
         </div>
       </div>
     </section>
@@ -2432,6 +2722,7 @@ function VideoStep(props: {
   apiSettings: ApiSettings;
   updateApiSettings: (patch: Partial<ApiSettings>) => void;
   duration: number;
+  requestedDuration: number;
   setDuration: (value: number) => void;
   motionMode: MotionMode;
   setMotionMode: (value: MotionMode) => void;
@@ -2445,10 +2736,14 @@ function VideoStep(props: {
   statusText: string;
   taskId: string;
   videoUrl: string;
+  videoPrompt: string;
+  progressEvents: ProgressEvent[];
   onGenerate: () => void;
   onTest: () => void;
 }) {
   const isWorking = props.isSubmitting || props.status === "submitted" || props.status === "polling";
+  const durationCap = getVideoModelDurationCap(props.apiSettings.videoProvider, props.apiSettings.videoModel);
+  const modelOptions = getVideoModelOptions(props.apiSettings.videoProvider);
   return (
     <section className="stage-panel">
       <StageHeader eyebrow="第 3 步" title="生成视频" />
@@ -2483,11 +2778,21 @@ function VideoStep(props: {
         <div className="parameter-panel">
           <h3>视频参数</h3>
           <label>
+            视频站点
+            <select value={props.apiSettings.videoProvider} onChange={(event) => props.updateApiSettings({ videoProvider: event.target.value as ApiSettings["videoProvider"] })}>
+              {VIDEO_PROVIDER_OPTIONS.map((provider) => (
+                <option key={provider.value} value={provider.value}>
+                  {provider.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
             视频模型
             <select value={props.apiSettings.videoModel} onChange={(event) => props.updateApiSettings({ videoModel: event.target.value })}>
-              {VIDEO_MODEL_OPTIONS.map((model) => (
-                <option key={model} value={model}>
-                  {model}
+              {modelOptions.map((model) => (
+                <option key={model.value} value={model.value}>
+                  {model.label}
                 </option>
               ))}
             </select>
@@ -2500,8 +2805,8 @@ function VideoStep(props: {
             视频接口
             <input
               value={props.apiSettings.videoBaseUrl}
-              onChange={(event) => props.updateApiSettings({ videoBaseUrl: event.target.value })}
-              placeholder="https://ai.wisech.com/v1"
+              readOnly
+              placeholder={DEFAULT_VIDEO_BASE_URL}
               autoComplete="off"
               name="video-api-url"
             />
@@ -2513,8 +2818,8 @@ function VideoStep(props: {
               <input
                 value={props.apiSettings.videoApiKey}
                 type="password"
-                onChange={(event) => props.updateApiSettings({ videoApiKey: event.target.value })}
-                placeholder="后台已配置，留空即可"
+                readOnly
+                placeholder="后台按所选站点自动配置"
                 autoComplete="new-password"
                 name="video-api-token"
               />
@@ -2522,7 +2827,17 @@ function VideoStep(props: {
           </label>
           <label>
             时长
-            <input type="number" min={5} max={15} value={props.duration} onChange={(event) => props.setDuration(Number(event.target.value))} />
+            <input
+              type="number"
+              min={durationCap.min}
+              max={durationCap.max}
+              value={props.duration}
+              onChange={(event) => props.setDuration(Number(event.target.value))}
+            />
+            <small className="field-hint">
+              {durationCap.note}
+              {props.requestedDuration !== props.duration ? ` 原来选择的 ${props.requestedDuration} 秒已按当前站点改为 ${props.duration} 秒。` : ""}
+            </small>
           </label>
           <div className="segmented">
             {[
@@ -2539,69 +2854,50 @@ function VideoStep(props: {
               </button>
             ))}
           </div>
+          <label className="video-prompt-editor">
+            视频提示词
+            <textarea
+              value={props.videoPrompt}
+              readOnly
+              placeholder="执行包通过预检后自动生成，不在视频提交前手工改写。"
+            />
+          </label>
           <button className="primary-action" disabled={!props.canGenerate || isWorking} onClick={props.onGenerate}>
             {isWorking ? <LoaderCircle className="spin" size={16} /> : <Sparkles size={16} />}
             {isWorking ? "生成中" : "生成视频"}
           </button>
           {props.error && <div className={cn("field-error", getStatusMessageTone(props.error))}>{props.error}</div>}
+          <ProgressPanel events={props.progressEvents} emptyText="视频生成开始后会显示安全预检、提交、轮询和产物返回。" />
         </div>
       </div>
     </section>
   );
 }
 
-function QaStep(props: { videoUrl?: string; aspectRatio: string }) {
-  const frames = [
-    ["0%", 99],
-    ["25%", 95],
-    ["50%", 92],
-    ["75%", 82],
-    ["100%", 90],
-  ] as const;
+function ProgressPanel(props: { events: ProgressEvent[]; emptyText: string }) {
   return (
-    <section className="stage-panel">
-      <StageHeader eyebrow="第 4 步" title="视频质检" />
-      <div className={cn("qa-video", `media-ratio-${props.aspectRatio.replace(":", "-")}`)}>
-        {props.videoUrl ? (
-          <video controls playsInline src={props.videoUrl} />
+    <div className="progress-panel">
+      <div className="progress-panel-head">
+        <strong>真实进度</strong>
+        <span>{props.events.length ? `${props.events.length} 条事件` : "等待任务"}</span>
+      </div>
+      <div className="progress-event-list">
+        {props.events.length === 0 ? (
+          <p>{props.emptyText}</p>
         ) : (
-          <>
-            <button className="play-button">
-              <Play size={38} />
-            </button>
-            <span>视频预览</span>
-          </>
+          props.events.map((event) => (
+            <article className={cn("progress-event", event.status)} key={event.id}>
+              <i />
+              <div>
+                <span>{event.type}</span>
+                <strong>{event.title}</strong>
+                <small>{event.detail}</small>
+              </div>
+            </article>
+          ))
         )}
       </div>
-      <div className="timeline">
-        <div className="timeline-head">
-          <span>关键帧</span>
-          <strong>00:04 / 00:08</strong>
-        </div>
-        <div className="timeline-track">
-          <i />
-          {frames.map(([time, score]) => (
-            <button className={cn(score >= 90 && "passed", score < 90 && "warning")} key={time}>
-              <span />
-              <em>{time}</em>
-            </button>
-          ))}
-        </div>
-      </div>
-      <div className="frame-grid">
-        {frames.map(([time, score]) => (
-          <div className={cn("frame-card", score < 90 && "bad")} key={time}>
-            <div>{time}</div>
-            <span>{score}% 一致</span>
-          </div>
-        ))}
-      </div>
-      <div className="score-grid">
-        <Score label="货对版" value={85} danger />
-        <Score label="动作趣味" value={75} />
-        <Score label="场景丰富" value={90} />
-      </div>
-    </section>
+    </div>
   );
 }
 
@@ -2623,7 +2919,7 @@ function HistoryDrawer(props: {
   onRemove: (id: string) => void;
   onOpenItem: (item: HistoryItem) => Promise<void>;
 }) {
-  const [expandedId, setExpandedId] = useState(props.items[0]?.id || "");
+  const [expandedId, setExpandedId] = useState("");
   return (
     <div className="history-backdrop" role="dialog" aria-modal="true" aria-label="历史记录">
       <button className="history-scrim" aria-label="关闭历史记录" onClick={props.onClose} />
@@ -2654,7 +2950,7 @@ function HistoryDrawer(props: {
               <div>
                 <b>{product.name}</b>
                 <small>
-                  {product.type} · {product.viewUrls.length} 张视图 · {product.supportViewUrls.length} 张辅助角度 · {product.referenceVideoUrls.length} 个参考视频 · 已锁 {product.lockedNodeCodes.length} 项细节
+                  {product.type}  -  {product.viewUrls.length} 张视图  -  {product.supportViewUrls.length} 张辅助角度  -  已锁 {product.lockedNodeCodes.length} 项细节
                 </small>
               </div>
             </article>
@@ -2706,7 +3002,7 @@ function HistoryDrawer(props: {
 
 function HistoryDetail(props: { item: HistoryItem; onOpenItem: () => void }) {
   const storedAssetUrl = props.item.videoUrl || props.item.firstFrameUrl || props.item.detailUrl || "";
-  const [resolvedAssetUrl, setResolvedAssetUrl] = useState(storedAssetUrl);
+  const [resolvedAssetUrl, setResolvedAssetUrl] = useState(isHistoryAssetRef(storedAssetUrl) ? "" : storedAssetUrl);
   const [assetLoading, setAssetLoading] = useState(isHistoryAssetRef(storedAssetUrl));
   const assetUrl = isHistoryAssetRef(storedAssetUrl) ? resolvedAssetUrl : storedAssetUrl;
   const isVideoAsset = Boolean(props.item.videoUrl);
@@ -2768,7 +3064,7 @@ function HistoryDetail(props: { item: HistoryItem; onOpenItem: () => void }) {
       </div>
       {props.item.scenePrompt && (
         <div className="history-detail-text">
-          <b>首帧提示词</b>
+          <b>剧情意图</b>
           <p>{props.item.scenePrompt}</p>
         </div>
       )}
@@ -2794,30 +3090,6 @@ function HistoryDetail(props: { item: HistoryItem; onOpenItem: () => void }) {
           </div>
         </div>
       )}
-      {props.item.referenceVideoUrls && props.item.referenceVideoUrls.length > 0 && (
-        <div className="history-reference-list">
-          <b>参考视频</b>
-          {props.item.referenceVideoUrls.map((url, index) => (
-            <a href={url} target="_blank" rel="noreferrer" key={`${url}-${index}`}>
-              参考视频 {index + 1}
-            </a>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function Score(props: { label: string; value: number; danger?: boolean }) {
-  return (
-    <div className={cn("score-card", props.danger && "danger")}>
-      <div>
-        <span>{props.label}</span>
-        <strong>{props.value}%</strong>
-      </div>
-      <div>
-        <i style={{ width: `${props.value}%` }} />
-      </div>
     </div>
   );
 }

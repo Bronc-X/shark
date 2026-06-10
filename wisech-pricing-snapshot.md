@@ -1,0 +1,37 @@
+- generic [ref=e3]:
+  - generic [ref=e7]:
+    - link "logo 云枢AI——国产大模型提供商" [ref=e2297] [cursor=pointer]:
+      - /url: /
+      - img "logo" [ref=e12]
+      - heading "云枢AI——国产大模型提供商" [level=4] [ref=e2298]
+    - navigation [ref=e17]:
+      - link "首页" [ref=e2299] [cursor=pointer]:
+        - /url: /
+        - generic [ref=e2300]: 首页
+      - link "控制台" [ref=e2301] [cursor=pointer]:
+        - /url: /login
+        - generic [ref=e2302]: 控制台
+      - link "模型广场" [ref=e2303] [cursor=pointer]:
+        - /url: /pricing
+        - generic [ref=e2304]: 模型广场
+      - link "文档" [ref=e2305] [cursor=pointer]:
+        - /url: https://docs.newapi.pro
+        - generic [ref=e2306]: 文档
+    - generic [ref=e30]:
+      - button "系统公告" [ref=e31] [cursor=pointer]:
+        - img [ref=e33]
+      - button "切换主题" [ref=e37] [cursor=pointer]:
+        - img [ref=e39]
+      - button "common.changeLanguage" [ref=e41] [cursor=pointer]:
+        - img [ref=e43]
+      - generic [ref=e2307]:
+        - link "登录" [ref=e2308] [cursor=pointer]:
+          - /url: /login
+        - link "注册" [ref=e2313] [cursor=pointer]:
+          - /url: /register
+  - main [ref=e55]:
+    - generic [ref=e57]:
+      - complementary [ref=e58]:
+        - generic [ref=e60]
+      - main [ref=e270]:
+        - generic [ref=e271]

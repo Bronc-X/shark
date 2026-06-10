@@ -1,0 +1,171 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e6]:
+      - img [ref=e8]
+      - generic [ref=e10]:
+        - strong [ref=e11]: Product Lock Video Studio
+        - generic [ref=e12]: 四视图锁定 - 剧情分镜 - 视频生成
+  - generic [ref=e13]:
+    - complementary [ref=e14]:
+      - generic [ref=e15]:
+        - generic [ref=e16]:
+          - generic [ref=e17]: Current Run
+          - img [ref=e18]
+        - strong [ref=e23]: 鲨鱼充气服
+        - generic [ref=e24]: 4/4 核心视图 - 0 辅助角度
+      - generic [ref=e25]:
+        - button "上传 正面、左侧、右侧、背面四张核心图 OK" [ref=e26] [cursor=pointer]:
+          - img [ref=e28]
+          - generic [ref=e31]:
+            - strong [ref=e32]: 上传
+            - generic [ref=e33]: 正面、左侧、右侧、背面四张核心图
+          - generic [ref=e34]: OK
+        - button "分镜 先生成剧情意图，再生成可预检分镜 OK" [ref=e231] [cursor=pointer]:
+          - img [ref=e37]
+          - generic [ref=e41]:
+            - strong [ref=e42]: 分镜
+            - generic [ref=e43]: 先生成剧情意图，再生成可预检分镜
+          - generic [ref=e44]: OK
+        - button "视频 通过执行包预检后一次提交 03" [ref=e45] [cursor=pointer]:
+          - img [ref=e47]
+          - generic [ref=e49]:
+            - strong [ref=e50]: 视频
+            - generic [ref=e51]: 通过执行包预检后一次提交
+          - generic [ref=e52]: "03"
+      - button "新建流程" [ref=e53] [cursor=pointer]
+      - region "历史记录" [ref=e54]:
+        - generic [ref=e55]:
+          - generic [ref=e56]:
+            - generic [ref=e57]: 历史记录
+            - strong [ref=e58]: 2 条
+          - button "清空历史记录" [ref=e59] [cursor=pointer]:
+            - img [ref=e60]
+        - generic [ref=e63]:
+          - article [ref=e310]:
+            - button "视频 视频生成 2026/06/10 04:53:49 处理中" [ref=e311] [cursor=pointer]:
+              - generic [ref=e312]:
+                - text: 视频
+                - strong [ref=e313]: 视频生成
+                - generic [ref=e314]: 2026/06/10 04:53:49
+              - generic [ref=e315]:
+                - generic [ref=e316]: 处理中
+                - img [ref=e317]
+            - button "删除记录" [ref=e319] [cursor=pointer]:
+              - img [ref=e320]
+          - article [ref=e64]:
+            - button "视频 视频生成 2026/06/10 04:46:07 失败" [ref=e65] [cursor=pointer]:
+              - generic [ref=e66]:
+                - text: 视频
+                - strong [ref=e67]: 视频生成
+                - generic [ref=e68]: 2026/06/10 04:46:07
+              - generic [ref=e69]:
+                - generic [ref=e70]: 失败
+                - img [ref=e71]
+            - button "删除记录" [ref=e73] [cursor=pointer]:
+              - img [ref=e74]
+    - main [ref=e77]:
+      - generic [ref=e233]:
+        - generic [ref=e234]:
+          - generic [ref=e235]: 第 3 步
+          - heading "生成视频" [level=1] [ref=e236]
+        - generic [ref=e237]:
+          - generic [ref=e324]:
+            - img [ref=e325]
+            - strong [ref=e327]: 视频生成中
+            - generic [ref=e328]: 任务号：tsk_vid_01KTQ2KEPWJZGYJX35KG1AW37B
+          - generic [ref=e244]:
+            - heading "视频参数" [level=3] [ref=e245]
+            - generic [ref=e246]:
+              - text: 视频站点
+              - combobox "视频站点" [ref=e247]:
+                - option "石狮接口"
+                - option "Wisech / 云书 Seedance"
+                - option "ToAPI" [selected]
+            - generic [ref=e248]:
+              - text: 视频模型
+              - combobox "视频模型" [ref=e249]:
+                - option "kling-v3 - ¥0.84/秒 (12 credits/秒)"
+                - option "seedance-2-fast - ¥1.44/秒 (20.5714 credits/秒)"
+                - option "doubao-seedance-1-5-pro - ¥0.62/秒 (8.8 credits/秒)"
+                - option "grok-video-3 - ¥0.14/秒 (12 credits/次按 6s 折)" [selected]
+            - button "测试接口" [ref=e250] [cursor=pointer]:
+              - img [ref=e251]
+              - text: 测试接口
+            - generic [ref=e254]:
+              - text: 视频接口
+              - textbox "视频接口" [ref=e255]:
+                - /placeholder: https://api.shishikeji.com
+                - text: https://toapis.com/v1
+            - generic [ref=e256]:
+              - text: 视频 API Key
+              - generic [ref=e257]:
+                - img [ref=e258]
+                - textbox "视频 API Key" [ref=e261]:
+                  - /placeholder: 后台按所选站点自动配置
+            - generic [ref=e262]:
+              - text: 时长
+              - spinbutton "时长 ToAPI grok-video-3 is treated as a fixed 6-second model; the backend clamps requests before submission. 原来选择的 8 秒已按当前站点改为 6 秒。" [ref=e263]: "6"
+              - generic [ref=e264]: ToAPI grok-video-3 is treated as a fixed 6-second model; the backend clamps requests before submission. 原来选择的 8 秒已按当前站点改为 6 秒。
+            - generic [ref=e265]:
+              - button "高一致性" [ref=e266] [cursor=pointer]
+              - button "平衡" [ref=e267] [cursor=pointer]
+              - button "创意" [ref=e268] [cursor=pointer]
+            - generic [ref=e269]:
+              - text: 视频提示词
+              - textbox "视频提示词" [ref=e270]:
+                - /placeholder: 执行包通过预检后自动生成，不在视频提交前手工改写。
+                - text: "FINAL VIDEO EXECUTION PACKAGE PROMPT. Use the selected storyboard keyframes as the action path for one expensive video generation. Do not invent a different story. Product: 鲨鱼充气服 Story intent: 在干净明亮的自助洗衣房里，鲨鱼充气服站在滚筒洗衣机和蓝色洗衣篮旁，身体保持低幅度、正面可识别的稳定站姿，只做轻微上身前探去够旁边一袋薯片；当手鳍碰到包装时立刻弹性缩回，随后短暂停顿，再用很小的幅度抬起手鳍做一个克制的胜利姿势，整体动作清晰但不夸张，不大幅转身，不遮挡关键结构。 Scene anchor: 自助洗衣房里，滚筒洗衣机、蓝色洗衣篮、找零机和墙上的注意事项贴纸构成干净生活场景，所有道具保持在背景和侧边，不挡住主体。 Selected storyboard path: 1. setup; camera=front 2. tiny reversal; camera=front_three_quarter 3. recovery pose; camera=front Camera path: front -> front_three_quarter -> front Motion mode: strict Structured product lock contract for 鲨鱼充气服 (shark). - shark_white_belly: White belly/front panel; owned=front; allowed=front/front_three_quarter; forbidden=side_valve_area/rear_tail - shark_face_window: Small shallow transparent face window; owned=front; allowed=front/front_three_quarter; forbidden=side/rear/belly_bottom - shark_front_zipper: Vertical zipper below face window; owned=front; allowed=front/front_three_quarter; forbidden=side/rear/valve_area - shark_orange_side_valve: Orange circular blower valve on valve-side waist; owned=right/rear_edge; allowed=right/right_three_quarter/rear_edge; forbidden=front/left/white_belly/face_window - shark_side_gill_lines: Side gill stripes; owned=left/right; allowed=side/three_quarter; forbidden=front_center/rear_center - shark_rear_tail_fin: Centered rear tail fin; owned=back; allowed=rear/rear_edge; forbidden=front/side_waist/white_belly - shark_arm_fins: Short arm fins with white inner panels; owned=left/right; allowed=front/side/three_quarter; forbidden=far_wide_wing - shark_black_shoes: Black shoe/sole evidence at bottom; owned=front/side/back; allowed=full_body; forbidden=floating_crop - shark_inflatable_m..."
+            - button "生成中" [disabled] [ref=e329]:
+              - img [ref=e330]
+              - text: 生成中
+            - generic [ref=e332]: 视频还在生成中，已检查 1 次。
+            - generic [ref=e275]:
+              - generic [ref=e276]:
+                - strong [ref=e277]: 真实进度
+                - generic [ref=e278]: 9 条事件
+              - generic [ref=e279]:
+                - article [ref=e333]:
+                  - generic [ref=e335]:
+                    - generic [ref=e336]: job.started
+                    - strong [ref=e337]: 视频生成
+                    - generic [ref=e338]: 任务已创建，等待执行真实步骤。
+                - article [ref=e339]:
+                  - generic [ref=e341]:
+                    - generic [ref=e342]: step.started
+                    - strong [ref=e343]: 输入检查
+                    - generic [ref=e344]: 检查执行包、起始分镜、视频模型和时长。
+                - article [ref=e345]:
+                  - generic [ref=e347]:
+                    - generic [ref=e348]: tool.completed
+                    - strong [ref=e349]: 视频请求整理完成
+                    - generic [ref=e350]: 已把入选分镜、产品锁点、动作路径和执行包组合成完整请求。
+                - article [ref=e351]:
+                  - generic [ref=e353]:
+                    - generic [ref=e354]: tool.started
+                    - strong [ref=e355]: 安全预检
+                    - generic [ref=e356]: 先检测完整视频请求；这一步发生在正式提交视频前。
+                - article [ref=e357]:
+                  - generic [ref=e359]:
+                    - generic [ref=e360]: tool.completed
+                    - strong [ref=e361]: 提示词长度
+                    - generic [ref=e362]: 完整视频提示词：1787 字符 / 上限 2200，已使用石狮压缩产品锁。
+                - article [ref=e363]:
+                  - generic [ref=e365]:
+                    - generic [ref=e366]: tool.started
+                    - strong [ref=e367]: 提交上游
+                    - generic [ref=e368]: 正在一次性提交视频生成服务。
+                - article [ref=e369]:
+                  - generic [ref=e371]:
+                    - generic [ref=e372]: tool.completed
+                    - strong [ref=e373]: 任务号已返回
+                    - generic [ref=e374]: 视频任务号：tsk_vid_01KTQ2KEPWJZGYJX35KG1AW37B
+                - article [ref=e375]:
+                  - generic [ref=e377]:
+                    - generic [ref=e378]: tool.started
+                    - strong [ref=e379]: 查询视频进度
+                    - generic [ref=e380]: 第 1 次查询上游任务状态。
+                - article [ref=e381]:
+                  - generic [ref=e383]:
+                    - generic [ref=e384]: tool.completed
+                    - strong [ref=e385]: 进度查询完成
+                    - generic [ref=e386]: 上游仍在处理，已检查 1 次。

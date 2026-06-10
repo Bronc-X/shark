@@ -1,0 +1,127 @@
+- generic [ref=e57]:
+  - banner [ref=e58]:
+    - generic [ref=e60]:
+      - img [ref=e62]
+      - generic [ref=e64]:
+        - strong [ref=e65]: Product Lock Video Studio
+        - generic [ref=e66]: 四视图锁定 - 剧情分镜 - 视频生成
+  - generic [ref=e67]:
+    - complementary [ref=e68]:
+      - generic [ref=e69]:
+        - generic [ref=e70]:
+          - generic [ref=e71]: Current Run
+          - img [ref=e72]
+        - strong [ref=e77]: 鲨鱼充气服
+        - generic [ref=e78]: 4/4 核心视图 - 0 辅助角度
+      - generic [ref=e79]:
+        - button "上传 正面、左侧、右侧、背面四张核心图 OK" [ref=e80] [cursor=pointer]:
+          - img [ref=e82]
+          - generic [ref=e85]:
+            - strong [ref=e86]: 上传
+            - generic [ref=e87]: 正面、左侧、右侧、背面四张核心图
+          - generic [ref=e88]: OK
+        - button "分镜 先生成剧情意图，再生成可预检分镜 OK" [ref=e321] [cursor=pointer]:
+          - img [ref=e91]
+          - generic [ref=e95]:
+            - strong [ref=e96]: 分镜
+            - generic [ref=e97]: 先生成剧情意图，再生成可预检分镜
+          - generic [ref=e98]: OK
+        - button "视频 通过执行包预检后一次提交 03" [ref=e99] [cursor=pointer]:
+          - img [ref=e101]
+          - generic [ref=e103]:
+            - strong [ref=e104]: 视频
+            - generic [ref=e105]: 通过执行包预检后一次提交
+          - generic [ref=e106]: "03"
+      - button "新建流程" [ref=e107] [cursor=pointer]
+      - region "历史记录" [ref=e108]:
+        - generic [ref=e109]:
+          - generic [ref=e110]:
+            - generic [ref=e111]: 历史记录
+            - strong [ref=e112]: 0 条
+          - button "清空历史记录" [disabled] [ref=e113]:
+            - img [ref=e114]
+        - generic [ref=e118]: 暂无记录
+    - main [ref=e1]:
+      - generic [ref=e323]:
+        - generic [ref=e324]:
+          - generic [ref=e325]: 第 3 步
+          - heading "生成视频" [level=1] [ref=e326]
+        - generic [ref=e327]:
+          - generic [ref=e330]:
+            - img [ref=e331]
+            - strong [ref=e333]: 视频预览
+          - generic [ref=e334]:
+            - heading "视频参数" [level=3] [ref=e335]
+            - generic [ref=e336]:
+              - text: 视频站点
+              - combobox "视频站点" [ref=e337]:
+                - option "石狮接口"
+                - option "Wisech / 云书 Seedance"
+                - option "ToAPI" [selected]
+            - generic [ref=e338]:
+              - text: 视频模型
+              - combobox "视频模型" [ref=e339]:
+                - option "kling-v3 - ¥0.84/秒 (12 credits/秒)"
+                - option "seedance-2-fast - ¥1.44/秒 (20.5714 credits/秒)"
+                - option "doubao-seedance-1-5-pro - ¥0.62/秒 (8.8 credits/秒)"
+                - option "grok-video-3 - ¥0.14/秒 (12 credits/次按 6s 折)" [selected]
+            - button "测试接口" [ref=e340] [cursor=pointer]:
+              - img [ref=e341]
+              - text: 测试接口
+            - generic [ref=e344]:
+              - text: 视频接口
+              - textbox "视频接口" [ref=e345]:
+                - /placeholder: https://api.shishikeji.com
+                - text: https://toapis.com/v1
+            - generic [ref=e346]:
+              - text: 视频 API Key
+              - generic [ref=e347]:
+                - img [ref=e348]
+                - textbox "视频 API Key" [ref=e351]:
+                  - /placeholder: 后台按所选站点自动配置
+            - generic [ref=e352]:
+              - text: 时长
+              - spinbutton "时长 ToAPI grok-video-3 is treated as a fixed 6-second model; the backend clamps requests before submission. 原来选择的 8 秒已按当前站点改为 6 秒。" [ref=e401]: "6"
+              - generic [ref=e354]: ToAPI grok-video-3 is treated as a fixed 6-second model; the backend clamps requests before submission. 原来选择的 8 秒已按当前站点改为 6 秒。
+            - generic [ref=e355]:
+              - button "高一致性" [ref=e356] [cursor=pointer]
+              - button "平衡" [ref=e357] [cursor=pointer]
+              - button "创意" [ref=e358] [cursor=pointer]
+            - generic [ref=e359]:
+              - text: 视频提示词
+              - textbox "视频提示词" [ref=e360]:
+                - /placeholder: 执行包通过预检后自动生成，不在视频提交前手工改写。
+                - text: "FINAL VIDEO EXECUTION PACKAGE PROMPT. Use the selected storyboard keyframes as the action path for one expensive video generation. Do not invent a different story. Product: 鲨鱼充气服 Story intent: 在真实的超市零食货架前，鲨鱼充气服站在货架边缘，身体保持正面为主、只做很小的前探动作去够一包薯片；手鳍轻轻碰到包装后立刻弹性缩回，整体姿态不大幅转身，停一拍后用一个小小的胜利姿势收尾，动作清楚但克制，画面中不出现任何文字或举牌。 Scene anchor: 超市零食货架前，成排薯片包装、货架层板、购物篮和地面反光形成可拍摄的真实零售场景，画面中不出现可读标识。 Selected storyboard path: 1. setup; camera=front 2. tiny reversal; camera=front_three_quarter 3. recovery pose; camera=front Camera path: front -> front_three_quarter -> front Motion mode: strict Structured product lock contract for 鲨鱼充气服 (shark). - shark_white_belly: White belly/front panel; owned=front; allowed=front/front_three_quarter; forbidden=side_valve_area/rear_tail - shark_face_window: Small shallow transparent face window; owned=front; allowed=front/front_three_quarter; forbidden=side/rear/belly_bottom - shark_front_zipper: Vertical zipper below face window; owned=front; allowed=front/front_three_quarter; forbidden=side/rear/valve_area - shark_orange_side_valve: Orange circular blower valve on valve-side waist; owned=right/rear_edge; allowed=right/right_three_quarter/rear_edge; forbidden=front/left/white_belly/face_window - shark_side_gill_lines: Side gill stripes; owned=left/right; allowed=side/three_quarter; forbidden=front_center/rear_center - shark_rear_tail_fin: Centered rear tail fin; owned=back; allowed=rear/rear_edge; forbidden=front/side_waist/white_belly - shark_arm_fins: Short arm fins with white inner panels; owned=left/right; allowed=front/side/three_quarter; forbidden=far_wide_wing - shark_black_shoes: Black shoe/sole evidence at bottom; owned=front/side/back; allowed=full_body; forbidden=floating_crop - shark_inflatable_material: Thin crinkled inflatable nylon/PVC material, seams, wrinkles, zipper teeth, valve rings; owned=front/left/right/back; allowed=visible_surface; forbidden=smooth_plastic/plush_fur/real_skin/clean_cgi_shell - shark_human_scale_envelope: Human-scale wearable inflatable volume with grounded feet; owned=front/left/right/back; allowed=full_body/front_three_quarter/side/rear; forbidden=giant_mascot_shell/standing_balloon/skinny_person/floating_crop Frontend confirmed lock nodes: - Front_Window_Zipper: 正面透明脸窗 / 中线拉链; 保留白色腹部上方的小号浅弧形横向梯形透明脸窗、透明反光材质、脸窗下方垂直拉链和中轴缝线；脸窗不能变成大矩形、宽面罩、嘴巴、牙齿或笑脸。 - Side_Eye_Gill_Stripes: 侧面黑眼睛 / 黑色鳃线; 侧面必须保留 1 个黑色圆眼和 5 条黑色弧形鳃线，不能省略、变淡、变形或移动位置。 - Orange_Side_Blower_Valve: 侧边橙色鼓风阀; 保留侧腰橙色圆形鼓风阀、橙色环、圆形网格和所在高度，不能被手臂或场景遮掉。 - Back_Tail_Fin_Seam: 背部尾鳍 / 背部竖缝; 尾鳍只能位于背部中轴线，不能移动到侧腰、正面白肚或画面可见侧面；保留背部竖向缝线、后背纯蓝色块和底部黑色鞋底露出。 - View_Topology_Detail_Placement: 视角拓扑 / 细节归位; 正面白肚、透明窗、拉链只属于正面；黑眼睛、5 条鳃线、橙色阀门只属于侧面；背部尾鳍只属于背面。看不见的细节应隐藏，不能挪到错误位置。 - Moderate_Inflation_Silhouette: 蓝白色块 / 人体体型包络; 锁定四视图共同的人穿服体型和偏青的柔和蓝色尼龙：充气外壳只比真人肩宽和躯干略宽，整体偏扁、偏软、略微蔫皱，不能变成高饱和亮蓝、巨大圆顶头、竖直胶囊身体、桶状身体、站立气球或吉祥物外壳；保留上宽下收、腰胯收窄、两条独立裤腿、脚套褶皱和黑鞋露出。两侧手鳍必须贴近身体自然下垂或小幅外展，不能横向拉平成飞机翅膀、滑翔翼或超宽大鳍。 - Body_Volume_Envelope: 体积包络 / 身宽比例; 正面白色腹部宽度约占身体总宽 45%-55%；头部宽高、躯干宽度、手鳍长度和侧面厚度不得超过四视图参考；身体要接近轻度欠充气的柔软尼龙套服，侧面躯干是可穿戴服厚度，不是竖直胶囊、圆柱气球或饱满鱼雷；背面不能膨胀成无结构圆柱。 - Shark_Underinflated_Fin_Color_Hard_Lock: Shark volume / color / fin hard lock; Hard fail if the shark becomes a huge vertical capsule, torpedo, cylinder balloon, giant mascot shell, glossy display prop, vivid/electric/cobalt blue body, or a fully taut overinflated tube. It must stay muted cyan-blue nylon, human-scale, lightly underinflated, softer, flatter, slightly sagging and wrinkled. For a front camera, preserve the uploaded front-view outline and imperfect nylon contour instead of making a cleaner symmetric studio silhouette; keep the blue side border modest, the long white belly panel dominant, and the waist-to-leg transition close to the reference. The side hand fins must stay short, fabric-soft, close to the body or only mildly angled outward; never stretch into horizontal airplane wings, glider wings, cape wings, huge paddles, manta-ray wings, or an extra-wide silhouette. Forbidden: no subtitles, no signboards, no price tags, no CTA text, no logos, no new stickers, no product redesign. The first frame and later frames must preserve the same wearable inflatable product identity, human-scale volume, material wrinkles, seams, zipper, valves, appendages, shoes, and view-correct component placement. No subtitles, signs, price tags, CTA, logos, stickers, or post-production sales text. No large turn, no jump, no run, no fall, no fast zoom, no product-obscuring props. Show 2-3 readable visual action beats from the storyboard path. The result must not collapse into a static micro-animation."
+            - button "生成视频" [ref=e361] [cursor=pointer]:
+              - img [ref=e362]
+              - text: 生成视频
+            - generic [ref=e365]:
+              - generic [ref=e366]:
+                - strong [ref=e367]: 真实进度
+                - generic [ref=e368]: 5 条事件
+              - generic [ref=e369]:
+                - article [ref=e370]:
+                  - generic [ref=e372]:
+                    - generic [ref=e373]: job.started
+                    - strong [ref=e374]: 执行包预检
+                    - generic [ref=e375]: 任务已创建，等待执行真实步骤。
+                - article [ref=e376]:
+                  - generic [ref=e378]:
+                    - generic [ref=e379]: tool.started
+                    - strong [ref=e380]: 提交前预检
+                    - generic [ref=e381]: 检查分镜数量、文字禁用项、动作路径和失败分镜。
+                - article [ref=e382]:
+                  - generic [ref=e384]:
+                    - generic [ref=e385]: tool.completed
+                    - strong [ref=e386]: 预检通过
+                    - generic [ref=e387]: 镜头路径：front -> front_three_quarter -> front
+                - article [ref=e388]:
+                  - generic [ref=e390]:
+                    - generic [ref=e391]: artifact.created
+                    - strong [ref=e392]: 视频执行包已编译
+                    - generic [ref=e393]: 视频页将使用这份执行包一次性提交给视频模型。
+                - article [ref=e394]:
+                  - generic [ref=e396]:
+                    - generic [ref=e397]: job.completed
+                    - strong [ref=e398]: 执行包完成
+                    - generic [ref=e399]: 可以进入视频生成。

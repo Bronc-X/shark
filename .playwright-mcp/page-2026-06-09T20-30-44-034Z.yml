@@ -1,0 +1,100 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e6]:
+      - img [ref=e8]
+      - generic [ref=e10]:
+        - strong [ref=e11]: Product Lock Video Studio
+        - generic [ref=e12]: 四视图锁定 - 剧情分镜 - 视频生成
+  - generic [ref=e13]:
+    - complementary [ref=e14]:
+      - generic [ref=e15]:
+        - generic [ref=e16]:
+          - generic [ref=e17]: Current Run
+          - img [ref=e18]
+        - strong [ref=e23]: 鲨鱼充气服
+        - generic [ref=e24]: 0/4 核心视图 - 0 辅助角度
+      - generic [ref=e25]:
+        - button "上传 正面、左侧、右侧、背面四张核心图 01" [ref=e26] [cursor=pointer]:
+          - img [ref=e28]
+          - generic [ref=e31]:
+            - strong [ref=e32]: 上传
+            - generic [ref=e33]: 正面、左侧、右侧、背面四张核心图
+          - generic [ref=e34]: "01"
+        - button "分镜 先生成剧情意图，再生成可预检分镜 02" [ref=e35] [cursor=pointer]:
+          - img [ref=e37]
+          - generic [ref=e41]:
+            - strong [ref=e42]: 分镜
+            - generic [ref=e43]: 先生成剧情意图，再生成可预检分镜
+          - generic [ref=e44]: "02"
+        - button "视频 通过执行包预检后一次提交 03" [ref=e45] [cursor=pointer]:
+          - img [ref=e47]
+          - generic [ref=e49]:
+            - strong [ref=e50]: 视频
+            - generic [ref=e51]: 通过执行包预检后一次提交
+          - generic [ref=e52]: "03"
+      - button "新建流程" [ref=e53] [cursor=pointer]
+      - region "历史记录" [ref=e54]:
+        - generic [ref=e55]:
+          - generic [ref=e56]:
+            - generic [ref=e57]: 历史记录
+            - strong [ref=e58]: 0 条
+          - button "清空历史记录" [disabled] [ref=e59]:
+            - img [ref=e60]
+        - generic [ref=e64]: 暂无记录
+    - main [ref=e65]:
+      - generic [ref=e67]:
+        - generic [ref=e68]:
+          - generic [ref=e69]: 第 1 步
+          - heading "上传产品四视图" [level=1] [ref=e70]
+        - generic [ref=e71]: 核心四视图上传后才进入剧情和分镜。正面、左侧、右侧、背面用于锁定尺寸、比例、外形和拓扑；选择本地预设产品时，已保存的辅助角度会在后台自动作为一致性证据进入模型。
+        - generic [ref=e73]:
+          - text: 产品类型
+          - combobox "产品类型" [ref=e74]:
+            - option "鲨鱼充气服" [selected]
+            - option "奶牛充气服"
+            - option "灰色老鼠充气服"
+            - option "青蛙充气服"
+            - option "相扑充气服"
+        - generic [ref=e75]:
+          - strong [ref=e76]: 核心四视图
+          - generic [ref=e77]: 必填，用于后台提取产品结构
+        - generic [ref=e78]:
+          - article [ref=e79]:
+            - generic [ref=e80] [cursor=pointer]:
+              - button "正面图 FRONT" [ref=e81]
+              - generic [ref=e82]:
+                - img "正面图" [ref=e83]
+                - emphasis [ref=e84]: FRONT
+            - strong [ref=e85]: 正面图
+            - generic [ref=e86]: shark-front.png
+            - generic [ref=e87]: 本地预设
+          - article [ref=e88]:
+            - generic [ref=e89] [cursor=pointer]:
+              - button "左侧图 LEFT" [ref=e90]
+              - generic [ref=e91]:
+                - img "左侧图" [ref=e92]
+                - emphasis [ref=e93]: LEFT
+            - strong [ref=e94]: 左侧图
+            - generic [ref=e95]: shark-left.png
+            - generic [ref=e96]: 本地预设
+          - article [ref=e97]:
+            - generic [ref=e98] [cursor=pointer]:
+              - button "右侧图 RIGHT" [ref=e99]
+              - generic [ref=e100]:
+                - img "右侧图" [ref=e101]
+                - emphasis [ref=e102]: RIGHT
+            - strong [ref=e103]: 右侧图
+            - generic [ref=e104]: shark-right.png
+            - generic [ref=e105]: 本地预设
+          - article [ref=e106]:
+            - generic [ref=e107] [cursor=pointer]:
+              - button "背面图 BACK" [ref=e108]
+              - generic [ref=e109]:
+                - img "背面图" [ref=e110]
+                - emphasis [ref=e111]: BACK
+            - strong [ref=e112]: 背面图
+            - generic [ref=e113]: shark-back.jpg
+            - generic [ref=e114]: 本地预设
+        - button "素材上传完成" [disabled] [ref=e116]:
+          - img [ref=e117]
+          - text: 素材上传完成

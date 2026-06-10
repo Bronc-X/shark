@@ -7,7 +7,7 @@
     "dev": "vite --host 0.0.0.0",
     "dev:api": "node server/index.js",
     "build": "tsc -b && vite build",
-    "test:baseline": "npm run build && node scripts/baseline-check.mjs",
+    "test:baseline": "npm run build && node scripts/baseline-check.mjs && node scripts/baseline-ui-flow.mjs",
     "preview": "vite preview --host 0.0.0.0"
   },
   "dependencies": {

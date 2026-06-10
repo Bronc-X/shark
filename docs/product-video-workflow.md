@@ -1,27 +1,39 @@
-# Product-Consistency-First Four-View Image-to-Video Workflow
+# Product-Consistency-First Storyboard Video Workflow
 
 ## Goal
 
-This project has one fixed product goal: generate ecommerce product videos while preserving product identity before motion, scene richness, or duration.
+This project has one fixed product goal: generate short ecommerce-style product videos for the five preset wearable inflatable costumes while preserving product identity and still delivering a readable action beat.
 
 Priority order:
 
 1. Product consistency
-2. Interesting motion
-3. Rich scene
-4. Longer duration
+2. Video completion: readable motion, prop interaction, and gag payoff
+3. Scene clarity
+4. Duration
 
-If motion or scene richness conflicts with product fidelity, product fidelity wins.
+If motion would damage product fidelity, adapt the motion to the closest safe visible version. Do not drop the action entirely, and do not collapse the clip into a barely moving pose.
+
+## Current Scope
+
+The long-lived product set is fixed:
+
+- Shark inflatable costume
+- Cow inflatable costume
+- Gray mouse inflatable costume
+- Frog inflatable costume
+- Sumo inflatable costume
+
+Because the product set is fixed, the current workflow does not collect product selling points, price, SKU, discount, channel targeting, CTA, subtitles, signs, captions, overlays, or prompt cards. Reference-video recreation is also out of scope until the five products have strong internal sample videos.
 
 ## Visible Workflow
 
-Only four user-facing steps are exposed:
+Only three user-facing steps are exposed:
 
 ```text
-Upload four views -> Generate first frame -> Generate video -> QA video
+Upload four views -> Story intent and storyboards -> Generate video
 ```
 
-The product-lock step is internal and automatic. It must not appear as a separate user step, and users should not click through a redundant product-lock confirmation. Users approve the generated first frame instead.
+Product locking is internal. The user does not approve a hidden lock table. The expensive video model is gated by a preflighted video execution package built from confirmed story intent, selected storyboards, product locks, and motion mode.
 
 ## 1. Four-View Upload
 
@@ -36,7 +48,7 @@ There is no primary image plus optional reference among the core views. All four
 
 Rules:
 
-- Front, left-side, right-side, and back images are required before first-frame generation.
+- Front, left-side, right-side, and back images are required before story intent and storyboard generation.
 - Uploading only the front image must not advance the workflow.
 - The frontend sends `image_urls` with exactly four readable images.
 - `image_urls` has a fixed semantic order: `image_urls[0]` is front, `image_urls[1]` is left side, `image_urls[2]` is right side, and `image_urls[3]` is back.
@@ -53,136 +65,115 @@ The contract includes:
 - Category lock: the product remains a wearable inflatable costume.
 - Four-view topology: front, left side, right side, and back views define physical placement.
 - Fragile details: valve, face window, zipper, tail fin, gill stripes, shoes, wrinkles, seams. Preset auxiliary support views strengthen these local locks only.
-- Forbidden changes: no redraw, averaging, collage, relocation, duplication, removal, resizing, or restyling.
+- Forbidden changes: no redraw, averaging, collage, relocation, duplication, removal, resizing, restyling, readable text, logos, or new accessories.
 - Volume envelope: preserve size, proportion, thickness, and medium-inflated silhouette.
 
 The four views are topology maps for the same physical product, not collage material.
 
-## 3. First Frame
+## 3. Story Intent
 
-The first-frame model solves only this task:
+Before generating storyboards, the system calls the prompt model to create or revise one story/action intent. The user may leave the direction empty, write a rough direction, or ask the model to modify the generated intent.
 
-```text
-Create one product-in-scene image while preserving the product structure defined by all four views.
-```
+Story intent output must include:
 
-Rules:
+- A compact story title.
+- One coherent action premise.
+- A scene anchor.
+- Three to five visible beats.
+- Product risk notes.
 
-- Use the four uploaded core images as equal topology constraints.
-- Use preset `support_image_urls` only as auxiliary same-product evidence.
-- Product consistency outranks the user scene prompt.
-- Do not average four images into a new product.
-- Do not combine all visible details into an impossible surface.
-- Choose one physically valid camera family: front, left side, right side, or rear.
-- Hide details that are not visible from the chosen angle instead of moving them.
-- Keep the full product visible from the chosen camera and avoid cropping physically visible critical details.
-- Do not force hidden side or rear details into a front-facing frame. For example, the side valve may be hidden or only barely visible in a front camera, and the rear tail fin should stay hidden unless the camera is rear-facing.
+Story intent must not include product sales copy, price, SKU, discount, channel CTA, subtitles, signs, captions, prompt overlays, or post-production text.
 
-## 4. First-Frame Review
+## 4. Storyboard Generation
 
-The generated first frame must be approved before video generation.
+Storyboards are generated from the confirmed story intent plus four-view product locks. They are cheap enough to regenerate multiple times and should absorb the uncertainty that previously reached the video model too late.
 
-Review checklist:
+Storyboard rules:
 
-- Same wearable inflatable product.
-- Same size, proportion, silhouette, thickness, and inflation level.
-- Critical details are present and in the correct physical locations, including left/right side asymmetry and valve direction.
-- No invented limbs, fins, tails, valves, windows, mouths, teeth, logos, or accessories.
-- No key product detail is cropped or hidden by the scene.
+- Generate multiple candidates from the same story intent.
+- Select at least three and no more than five storyboards for the execution package.
+- Each selected storyboard must belong to the same product, scene, and story.
+- Each storyboard must carry an action beat, view angle, and check result.
+- Hidden side or rear details must stay hidden unless the chosen camera physically reveals them.
+- Do not add subtitles, signs, labels, price tags, CTA text, logos, stickers, or readable text anywhere in the scene or on the product.
 
-All critical checklist items must be explicitly judged as pass or fail before the first frame can be approved. Any failed critical item means the first frame fails and must be regenerated; do not approve by leaving failed details unchecked.
+## 5. Preflight And Execution Package
 
-If the first frame fails, do not proceed to video.
+Checks happen before video generation. They are not a final fake QA score.
 
-## 5. Video
+Preflight verifies:
 
-The video model animates the approved first frame only. It does not reinterpret the product.
+- The selected storyboard count is valid.
+- No selected storyboard is marked `fail`.
+- The storyboards share one product identity, one scene, and one action path.
+- The camera path is physically compatible with the four-view topology.
+- The prompt and storyboards contain no text-overlay, sales-copy, CTA, price, logo, or sign requirement.
+- A start storyboard and an end storyboard are clear.
 
-The approved first frame is the direct video media input. The four views remain a text contract and metadata lock unless the selected video API explicitly supports extra visual references. To avoid exposing unverified sides, keep the camera inside the approved first-frame view family by default.
+Only a passing preflight can compile a `video_execution_package`. The package includes the selected storyboard images, story intent, product locks, motion mode, camera path, final video prompt, and risk notes.
 
-Default high-consistency motion budget:
+## 6. Video Generation
 
-- 0-8 degrees rotation
-- Tiny bounce
-- Small fin/arm movement
-- Tiny one-step shuffle
-- No turn-around, long walk, jump, fast dance, scene cut, or unapproved new angle
+The video model receives the execution package in one request. Video generation should be treated as expensive and should not be triggered by storyboard generation alone.
 
-The video prompt must inherit:
+The video request must inherit:
 
-- Approved first frame
-- Four-core-view hard product lock
-- Wearable inflatable category lock
-- View topology lock
-- Volume envelope lock
-- User action prompt at lower priority than product fidelity
+- Selected storyboard anchor image.
+- Four-core-view hard product lock.
+- Wearable inflatable category lock.
+- View topology lock.
+- Volume envelope lock.
+- Story intent and selected beat order.
+- Camera path and motion mode from the preflighted package.
 
-If the action conflicts with fidelity, ignore the action.
-
-## 6. QA And Retry
-
-Review at least five points:
-
-- 0%
-- 25%
-- 50%
-- 75%
-- 100%
-
-Pass criteria:
-
-- Product accuracy at least 90.
-- Motion interest target at least 70.
-- Scene richness target at least 60.
-- Duration is informational only.
-
-If product accuracy fails, retry by reducing motion, simplifying scene, using a more static camera, strengthening fragile-detail locks, and shortening duration if needed.
-
-If the scene is good but the product drifts, the generation fails.
+If the action conflicts with fidelity, preserve the product shell, proportions, and component ownership while adapting the action to the nearest safe visible version. Do not ignore the action, and do not generate a nearly static clip.
 
 ## Shark Costume Default Locks
 
 Front:
 
-- White belly panel
-- Horizontal transparent face window
-- Vertical zipper below the window
-- Bright blue border
-- White inner arm-fin panels
-- Blue foot covers and black shoes
+- White belly panel.
+- Horizontal transparent face window.
+- Vertical zipper below the window.
+- Bright blue border.
+- White inner arm-fin panels.
+- Blue foot covers and black shoes.
 
 Left / Right Sides:
 
-- Exactly one black circular eye
-- Exactly five black curved gill stripes
-- Orange circular blower valve on the correct side waist, with correct direction and height
-- Stable side fins, side seams, side thickness, and left/right asymmetry
+- Exactly one black circular eye.
+- Exactly five black curved gill stripes.
+- Orange circular blower valve on the correct side waist, with correct direction and height.
+- Stable side fins, side seams, side thickness, and left/right asymmetry.
 
 Back:
 
-- Plain blue back
-- Center back seam
-- Center rear tail fin
-- Back volume must not become an unstructured cylinder
+- Plain blue back.
+- Center back seam.
+- Center rear tail fin.
+- Back volume must not become an unstructured cylinder.
 
 Preset Auxiliary / Local Evidence:
 
-- Fabric wrinkles
-- Seam tension
-- Valve mesh
-- Transparent face-window reflections
-- Zipper and stitched edges
+- Fabric wrinkles.
+- Seam tension.
+- Valve mesh.
+- Transparent face-window reflections.
+- Zipper and stitched edges.
 
 ## Engineering Contract
 
 Frontend:
 
+- Three steps: upload, storyboard, video.
 - Four parallel upload cards.
 - Completion disabled until front, left-side, right-side, and back images exist.
 - No user-facing detail-image upload is exposed. Long-term product auxiliary views are attached automatically from the local preset.
 - Image generation and text prompt generation APIs are fixed backend configuration. The UI must not ask users to enter the image/text API key or base URL.
-- Video generation API controls may remain in the UI because the video service can be switched independently.
-- Changing product images, product type, scene, or aspect ratio invalidates old first frame, video, and QA state.
+- The story intent UI calls the prompt model and supports model-driven revision.
+- The storyboard UI can regenerate candidates before any video submission.
+- The video page uses a read-only final prompt from the execution package.
+- Changing product images, product type, story intent, selected storyboards, scene, motion mode, or aspect ratio invalidates old storyboards, execution package, video, and status.
 - Product-lock step is hidden.
 - Technical URL fields are hidden from users.
 - Image previews use `object-fit: contain`.
@@ -190,17 +181,20 @@ Frontend:
 Backend:
 
 - Image generation and prompt generation use backend `IMAGE_TEXT_BASE_URL` / `IMAGE_TEXT_API_KEY`; this credential must not be passed through browser forms.
-- `/api/first-frame` validates exactly four core `image_urls`.
-- `/api/first-frame` labels the four core images with their fixed view roles before sending them to multimodal image generation.
-- `/api/first-frame` may accept preset `support_image_urls` as same-product local-evidence supplements.
+- `/api/product-locks` validates exactly four core `image_urls` and returns structured product locks.
+- `/api/story-intent` generates or revises story/action intent without sales copy or text overlays.
+- `/api/storyboards` requires four core images, a story intent, and product locks before generating storyboard candidates.
+- `/api/video-package` runs storyboard preflight and returns the video execution package.
+- `/api/video` rejects requests that do not include a passing `video_execution_package`.
 - `foreground_source_url` is not accepted.
-- Prompt states that four views are topology maps, not collage requirements.
-- Prompt states not to average four views into a new product.
-- Prompt states not to force physically hidden side or rear details into the chosen camera angle.
-- Video prompt inherits approved first frame and four-view product lock.
+- Prompts state that four views are topology maps, not collage requirements.
+- Prompts state not to average four views into a new product.
+- Prompts state not to force physically hidden side or rear details into the chosen camera angle.
+- Video prompt inherits the selected storyboard path and four-view product lock.
 
 Validation:
 
 - Run `npm run test:baseline`.
-- Browser-check four visible steps, five local product presets, four core parallel upload cards, no detail-image upload area, disabled completion, hidden product-lock step, hidden URL fields, and no horizontal overflow.
-- API-check fewer than four images are rejected, and four readable images pass four-view validation before API-key validation.
+- Browser-check the upload -> story intent -> storyboard -> execution-package -> explicit video submission path.
+- Verify `/api/video` is not submitted before `/api/video-package` and `/api/video-safety` pass.
+- Browser-check five local product presets, four core parallel upload cards, no detail-image upload area, disabled completion, hidden product-lock step, hidden URL fields, and no horizontal overflow.

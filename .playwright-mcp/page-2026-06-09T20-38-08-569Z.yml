@@ -1,0 +1,181 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e6]:
+      - img [ref=e8]
+      - generic [ref=e10]:
+        - strong [ref=e11]: Product Lock Video Studio
+        - generic [ref=e12]: 四视图锁定 - 剧情分镜 - 视频生成
+  - generic [ref=e13]:
+    - complementary [ref=e14]:
+      - generic [ref=e15]:
+        - generic [ref=e16]:
+          - generic [ref=e17]: Current Run
+          - img [ref=e18]
+        - strong [ref=e23]: 鲨鱼充气服
+        - generic [ref=e24]: 4/4 核心视图 - 0 辅助角度
+      - generic [ref=e25]:
+        - button "上传 正面、左侧、右侧、背面四张核心图 OK" [ref=e119] [cursor=pointer]:
+          - img [ref=e28]
+          - generic [ref=e31]:
+            - strong [ref=e32]: 上传
+            - generic [ref=e33]: 正面、左侧、右侧、背面四张核心图
+          - generic [ref=e34]: OK
+        - button "分镜 先生成剧情意图，再生成可预检分镜 02" [ref=e35] [cursor=pointer]:
+          - img [ref=e37]
+          - generic [ref=e41]:
+            - strong [ref=e42]: 分镜
+            - generic [ref=e43]: 先生成剧情意图，再生成可预检分镜
+          - generic [ref=e44]: "02"
+        - button "视频 通过执行包预检后一次提交 03" [ref=e45] [cursor=pointer]:
+          - img [ref=e47]
+          - generic [ref=e49]:
+            - strong [ref=e50]: 视频
+            - generic [ref=e51]: 通过执行包预检后一次提交
+          - generic [ref=e52]: "03"
+      - button "新建流程" [ref=e53] [cursor=pointer]
+      - region "历史记录" [ref=e54]:
+        - generic [ref=e55]:
+          - generic [ref=e56]:
+            - generic [ref=e57]: 历史记录
+            - strong [ref=e58]: 0 条
+          - button "清空历史记录" [disabled] [ref=e59]:
+            - img [ref=e60]
+        - generic [ref=e64]: 暂无记录
+    - main [ref=e65]:
+      - generic [ref=e121]:
+        - generic [ref=e122]:
+          - generic [ref=e123]: 第 2 步
+          - heading "剧情意图与候选分镜" [level=1] [ref=e124]
+        - generic [ref=e125]: 视频提交前先收敛剧情、动作路径、入选分镜和产品锁点；执行包预检未通过时不会提交视频模型。
+        - generic [ref=e126]:
+          - generic [ref=e127]:
+            - generic [ref=e128]:
+              - generic [ref=e129]:
+                - generic [ref=e130]: 剧情 / 动作意图
+                - button "调用模型生成剧情意图" [ref=e131] [cursor=pointer]:
+                  - img [ref=e266]
+              - generic [ref=e135]:
+                - generic [ref=e136]:
+                  - generic [ref=e137]: 方向
+                  - textbox "方向" [ref=e138]:
+                    - /placeholder: 可留空，也可以写一句方向
+                    - text: 超市零食货架前，鲨鱼充气服伸手想拿薯片，手鳍碰到包装后弹性缩回，停顿一下再做一个小小的胜利姿势。动作明显但不大幅转身，不出现任何文字、字幕、举牌或价格。
+                - generic [ref=e139]:
+                  - generic [ref=e140]: 修改意见
+                  - textbox "修改意见" [ref=e141]:
+                    - /placeholder: 生成后可让模型改写
+              - generic [ref=e142]:
+                - button "生成剧情意图" [ref=e143] [cursor=pointer]:
+                  - img [ref=e269]
+                  - text: 生成剧情意图
+                - button "用模型修改" [disabled] [ref=e147]:
+                  - img [ref=e272]
+                  - text: 用模型修改
+              - generic [ref=e275]:
+                - strong [ref=e276]: 零食柜前的小试探
+                - paragraph [ref=e277]: 在干净的自助洗衣房里，滚筒洗衣机、蓝色洗衣篮和找零机作为背景，鲨鱼充气服站在零食货架前，先小幅抬起手鳍去够一包薯片，手鳍碰到包装后立刻弹性缩回，停顿半拍，再轻轻摆出一个很小的胜利姿势；全程动作克制、身体只做微幅前倾，不大幅转身，保持可见的正面白肚、透明脸窗、中线拉链和侧面细节稳定清晰。
+                - generic [ref=e278]: 自助洗衣房内的零食货架附近，背景可见滚筒洗衣机、蓝色洗衣篮、找零机和墙上的注意事项贴纸，但不出现任何可读文字
+                - generic [ref=e279]:
+                  - generic [ref=e280]: setup
+                  - generic [ref=e281]: tiny reversal
+                  - generic [ref=e282]: recovery pose
+            - generic [ref=e151]:
+              - generic [ref=e152]:
+                - generic [ref=e153]:
+                  - strong [ref=e154]: 正面图
+                  - generic [ref=e155]: FRONT
+                - img "正面图" [ref=e156]
+              - generic [ref=e157]:
+                - generic [ref=e158]:
+                  - strong [ref=e159]: 左侧图
+                  - generic [ref=e160]: LEFT
+                - img "左侧图" [ref=e161]
+              - generic [ref=e162]:
+                - generic [ref=e163]:
+                  - strong [ref=e164]: 右侧图
+                  - generic [ref=e165]: RIGHT
+                - img "右侧图" [ref=e166]
+              - generic [ref=e167]:
+                - generic [ref=e168]:
+                  - strong [ref=e169]: 背面图
+                  - generic [ref=e170]: BACK
+                - img "背面图" [ref=e171]
+            - generic [ref=e172]:
+              - button "setup front setup 鲨鱼充气服面向货架站稳，身体微微前倾，手鳍慢慢抬向薯片包装边缘做试探性接触。" [ref=e317] [cursor=pointer]:
+                - img "setup" [ref=e318]
+                - generic [ref=e319]: front
+                - strong [ref=e320]: setup
+                - generic [ref=e321]: 鲨鱼充气服面向货架站稳，身体微微前倾，手鳍慢慢抬向薯片包装边缘做试探性接触。
+              - button "tiny reversal front_three_quarter tiny reversal 手鳍碰到包装后弹性缩回，身体轻轻往后回一点点，形成一个明显但很小的受力回弹。" [ref=e322] [cursor=pointer]:
+                - img "tiny reversal" [ref=e323]
+                - generic [ref=e324]: front_three_quarter
+                - strong [ref=e325]: tiny reversal
+                - generic [ref=e326]: 手鳍碰到包装后弹性缩回，身体轻轻往后回一点点，形成一个明显但很小的受力回弹。
+              - button "recovery pose front recovery pose 短暂停顿后，鲨鱼充气服做一个小小的胜利姿势，手鳍轻抬、身体微挺，保持站姿稳定。" [ref=e327] [cursor=pointer]:
+                - img "recovery pose" [ref=e328]
+                - generic [ref=e329]: front
+                - strong [ref=e330]: recovery pose
+                - generic [ref=e331]: 短暂停顿后，鲨鱼充气服做一个小小的胜利姿势，手鳍轻抬、身体微挺，保持站姿稳定。
+            - generic [ref=e350]:
+              - strong [ref=e351]: 执行包预检：fail
+              - generic [ref=e352]: front -> front_three_quarter -> front
+              - generic [ref=e353]: Text overlays, signboards, price, CTA, logo, and sticker requirements are out of scope.
+              - generic [ref=e354]: Motion path may be too large for product consistency.
+          - generic [ref=e178]:
+            - heading "分镜参数" [level=3] [ref=e179]
+            - generic [ref=e180]:
+              - text: 提示词模型
+              - textbox "提示词模型" [ref=e181]:
+                - /placeholder: gpt-5.4-mini
+                - text: gpt-5.4-mini
+            - generic [ref=e182]:
+              - text: 分镜模型
+              - textbox "分镜模型" [ref=e183]:
+                - /placeholder: gpt-image-2
+                - text: gpt-image-2
+            - button "测试分镜接口" [ref=e184] [cursor=pointer]:
+              - img [ref=e185]
+              - text: 测试分镜接口
+            - generic [ref=e188]:
+              - strong [ref=e189]: 图片 / 文字接口
+              - generic [ref=e190]: 后台固定配置
+            - generic [ref=e191]:
+              - text: 清晰度
+              - generic [ref=e192]: 1080p
+            - generic [ref=e193]:
+              - text: 画面比例
+              - generic [ref=e194]:
+                - button "画面比例 1:1 9:16" [ref=e195] [cursor=pointer]: 16:9
+                - button "1:1" [ref=e197] [cursor=pointer]: 1:1
+                - button "9:16" [ref=e199] [cursor=pointer]: 9:16
+            - generic [ref=e201]:
+              - button "高一致性" [ref=e202] [cursor=pointer]
+              - button "平衡" [ref=e203] [cursor=pointer]
+              - button "创意" [ref=e204] [cursor=pointer]
+            - button "生成候选分镜" [ref=e205] [cursor=pointer]:
+              - img [ref=e355]
+              - text: 生成候选分镜
+            - button "预检并编译执行包" [ref=e209] [cursor=pointer]:
+              - img [ref=e358]
+              - text: 预检并编译执行包
+            - generic [ref=e361]: Text overlays, signboards, price, CTA, logo, and sticker requirements are out of scope.
+            - generic [ref=e214]:
+              - generic [ref=e215]:
+                - strong [ref=e216]: 真实进度
+                - generic [ref=e217]: 3 条事件
+              - generic [ref=e218]:
+                - article [ref=e362]:
+                  - generic [ref=e364]:
+                    - generic [ref=e365]: job.started
+                    - strong [ref=e366]: 执行包预检
+                    - generic [ref=e367]: 任务已创建，等待执行真实步骤。
+                - article [ref=e368]:
+                  - generic [ref=e370]:
+                    - generic [ref=e371]: tool.started
+                    - strong [ref=e372]: 提交前预检
+                    - generic [ref=e373]: 检查分镜数量、文字禁用项、动作路径和失败分镜。
+                - article [ref=e374]:
+                  - generic [ref=e376]:
+                    - generic [ref=e377]: step.failed
+                    - strong [ref=e378]: 执行包预检失败
+                    - generic [ref=e379]: Text overlays, signboards, price, CTA, logo, and sticker requirements are out of scope.
