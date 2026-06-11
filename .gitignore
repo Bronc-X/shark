@@ -6,6 +6,9 @@ dist/
 tmp-pw-runtime/
 test-results/
 .codex-video-work/
+.codex-run/
+.playwright-mcp/
+.runtime-logs/
 *.log
 .env
 .env.*

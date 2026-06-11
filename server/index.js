@@ -1,30 +1,50 @@
 import http from "node:http";
-import { existsSync, readFileSync } from "node:fs";
+import { createHmac } from "node:crypto";
+import { spawn } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
+import ffmpegPath from "ffmpeg-static";
+import ffprobeStatic from "ffprobe-static";
+
+function loadEnvFile(fileRef) {
+  if (!existsSync(fileRef)) return;
+  const lines = readFileSync(fileRef, "utf8").split(/\r?\n/);
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const match = trimmed.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+    if (!match) continue;
+    const [, key, rawValue] = match;
+    if (process.env[key]) continue;
+    process.env[key] = rawValue.replace(/^['"]|['"]$/g, "");
+  }
+}
 
 function loadLocalEnv() {
+  const sharedEnvFile = process.env.VIDEO_PLATFORM_SHARED_ENV || new URL("../../图生视频平台.shared.env.local", import.meta.url);
+  loadEnvFile(sharedEnvFile);
   for (const fileName of [".env.local", ".env"]) {
     const fileUrl = new URL(`../${fileName}`, import.meta.url);
-    if (!existsSync(fileUrl)) continue;
-    const lines = readFileSync(fileUrl, "utf8").split(/\r?\n/);
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith("#")) continue;
-      const match = trimmed.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
-      if (!match) continue;
-      const [, key, rawValue] = match;
-      if (process.env[key]) continue;
-      process.env[key] = rawValue.replace(/^['"]|['"]$/g, "");
-    }
+    loadEnvFile(fileUrl);
   }
 }
 
 loadLocalEnv();
 
-const PORT = Number(process.env.PORT || 8787);
+const PORT = Number(process.env.PORT || 6000);
 const TOAPIS_BASE_URL = (process.env.TOAPIS_BASE_URL || "https://toapis.com/v1").replace(/\/+$/, "");
 const TOAPIS_API_KEY = process.env.TOAPIS_API_KEY || "";
 const IMAGE_TEXT_BASE_URL = (process.env.IMAGE_TEXT_BASE_URL || "https://aicanapi.com/v1").replace(/\/+$/, "");
 const IMAGE_TEXT_API_KEY = process.env.IMAGE_TEXT_API_KEY || TOAPIS_API_KEY;
+const TTS_PROVIDER = process.env.TTS_PROVIDER || "aican";
+const TTS_BASE_URL = (process.env.TTS_BASE_URL || IMAGE_TEXT_BASE_URL).replace(/\/+$/, "");
+const TTS_API_KEY = process.env.TTS_API_KEY || IMAGE_TEXT_API_KEY;
+const TTS_MODEL = process.env.TTS_MODEL || "gpt-4o-audio-preview";
+const TTS_VOICE = process.env.TTS_VOICE || "alloy";
+const TTS_VOICE_OPTIONS = {
+  female: process.env.TTS_FEMALE_VOICE || "alloy",
+  male: process.env.TTS_MALE_VOICE || "verse",
+};
 const VIDEO_BASE_URL = (process.env.VIDEO_BASE_URL || TOAPIS_BASE_URL).replace(/\/+$/, "");
 const VIDEO_API_KEY = process.env.VIDEO_API_KEY || TOAPIS_API_KEY;
 const VIDEO_MODEL = process.env.VIDEO_MODEL || "";
@@ -32,6 +52,11 @@ const TOAPIS_VIDEO_MODEL = process.env.TOAPIS_VIDEO_MODEL || VIDEO_MODEL || "kli
 const WISECH_VIDEO_BASE_URL = (process.env.WISECH_VIDEO_BASE_URL || "https://ai.wisech.com/v1").replace(/\/+$/, "");
 const WISECH_VIDEO_API_KEY = process.env.WISECH_VIDEO_API_KEY || "";
 const WISECH_VIDEO_MODEL = process.env.WISECH_VIDEO_MODEL || "yunshu-2-0-260128-1080p";
+const KLING_VIDEO_BASE_URL = (process.env.KLING_VIDEO_BASE_URL || "https://api-singapore.klingai.com").replace(/\/+$/, "");
+const KLING_VIDEO_API_KEY = process.env.KLING_VIDEO_API_KEY || "";
+const KLING_ACCESS_KEY = process.env.KLING_ACCESS_KEY || process.env.KLINGAI_ACCESS_KEY || "";
+const KLING_SECRET_KEY = process.env.KLING_SECRET_KEY || process.env.KLINGAI_SECRET_KEY || "";
+const KLING_VIDEO_MODEL = process.env.KLING_VIDEO_MODEL || "kling-v3-omni";
 const SHISHI_VIDEO_BASE_URL = (process.env.SHISHI_VIDEO_BASE_URL || "https://api.shishikeji.com").replace(/\/+$/, "");
 const SHISHI_VIDEO_API_KEY = process.env.SHISHI_VIDEO_API_KEY || "";
 const SHISHI_VIDEO_MODEL = process.env.SHISHI_VIDEO_MODEL || "2.0";
@@ -49,6 +74,12 @@ const RECENT_PROMPT_SCENE_LIMIT = 8;
 const UPSTREAM_TIMEOUT_MS = 360000;
 const VIDEO_UPSTREAM_TIMEOUT_MS = 90000;
 const MAX_JSON_BODY_BYTES = 50 * 1024 * 1024;
+const LOCAL_HISTORY_FILE = process.env.VIDEO_PLATFORM_HISTORY_FILE || `${process.cwd()}\\.codex-run\\history-items.json`;
+const LOCAL_HISTORY_LIMIT = 30;
+const LOCAL_POST_RENDER_DIR = process.env.VIDEO_PLATFORM_RENDER_DIR || `${process.cwd()}\\.codex-run\\post-render`;
+const LOCAL_HISTORY_ASSET_DIR = process.env.VIDEO_PLATFORM_HISTORY_ASSET_DIR || `${process.cwd()}\\.codex-run\\history-assets`;
+const FFMPEG_BINARY = process.env.FFMPEG_PATH || ffmpegPath || "";
+const FFPROBE_BINARY = process.env.FFPROBE_PATH || ffprobeStatic?.path || "";
 const OPENAI_VIDEO_GENERATIONS_PATH = "/video/generations";
 const TOAPIS_VIDEO_GENERATIONS_PATH = "/videos/generations";
 const TOAPIS_IMAGE_UPLOAD_PATH = "/uploads/images";
@@ -56,6 +87,7 @@ const DASHSCOPE_IMAGE_GENERATION_PATH = "/services/aigc/multimodal-generation/ge
 const DASHSCOPE_VIDEO_SYNTHESIS_PATH = "/services/aigc/video-generation/video-synthesis";
 const VOLCENGINE_VIDEO_TASKS_PATH = "/contents/generations/tasks";
 const SHISHI_VIDEO_GENERATION_PATH = "/api/generate-video";
+const KLING_OMNI_VIDEO_PATH = "/v1/videos/omni-video";
 const TOAPIS_MAX_UPLOAD_IMAGE_BYTES = 10 * 1024 * 1024;
 const PROMPT_MODEL_NOT_CONFIGURED_MESSAGE = "Prompt model is not configured.";
 const PROMPT_MODEL_UNAVAILABLE_MESSAGE = "Prompt model is temporarily unavailable.";
@@ -79,6 +111,11 @@ const VIDEO_MODEL_LIMITS = {
     "yunshu-2-0-260128-1080p": { minDuration: 4, maxDuration: 15, promptSoftLimit: 5200, promptHardLimit: 6000, resolution: "1080p" },
     "yunshu-2-0-260128-720p": { minDuration: 4, maxDuration: 15, promptSoftLimit: 5200, promptHardLimit: 6000, resolution: "720p" },
   },
+  kling: {
+    default: { minDuration: 3, maxDuration: 15, promptSoftLimit: 2400, promptHardLimit: 2500, resolution: "1080p" },
+    "kling-v3-omni": { minDuration: 3, maxDuration: 15, promptSoftLimit: 2400, promptHardLimit: 2500, resolution: "1080p" },
+    "kling-video-o1": { minDuration: 3, maxDuration: 10, promptSoftLimit: 2400, promptHardLimit: 2500, resolution: "1080p" },
+  },
   toapis: {
     default: { minDuration: 4, maxDuration: 15, promptSoftLimit: 4600, promptHardLimit: 5200, resolution: "1080p" },
     "kling-v3": { minDuration: 4, maxDuration: 15, promptSoftLimit: 4600, promptHardLimit: 5200, resolution: "1080p" },
@@ -99,6 +136,98 @@ const CORE_VIEW_INPUT_ORDER = [
   "image_urls[2] = RIGHT_SIDE_VIEW",
   "image_urls[3] = BACK_VIEW",
 ].join("\n");
+
+function base64UrlEncode(value) {
+  const text = typeof value === "string" ? value : JSON.stringify(value);
+  return Buffer.from(text).toString("base64").replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
+}
+
+function hasJwtShape(value) {
+  if (typeof value !== "string") return false;
+  const parts = value.trim().split(".");
+  return parts.length === 3 && parts.every(Boolean);
+}
+
+function createKlingJwtToken(accessKey, secretKey) {
+  const now = Math.floor(Date.now() / 1000);
+  const header = { alg: "HS256", typ: "JWT" };
+  const payload = {
+    iss: accessKey,
+    exp: now + 1800,
+    nbf: now - 5,
+  };
+  const unsignedToken = `${base64UrlEncode(header)}.${base64UrlEncode(payload)}`;
+  const signature = createHmac("sha256", secretKey).update(unsignedToken).digest("base64").replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
+  return `${unsignedToken}.${signature}`;
+}
+
+function getKlingAuthState(apiKey = KLING_VIDEO_API_KEY) {
+  const tokenOrAccessKey = typeof apiKey === "string" ? apiKey.trim() : "";
+  const tokenPartCount = tokenOrAccessKey ? tokenOrAccessKey.split(".").length : 0;
+  const explicitAccessKey = KLING_ACCESS_KEY.trim();
+  const secretKey = KLING_SECRET_KEY.trim();
+
+  if (hasJwtShape(tokenOrAccessKey)) {
+    return {
+      ok: true,
+      token: tokenOrAccessKey,
+      source: "jwt",
+      tokenPartCount,
+      hasAccessKey: Boolean(explicitAccessKey),
+      hasSecretKey: Boolean(secretKey),
+    };
+  }
+
+  const accessKey = explicitAccessKey || tokenOrAccessKey;
+  if (!accessKey) {
+    return {
+      ok: false,
+      code: "KLING_ACCESS_KEY_MISSING",
+      error: "Kling AccessKey/JWT is not configured. Add KLING_ACCESS_KEY + KLING_SECRET_KEY, or set KLING_VIDEO_API_KEY to a 3-part JWT.",
+      tokenPartCount,
+      hasAccessKey: false,
+      hasSecretKey: Boolean(secretKey),
+    };
+  }
+
+  if (!secretKey) {
+    return {
+      ok: false,
+      code: "KLING_SECRET_KEY_MISSING",
+      error: "Kling SecretKey is missing. KLING_VIDEO_API_KEY currently looks like an AccessKey, not a 3-part JWT; add KLING_SECRET_KEY or replace KLING_VIDEO_API_KEY with a generated JWT.",
+      tokenPartCount,
+      hasAccessKey: true,
+      hasSecretKey: false,
+    };
+  }
+
+  return {
+    ok: true,
+    token: createKlingJwtToken(accessKey, secretKey),
+    source: explicitAccessKey ? "access-secret" : "api-key-secret",
+    tokenPartCount: 3,
+    hasAccessKey: true,
+    hasSecretKey: true,
+  };
+}
+
+function getKlingAuthPublicState(apiKey = KLING_VIDEO_API_KEY) {
+  const { token, ...state } = getKlingAuthState(apiKey);
+  return state;
+}
+
+function createBearerAuthHeaders(upstreamUrl, apiKey, kind = "generic") {
+  if (kind === "video" && isKlingVideoUrl(upstreamUrl)) {
+    const authState = getKlingAuthState(apiKey);
+    if (!authState.ok) {
+      const error = new Error(authState.error);
+      error.code = authState.code;
+      throw error;
+    }
+    return { Authorization: `Bearer ${authState.token}` };
+  }
+  return { Authorization: `Bearer ${apiKey}` };
+}
 const PROMPT_SCENE_BANK = [
   { title: "夜市摊位", anchor: "夜市小吃摊旁，暖色灯串、折叠桌、手写价签和塑料周转筐都在画面边缘，地面有轻微反光。" },
   { title: "物流分拣区", anchor: "电商仓库分拣台前，纸箱、扫码枪、传送带和贴着面单的包裹形成真实工作场景。" },
@@ -206,6 +335,7 @@ function resolveVideoProviderFromUrl(upstreamUrl, fallbackProvider = "") {
   if (fallback) return fallback;
   if (isShishiKejiUrl(upstreamUrl)) return "shishi";
   if (isWisechVideoUrl(upstreamUrl)) return "wisech";
+  if (isKlingVideoUrl(upstreamUrl)) return "kling";
   if (isToapisUrl(upstreamUrl)) return "toapis";
   return "toapis";
 }
@@ -232,6 +362,55 @@ function sanitizePromptRequest(payload) {
   return sanitizeApiPayload(payload);
 }
 
+function isTimedScriptLine(line) {
+  return /^\s*(?:第\s*)?\d+(?:\.\d+)?\s*(?:-|~|–|—|到|至)\s*\d+(?:\.\d+)?\s*秒?/i.test(String(line || ""));
+}
+
+function getScriptLineLabel(line) {
+  const match = String(line || "").match(/^\s*([A-Za-z\u4e00-\u9fa5]+)\s*[:：]/);
+  return match ? match[1].trim().toLowerCase() : "";
+}
+
+function stripPostProductionTextFromScript(script) {
+  const lines = String(script || "").split(/\r?\n/);
+  const output = [];
+  let skippingPostProductionBlock = false;
+  const postLabels = new Set(["字幕", "subtitle", "subtitles", "caption", "captions", "旁白", "配音", "voiceover", "vo"]);
+  const visualOrSoundLabels = new Set(["画面", "镜头", "场景", "动作", "音效", "音乐", "bgm", "sound", "sfx"]);
+
+  for (const line of lines) {
+    const label = getScriptLineLabel(line);
+    const isTiming = isTimedScriptLine(line);
+    if (isTiming) {
+      skippingPostProductionBlock = false;
+      output.push(line);
+      continue;
+    }
+    if (postLabels.has(label)) {
+      skippingPostProductionBlock = true;
+      continue;
+    }
+    if (visualOrSoundLabels.has(label)) {
+      skippingPostProductionBlock = false;
+      output.push(line);
+      continue;
+    }
+    if (skippingPostProductionBlock) continue;
+    output.push(line);
+  }
+
+  return output
+    .join("\n")
+    .replace(/^\s*(字幕|subtitle|captions?|旁白|配音|voiceover|vo)\s*[:：].*$/gim, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function getVisualScriptText(text) {
+  const stripped = stripPostProductionTextFromScript(text);
+  return stripped || String(text || "").trim();
+}
+
 function ensureVideoPromptFinalLock(productType, prompt) {
   const text = sanitizeProductText(prompt);
   if (!text) return "";
@@ -250,8 +429,36 @@ function sendJson(res, status, payload) {
   res.end(JSON.stringify(payload));
 }
 
+function sendBinary(res, status, body, headers = {}) {
+  res.writeHead(status, {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    ...headers,
+  });
+  res.end(body);
+}
+
 function createApiResponse(status, payload) {
   return { status, payload };
+}
+
+function readLocalHistoryItems() {
+  try {
+    if (!existsSync(LOCAL_HISTORY_FILE)) return [];
+    const parsed = JSON.parse(readFileSync(LOCAL_HISTORY_FILE, "utf8"));
+    return Array.isArray(parsed) ? parsed.slice(0, LOCAL_HISTORY_LIMIT) : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeLocalHistoryItems(items) {
+  const safeItems = Array.isArray(items) ? items.slice(0, LOCAL_HISTORY_LIMIT) : [];
+  const directory = LOCAL_HISTORY_FILE.replace(/[\\/][^\\/]+$/, "");
+  if (directory) mkdirSync(directory, { recursive: true });
+  writeFileSync(LOCAL_HISTORY_FILE, JSON.stringify(safeItems, null, 2), "utf8");
+  return safeItems;
 }
 
 async function readRequestBody(req) {
@@ -328,8 +535,10 @@ function pickProxyConfig(payload, fallbackPath, kind = "generic") {
       ? { baseUrl: WISECH_VIDEO_BASE_URL, apiKey: WISECH_VIDEO_API_KEY, model: WISECH_VIDEO_MODEL }
       : kind === "video" && videoProvider === "shishi"
         ? { baseUrl: SHISHI_VIDEO_BASE_URL, apiKey: SHISHI_VIDEO_API_KEY, model: SHISHI_VIDEO_MODEL }
-        : kind === "video" && videoProvider === "toapis"
-          ? { baseUrl: VIDEO_BASE_URL || TOAPIS_BASE_URL, apiKey: VIDEO_API_KEY || TOAPIS_API_KEY, model: TOAPIS_VIDEO_MODEL, path: TOAPIS_VIDEO_GENERATIONS_PATH }
+        : kind === "video" && videoProvider === "kling"
+          ? { baseUrl: KLING_VIDEO_BASE_URL, apiKey: KLING_VIDEO_API_KEY || KLING_ACCESS_KEY, model: KLING_VIDEO_MODEL, path: KLING_OMNI_VIDEO_PATH }
+          : kind === "video" && videoProvider === "toapis"
+            ? { baseUrl: VIDEO_BASE_URL || TOAPIS_BASE_URL, apiKey: VIDEO_API_KEY || TOAPIS_API_KEY, model: TOAPIS_VIDEO_MODEL, path: TOAPIS_VIDEO_GENERATIONS_PATH }
         : null;
   if (providerConfig && providerConfig.model && !upstreamPayload.model) upstreamPayload.model = providerConfig.model;
   const normalizedModel = normalizeUpstreamModel(upstreamPayload.model, kind);
@@ -583,11 +792,11 @@ function toPublicErrorMessage(message) {
 function getUpstreamConnectionFailureMessage(kind, isAbortError) {
   if (isAbortError) {
     return kind === "image"
-      ? "分镜生成服务这次处理超时，没有拿到返回结果。请稍后再试；如果连续出现，请换一个分镜模型或让管理员检查图片通道。"
+      ? "首帧生成服务这次处理超时，没有拿到返回结果。请稍后再试；如果连续出现，请换一个首帧模型或让管理员检查图片通道。"
       : "上游服务这次处理超时，没有拿到返回结果。请稍后再试。";
   }
   if (kind === "image") {
-    return "分镜生成服务这次连接中断，没有拿到上游返回。请直接再生成一次；如果连续出现，请让管理员检查 IMAGE_TEXT_BASE_URL / IMAGE_TEXT_API_KEY 或切换图片通道。";
+    return "首帧生成服务这次连接中断，没有拿到上游返回。请直接再生成一次；如果连续出现，请让管理员检查 IMAGE_TEXT_BASE_URL / IMAGE_TEXT_API_KEY 或切换图片通道。";
   }
   if (kind === "video") {
     return "视频生成服务这次连接中断，没有拿到上游返回。请稍后重试；如果连续出现，请让管理员检查当前视频通道配置。";
@@ -926,6 +1135,7 @@ function buildVideoProductVisualLocks(productType) {
       "FOUR-VIEW REFERENCES ARE TOPOLOGY MAPS, NOT COLLAGE REQUIREMENTS.",
       "CONTROLLED VIEW PATH: start from the approved first-frame camera, then allow a small physically valid front-to-three-quarter or brief side/rear glimpse when it helps the user action. Any revealed surface must match the four-view references exactly; do not invent unseen structures.",
       "Maintain view-correct placement through the whole motion. The front cow face and pink lower-belly pad stay on the front surface, the orange blower valve stays on the rear/right-side surface, the back zipper stays on the rear centerline, and the rear tail stays centered on the back only.",
+      "REAR TURN HARD LOCK: a controlled body turn is allowed and may reveal the back, but every rear-facing frame must match BACK_VIEW exactly. The rear tail must keep the same centered root, height, length, size, direction, white shape, and black tip from BACK_VIEW; never move it to the side waist, resize it, duplicate it, hide it, or convert it into a different tail. Rear black patches must keep their BACK_VIEW placement and density; do not reshuffle, redraw, simplify, or invent new rear spots during the turn.",
       "When the camera rotates, reveal and hide details according to physical visibility. A detail that is not visible from the current angle must remain hidden, not relocated.",
       "SHAPE AND VOLUME ENVELOPE LOCK:",
       "Maintain the same 155-190cm human-body envelope and low-to-medium inflated cow-costume silhouette through every frame. The costume must not become skinny, deflated, overly tall, overly round, balloon-spherical, muscular, creature-like, mascot-like, plush-like, or realistic-animal-like.",
@@ -1000,8 +1210,10 @@ function buildVideoProductVisualLocks(productType) {
 }
 
 function buildFourViewFirstFramePrompt(payload) {
-  const scenePrompt = typeof payload.scene_prompt === "string" ? sanitizeProductText(payload.scene_prompt) : "";
+  const scenePrompt = typeof payload.scene_prompt === "string" ? sanitizeProductText(getVisualScriptText(payload.scene_prompt)) : "";
   const productType = typeof payload.product_type === "string" ? sanitizeProductText(payload.product_type) : "wearable inflatable product";
+  const firstFrameBrief = extractFirstFrameBriefFromScript(scenePrompt);
+  const productAppearsInFirstFrame = firstFrameBrief ? firstFrameBriefMentionsProduct(firstFrameBrief, productType) : true;
   const lockedNodes = Array.isArray(payload.locked_nodes) ? payload.locked_nodes : [];
   const supportImageCount = Number.isFinite(Number(payload.support_image_count)) ? Number(payload.support_image_count) : 0;
   const previousFirstFrameCount = Number.isFinite(Number(payload.previous_first_frame_count)) ? Number(payload.previous_first_frame_count) : 0;
@@ -1038,12 +1250,22 @@ function buildFourViewFirstFramePrompt(payload) {
       ? `Preset auxiliary support views are also provided (${supportImageCount}). Use them only to refine same-product side/rear/local evidence such as valve position, zipper teeth, seams, wrinkles, stitching, material, and component placement. They are auxiliary evidence, not extra user-uploaded detail images and not a fifth topology surface.`
       : "No preset auxiliary support view is provided. Infer fragile local details only from the four required core views and locked-node contract.",
     "Do not average the core views into a new product, do not blend them into an impossible collage, and do not redesign the product to satisfy the scene.",
-    "Generate a single coherent first frame with one physically valid camera angle. The chosen camera may be front, left side, right side, or rear, but it must obey the corresponding topology instead of mixing all visible details.",
-    "The scene, background, lighting, floor contact, and shadows are lower priority than product identity. If the scene conflicts with product fidelity, simplify the scene and preserve the product.",
+    "ABSOLUTE NO-READABLE-TEXT RULE: do not render subtitles, captions, title cards, English words, Chinese words, decorative letters, fake glyphs, signs, labels, logos, UI text, stickers, or readable writing anywhere in the image, on the costume, on the background, or floating in the frame. User subtitle and voiceover lines are post-production assets only and must not appear visually.",
+    "Generate a single coherent first frame from the earliest scene beat in the user's script, not from the whole script and not from the product reference photos.",
+    firstFrameBrief
+      ? `FIRST FRAME BRIEF TO RENDER NOW:\n${firstFrameBrief}`
+      : "FIRST FRAME BRIEF TO RENDER NOW: use the opening visual situation from the user's script.",
+    productAppearsInFirstFrame
+      ? "The product appears in this first-frame brief, so include the product in the scripted setting and preserve its identity from the four-view references."
+      : "The product does NOT appear in this opening beat. Do not force the product into frame 1. Render the opening party/setup scene exactly as written; use the uploaded product views only as later-video subject references.",
+    "Hard fail if the output is a plain white-background catalog shot, transparent cutout, isolated product render, or copied reference pose unless the user explicitly requested that exact catalog look.",
+    "The scene, background, lighting, floor contact, and shadows are part of the first-frame task. Preserve product fidelity, but adapt the pose and environment enough that the pasted script is clearly visible in the image.",
     `Product type: ${productType}. It must remain a wearable inflatable costume/product, not a real animal, cartoon mascot, plush toy, redesigned character, or generic prop.`,
     ...buildFirstFrameProductVisualLocks(productType),
     ...buildInflatableHardwareMaterialLocks(productType),
-    "If the scene request conflicts with product fidelity, adapt the scene/action to the nearest safe visible version while keeping the product shell and view-correct component placement.",
+    productAppearsInFirstFrame
+      ? "If the scene request conflicts with product fidelity, simplify only the conflicting detail; do not erase the scene. Keep a readable environment and at least one visible action/setup from the user's script."
+      : "Because frame 1 is a setup shot without the product, prioritize the opening environment, ordinary-costume people, door/party context, and mood over product-body visibility.",
     nodeLines ? `Confirmed locked details:\n${nodeLines}` : "Confirmed locked details: preserve every visible product structure from the uploaded references.",
     previousFirstFrameCount > 0
       ? "Previous first-frame reference is supplied as the final extra image after the four core views and any preset support views. It is only for preserving the old scene, camera, passed checklist items, and unmentioned areas during targeted regeneration; it is not a new product view or new topology source."
@@ -1057,9 +1279,44 @@ function buildFourViewFirstFramePrompt(payload) {
         ].join("\n")
       : "",
     "Backend extraction priority: front view locks front proportions and front-owned components; left and right side views lock side thickness, asymmetry, side-visible components, seams and valve direction; back view locks rear silhouette, back seam/zipper, rear-owned tail/valve/components, and rear color/pattern field; preset auxiliary support views only strengthen same-product fragile local evidence.",
-    `SCENE CONTINUITY CONTEXT:\n${scenePrompt || "Keep a realistic ecommerce product-video setting."}`,
-    "Composition rule: full product body visible for the chosen camera, no crop of physically visible feet, face/head details, zipper, valve, appendages, front lower-belly pad, fins, tail, horns, ears, or other identity-critical components. Realistic ecommerce short-video still frame.",
+    `VISUAL SCRIPT FOR CONTEXT ONLY, WITH SUBTITLES AND VOICEOVER REMOVED:\n${scenePrompt || "Create a realistic ecommerce short-video setup with a visible story situation, not a studio reference photo."}`,
+    productAppearsInFirstFrame
+      ? "Composition rule: full product body visible for the chosen camera, no crop of physically visible feet, face/head details, zipper, valve, appendages, front lower-belly pad, fins, tail, horns, ears, or other identity-critical components. Make it a usable first frame for a short video: the product is in the scripted scene and ready to continue into motion."
+      : "Composition rule: render the first beat as a party/setup establishing shot. Show ordinary Halloween costumes, people chatting, and the relevant doorway/room context if present. Do not show later-beat product entrance, slow walk, dancing, close-up, or finale pose in frame 1.",
   ].join("\n\n");
+}
+
+function extractFirstFrameBriefFromScript(script) {
+  const text = typeof script === "string" ? script.trim() : "";
+  if (!text) return "";
+  const normalized = text.replace(/\r\n/g, "\n");
+  const timedBlockMatch = normalized.match(/(?:^|\n)\s*(?:\d+\s*[-~到至]\s*\d+\s*秒|第\s*\d+\s*[-~到至]\s*\d+\s*秒)[\s\S]*?(?=(?:\n\s*(?:\d+\s*[-~到至]\s*\d+\s*秒|第\s*\d+\s*[-~到至]\s*\d+\s*秒))|$)/);
+  const candidate = (timedBlockMatch?.[0] || normalized).trim();
+  return truncateTextByChars(candidate, 700);
+}
+
+function firstFrameBriefMentionsProduct(brief, productType) {
+  const text = `${brief || ""} ${productType || ""}`.toLowerCase();
+  const briefOnly = String(brief || "").toLowerCase();
+  const productWords = String(productType || "")
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter((word) => word.length >= 2);
+  const explicitProductTerms = [
+    "充气服",
+    "inflatable",
+    "shark",
+    "鲨鱼",
+    "cow",
+    "奶牛",
+    "mouse",
+    "老鼠",
+    "frog",
+    "青蛙",
+    "sumo",
+    "相扑",
+  ];
+  return explicitProductTerms.some((term) => briefOnly.includes(term)) || productWords.some((word) => briefOnly.includes(word)) || /this guy showed up|主角登场|mvp/i.test(text);
 }
 
 function buildFirstFramePayload(payload) {
@@ -1197,8 +1454,8 @@ function isSensitiveTextError(data, status) {
 
 function buildSensitiveSafeVideoActionPrompt(payload) {
   const productType = typeof payload.product_type === "string" && payload.product_type.trim() ? sanitizeProductText(payload.product_type) : "current inflatable product";
-  const source = sanitizeVideoPromptText(typeof payload.action_prompt === "string" ? payload.action_prompt : "");
-  const scene = sanitizeVideoPromptText(typeof payload.scene_prompt === "string" ? payload.scene_prompt : "");
+  const source = sanitizeVideoPromptText(typeof payload.action_prompt === "string" ? getVisualScriptText(payload.action_prompt) : "");
+  const scene = sanitizeVideoPromptText(typeof payload.scene_prompt === "string" ? getVisualScriptText(payload.scene_prompt) : "");
   return [
     `Generate a safe ecommerce short video for ${productType}.`,
     source ? `Keep the intended gentle action direction: ${source}` : "Use only small safe movements: slight wobble, slow hand gesture, pause, and soft recoil.",
@@ -1212,7 +1469,7 @@ function createSensitiveSafeVideoPayload(payload) {
     ...payload,
     sensitive_safe_retry: true,
     action_prompt: buildSensitiveSafeVideoActionPrompt(payload),
-    scene_prompt: sanitizeVideoPromptText(payload.scene_prompt),
+    scene_prompt: sanitizeVideoPromptText(getVisualScriptText(payload.scene_prompt)),
   };
 }
 
@@ -1224,13 +1481,14 @@ function neutralizeVideoSafetyFalsePositiveTerms(text) {
 
 function buildSensitiveSafeProductVideoPrompt(payload) {
   const productType = typeof payload.product_type === "string" && payload.product_type.trim() ? sanitizeProductText(payload.product_type) : "current inflatable product";
-  const actionPrompt = neutralizeVideoSafetyFalsePositiveTerms(sanitizeVideoPromptText(typeof payload.action_prompt === "string" ? payload.action_prompt.trim() : ""));
-  const scenePrompt = neutralizeVideoSafetyFalsePositiveTerms(sanitizeVideoPromptText(typeof payload.scene_prompt === "string" ? payload.scene_prompt.trim() : ""));
+  const actionPrompt = neutralizeVideoSafetyFalsePositiveTerms(sanitizeVideoPromptText(typeof payload.action_prompt === "string" ? getVisualScriptText(payload.action_prompt).trim() : ""));
+  const scenePrompt = neutralizeVideoSafetyFalsePositiveTerms(sanitizeVideoPromptText(typeof payload.scene_prompt === "string" ? getVisualScriptText(payload.scene_prompt).trim() : ""));
   const stableProductName = getProductStableName(productType);
   return [
     `Generate a light daily ecommerce short video from the uploaded first frame. The subject is always ${stableProductName}.`,
     scenePrompt ? `Keep the first-frame scene and visible props: ${scenePrompt}` : "Keep the first-frame scene and visible props.",
     actionPrompt ? `Action direction: ${actionPrompt}` : "Action direction: gentle wobble, small hand gesture, pause, and soft playful reaction.",
+    "Do not render any subtitle, caption, title, sign, logo, label, decorative word, random glyph, or readable text. Subtitles and voiceover are added later in post-production only.",
     "Use only controlled small motion. Keep the face window and zipper mostly vertical and feet grounded; allow a slight three-quarter, side, or brief rear glimpse only when the four-view topology proves that surface and the action needs it. No jump, no cut, no full spin.",
     "Preserve product identity, silhouette, colors, material wrinkles, wearer proportions, hands, shoes, zipper, valves, tail/ears/fins/scarf/belt, and all visible first-frame contacts.",
   ].join("\n\n");
@@ -1279,8 +1537,8 @@ function fitPromptToLimit(parts, maxChars) {
 }
 
 function buildCompactShishiProductVideoPrompt(payload) {
-  const actionPrompt = truncateTextByChars(sanitizeVideoPromptText(typeof payload.action_prompt === "string" ? payload.action_prompt.trim() : ""), 1200);
-  const scenePrompt = truncateTextByChars(sanitizeVideoPromptText(typeof payload.scene_prompt === "string" ? payload.scene_prompt.trim() : ""), 650);
+  const actionPrompt = truncateTextByChars(sanitizeVideoPromptText(typeof payload.action_prompt === "string" ? getVisualScriptText(payload.action_prompt).trim() : ""), 1200);
+  const scenePrompt = truncateTextByChars(sanitizeVideoPromptText(typeof payload.scene_prompt === "string" ? getVisualScriptText(payload.scene_prompt).trim() : ""), 650);
   const productType = typeof payload.product_type === "string" && payload.product_type.trim() ? sanitizeProductText(payload.product_type) : "current inflatable product";
   const stableProductName = getProductStableName(productType);
   const motionRule = typeof payload.motion_rule === "string" ? payload.motion_rule.trim() : "";
@@ -1292,11 +1550,12 @@ function buildCompactShishiProductVideoPrompt(payload) {
     `Generate a same-scene ecommerce short video from the uploaded first frame. The subject is always ${stableProductName}; frame 1 must preserve product shape, pose, color, face/window/zipper, hands, feet contact, props, and background placement.`,
     actionPrompt ? `User action and small gag to prioritize: ${actionPrompt}` : "Action requirement: show 2-3 clear but small daily comedy beats with a pause and a tiny twist, not only standing or breathing.",
     scenePrompt ? `Scene continuity: ${scenePrompt}` : "Scene continuity: keep the original location, camera, and visible props from the first frame.",
+    "No readable text rule: subtitles, captions, title cards, signs, logos, labels, decorative letters, and random glyphs must not appear in the frame or on the product. Voiceover and subtitles are post-production assets only.",
     compactProductFeatureLock(productType),
     hasFourViews ? `Four-view topology is only a product placement contract. Support views: ${supportCount}. The approved first frame is the direct video visual input.` : "If four-view metadata is incomplete, treat the approved first frame as the only direct visual anchor.",
     lockedSummary ? `Confirmed lock nodes: ${lockedSummary}` : "",
     "Camera rule: stable ecommerce shot, full body visible, no cuts, no fast zoom. Start from the approved first-frame view, then allow a controlled three-quarter, side, or brief rear glimpse when the user action needs it and the four-view topology proves that surface.",
-    "Motion rule: face window and zipper stay readable and mostly upright; feet remain grounded or make a short slide. Arm/hand, head direction, prop interaction, and a small body pivot must be visible enough to complete the gag. No jump, run, fall, full spin, or product-obscuring prop.",
+    "Motion rule: face window and zipper stay readable and mostly upright; feet remain grounded or make a short slide. Arm/hand, head direction, prop interaction, and a controlled body turn or pivot may be visible enough to complete the gag. No jump, run, fall, uncontrolled full spin, or product-obscuring prop.",
     motionRule ? `Extra motion boundary: ${motionRule}` : "",
     "Balance rule: product identity and user action both must survive. Preserve silhouette, proportions, colors, wrinkles, hands, shoes, zipper, valves, tail/ears/fins/scarf/belt, and view-correct component placement, but do not drop the requested action into a nearly static first-frame micro-animation.",
   ];
@@ -1304,8 +1563,8 @@ function buildCompactShishiProductVideoPrompt(payload) {
 }
 
 function buildProductVideoPrompt(payload) {
-  const actionPrompt = sanitizeVideoPromptText(typeof payload.action_prompt === "string" ? payload.action_prompt.trim() : "");
-  const scenePrompt = typeof payload.scene_prompt === "string" ? sanitizeProductText(payload.scene_prompt) : "";
+  const actionPrompt = sanitizeVideoPromptText(typeof payload.action_prompt === "string" ? getVisualScriptText(payload.action_prompt).trim() : "");
+  const scenePrompt = typeof payload.scene_prompt === "string" ? sanitizeProductText(getVisualScriptText(payload.scene_prompt)) : "";
   const productType = typeof payload.product_type === "string" ? sanitizeProductText(payload.product_type) : "wearable inflatable product";
   const motionRule = typeof payload.motion_rule === "string" ? sanitizeProductText(payload.motion_rule) : "Keep motion small and product-safe.";
   const lockedNodes = Array.isArray(payload.locked_nodes) ? payload.locked_nodes : [];
@@ -1325,6 +1584,7 @@ function buildProductVideoPrompt(payload) {
     `REQUIRED USER MOTION BEATS. These beats must be visible before any generic idle display:\n${requiredMotionBeats}`,
     "Do not replace the user-named subject, scene, or props from the motion beats. Preserve named scene items as visible context when they are safe: laundry room, drum washer, blue basket, coin machine, waiting gesture, foot taps, tiny arm sway, glance, restrained pointing, or the user's equivalent props.",
     "The final video cannot be only standing, breathing, or barely swaying. It must show 2-3 small readable action beats while preserving product fidelity.",
+    "ABSOLUTE NO-READABLE-TEXT RULE: do not render subtitles, captions, title cards, English words, Chinese words, fake letters, random glyphs, signs, logos, labels, UI text, stickers, or readable writing anywhere in the scene, on the costume, on walls, on props, or floating in frame. The pasted subtitle and voiceover copy is for post-production only and must not be visualized by the video model.",
     "HIGHEST PRIORITY PRODUCT CONSISTENCY VIDEO CONTRACT.",
     "FOUR-VIEW PRODUCT TOPOLOGY CONTRACT. Approved first frame is the direct video starting frame. The uploaded core views are allowed topology evidence for controlled camera/pose changes: front, left side, right side, and back may be revealed only when the motion path physically reaches that surface and only with view-correct placement.",
     readableImages.length === 4
@@ -1345,6 +1605,7 @@ function buildProductVideoPrompt(payload) {
     `Motion rule:\n${motionRule}`,
     "Camera rule: stable ecommerce shot, full body visible, no cuts, no fast zoom. Start from the approved first frame, then allow a controlled front-to-three-quarter, side, or brief rear glimpse when it helps complete the requested action. Do not reveal any surface that is not proven by the four-view references.",
     "Four-view use in video: the four product views are topology evidence for physically valid camera paths, not collage ingredients. They permit showing side/back surfaces only with correct placement: valves, tails, zippers, fins, patches, belts, scarves, shoes, and hardware must stay on their proven surface.",
+    "TURN / BACK_VIEW CONTRACT: if the requested video includes a turn, the turn is allowed, but every rear-facing moment must obey BACK_VIEW as the absolute source of truth. Rear tail position, size, length, direction, root location, and black tip must not change. Rear patch placement must not be reshuffled. Back zipper/seam and rear hardware must stay in their BACK_VIEW locations.",
     "Negative: no quality-upscale redraw, no beautified mascot replacement, no cleaner cartoon head, no pose reblocking that changes the costume, no handheld prop motion that rewrites product hands or body geometry, no moved fan valve, no missing face/head detail, no broken tail, no duplicated appendages, no body deformation, no skinny body, no overinflated balloon body, no smooth plastic surface, no realistic animal skin, no plush toy, no new logo attached to the product, no new accessory attached to the product shell.",
     "If a requested action would damage product fidelity, adapt the action to the nearest safe visible version while preserving the action beat; do not ignore it or collapse the clip into idle swaying.",
   ].join("\n\n");
@@ -1454,7 +1715,7 @@ async function proxyVideoSafety(payload) {
       return "";
     }
   })();
-  if (!moderationUrl || isShishiKejiUrl(upstreamUrl) || isToapisUrl(upstreamUrl)) {
+  if (!moderationUrl || isShishiKejiUrl(upstreamUrl) || isToapisUrl(upstreamUrl) || isKlingVideoUrl(upstreamUrl)) {
     return { status: 200, payload: { ok: true, verdict: "skipped", reason: "No moderation endpoint is available for this provider.", upstreamUrl, promptPreview: prompt.slice(0, 500), durationSummary, promptSummary, modelLimits } };
   }
   const response = await fetch(moderationUrl, {
@@ -1541,6 +1802,15 @@ function isShishiKejiUrl(url) {
 function isWisechVideoUrl(url) {
   try {
     return new URL(url).hostname === "ai.wisech.com";
+  } catch {
+    return false;
+  }
+}
+
+function isKlingVideoUrl(url) {
+  try {
+    const hostname = new URL(url).hostname;
+    return hostname === "api-singapore.klingai.com" || hostname === "api.klingai.com" || hostname.endsWith(".klingai.com");
   } catch {
     return false;
   }
@@ -1837,6 +2107,91 @@ function buildDashScopeVideoPayload(payload) {
   };
 }
 
+function pickReadableVideoImages(value, limit = 8) {
+  return Array.isArray(value)
+    ? value
+        .map((item) => (typeof item === "string" ? item.trim() : ""))
+        .filter((item) => /^https?:\/\//i.test(item) || item.startsWith("data:image/"))
+        .slice(0, limit)
+    : [];
+}
+
+function buildKlingShotPrompts(payload, prompt, duration) {
+  const rawStoryboards = Array.isArray(payload.storyboards) ? payload.storyboards : [];
+  const storyboards = rawStoryboards
+    .filter((item) => item && typeof item === "object")
+    .filter((item) => item.kind === "shot" || item.useAsShot === true)
+    .slice(0, 6);
+  if (!storyboards.length) return [];
+  const totalDuration = clampNumber(duration, 3, 15, 5);
+  const baseDuration = Math.max(1, Math.floor(totalDuration / storyboards.length));
+  let remaining = totalDuration;
+  return storyboards.map((storyboard, index) => {
+    const slotsLeft = storyboards.length - index;
+    const shotDuration = index === storyboards.length - 1 ? remaining : Math.max(1, Math.min(baseDuration, remaining - (slotsLeft - 1)));
+    remaining -= shotDuration;
+    const beat = typeof storyboard.beat === "string" ? storyboard.beat.trim() : "";
+    const action = typeof storyboard.action === "string" ? storyboard.action.trim() : "";
+    const viewAngle = typeof storyboard.viewAngle === "string" ? storyboard.viewAngle.trim() : "";
+    const shotPrompt = truncateTextByChars(
+      [
+        beat ? `Beat: ${beat}.` : "",
+        action ? `Action: ${action}.` : "",
+        viewAngle ? `Camera/view: ${viewAngle}.` : "",
+        "No readable text in the image: no subtitles, captions, title cards, signs, logos, labels, letters, fake glyphs, or writing on the product/background. Subtitles and voiceover are added later in post-production.",
+        "Keep the inflatable product identical to <<<image_1>>> and use <<<image_2>>> <<<image_3>>> <<<image_4>>> <<<image_5>>> only as product topology references.",
+      ]
+        .filter(Boolean)
+        .join(" "),
+      512,
+    );
+    return {
+      index: index + 1,
+      prompt: shotPrompt || truncateTextByChars(prompt, 512),
+      duration: String(shotDuration),
+    };
+  });
+}
+
+function buildKlingOmniVideoPayload(payload) {
+  const storyboardSource = Array.isArray(payload?.storyboards) ? payload.storyboards : [];
+  payload = stripInternalPayloadFields(payload);
+  payload.storyboards = storyboardSource;
+  const prompt = typeof payload.prompt === "string" ? getVisualScriptText(payload.prompt) : "";
+  const firstFrameUrl = getVideoFirstFrameUrl(payload);
+  const coreImages = pickReadableVideoImages(payload.image_urls, 4);
+  const supportImages = pickReadableVideoImages(payload.support_image_urls || payload.detail_image_urls, 2);
+  const duration = resolveSubmittedVideoDuration(payload, KLING_VIDEO_BASE_URL);
+  const imageList = [
+    ...(firstFrameUrl ? [{ image_url: firstFrameUrl, type: "first_frame" }] : []),
+    ...coreImages.map((image_url) => ({ image_url })),
+    ...supportImages.map((image_url) => ({ image_url })),
+  ].slice(0, 7);
+  const multiPrompt = buildKlingShotPrompts(payload, prompt, duration);
+  const useMultiShot = multiPrompt.length > 1;
+  const ratio = typeof payload.aspect_ratio === "string" && payload.aspect_ratio.trim() ? payload.aspect_ratio.trim() : "9:16";
+  return {
+    model_name: payload.model || KLING_VIDEO_MODEL,
+    ...(useMultiShot
+      ? {
+          multi_shot: true,
+          shot_type: "customize",
+          multi_prompt: multiPrompt,
+        }
+      : {
+          prompt: truncateTextByChars(prompt, 2500),
+        }),
+    image_list: imageList,
+    mode: payload.resolution === "4k" ? "4k" : "pro",
+    sound: payload.audio ? "on" : "off",
+    aspect_ratio: ratio,
+    duration: String(duration),
+    callback_url: "",
+    external_task_id: typeof payload.external_task_id === "string" ? payload.external_task_id : "",
+    watermark_info: { enabled: false },
+  };
+}
+
 function getVideoFirstFrameUrl(payload) {
   const imageUrl = typeof payload?.image_url === "string" ? payload.image_url.trim() : "";
   if (!imageUrl || imageUrl === "PASTE_APPROVED_FIRST_FRAME_URL") return "";
@@ -1950,6 +2305,7 @@ function resolveImageEditUrl(upstreamUrl) {
 }
 
 function buildProxyPayload(kind, upstreamUrl, upstreamPayload) {
+  if (isKlingVideoUrl(upstreamUrl) && kind === "video") return buildKlingOmniVideoPayload(upstreamPayload);
   if (isShishiKejiUrl(upstreamUrl) && kind === "video") return stripInternalPayloadFields(upstreamPayload);
   if (isVolcengineUrl(upstreamUrl) && kind === "video") return buildVolcengineVideoPayload(upstreamPayload);
   if (isDashScopeUrl(upstreamUrl)) {
@@ -1981,6 +2337,7 @@ async function proxyJson(fallbackPath, payload, kind = "generic") {
   async function sendProxyRequest(nextUpstreamPayload, retryReason = "") {
     let normalizedUpstreamPayload = nextUpstreamPayload;
     let body;
+    let authHeaders;
     try {
       normalizedUpstreamPayload =
         kind === "video" && !sendShishiKejiVideo && !isDashScopeUrl(resolvedUpstreamUrl) && !isVolcengineUrl(resolvedUpstreamUrl)
@@ -1992,6 +2349,7 @@ async function proxyJson(fallbackPath, payload, kind = "generic") {
         : sendMultipartImageEdit
           ? await buildOpenAIImageEditFormData(proxyPayload)
           : JSON.stringify(proxyPayload);
+      authHeaders = sendShishiKejiVideo ? { "X-License-Key": apiKey } : createBearerAuthHeaders(resolvedUpstreamUrl, apiKey, kind);
     } catch (error) {
       return {
         status: 400,
@@ -2009,7 +2367,7 @@ async function proxyJson(fallbackPath, payload, kind = "generic") {
         method: "POST",
         signal: controller.signal,
         headers: {
-          ...(sendShishiKejiVideo ? { "X-License-Key": apiKey } : { Authorization: `Bearer ${apiKey}` }),
+          ...authHeaders,
           ...(sendMultipartImageEdit || sendShishiKejiVideo ? {} : { "Content-Type": "application/json" }),
           ...(isDashScopeUrl(resolvedUpstreamUrl) && kind === "video" ? { "X-DashScope-Async": "enable" } : {}),
         },
@@ -2115,6 +2473,540 @@ async function proxyJson(fallbackPath, payload, kind = "generic") {
   return firstResult;
 }
 
+async function proxyVoiceover(payload) {
+  const text = typeof payload?.text === "string" ? payload.text.trim() : "";
+  const voiceGender = typeof payload?.voiceGender === "string" ? payload.voiceGender.trim().toLowerCase() : "";
+  const requestedVoice = typeof payload?.voice === "string" ? payload.voice.trim() : "";
+  const voice =
+    voiceGender === "male"
+      ? TTS_VOICE_OPTIONS.male
+      : voiceGender === "female"
+        ? TTS_VOICE_OPTIONS.female
+        : requestedVoice || TTS_VOICE;
+  const model = typeof payload?.model === "string" && payload.model.trim() ? payload.model.trim() : TTS_MODEL;
+  const upstreamUrl = `${TTS_BASE_URL}/chat/completions`;
+
+  if (!text) {
+    return { status: 400, payload: { error: "Voiceover text is empty." } };
+  }
+  if (!TTS_API_KEY) {
+    return { status: 400, payload: { error: "TTS API key is not configured.", upstreamUrl } };
+  }
+
+  const response = await fetch(upstreamUrl, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${TTS_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model,
+      modalities: ["text", "audio"],
+      audio: { voice, format: "mp3" },
+      messages: [
+        {
+          role: "system",
+          content:
+            "Read the user's narration text exactly as written. Do not add greetings, commentary, explanations, sound effects, stage directions, translations, or extra words. Keep the delivery natural for a short social video voiceover.",
+        },
+        {
+          role: "user",
+          content: text,
+        },
+      ],
+      max_tokens: Math.max(128, Math.min(4096, Math.ceil(text.length * 1.6))),
+    }),
+  });
+
+  const rawText = await response.text();
+  const data = parseUpstreamBody(rawText, response.status);
+  if (!response.ok) {
+    return { status: response.status, payload: withUpstreamError(data, response.status, upstreamUrl) };
+  }
+
+  const message = Array.isArray(data?.choices) ? data.choices[0]?.message : null;
+  const audioBase64 = typeof message?.audio?.data === "string" ? message.audio.data : "";
+  if (!audioBase64) {
+    return {
+      status: 502,
+      payload: {
+        error: "TTS provider returned no audio data.",
+        upstreamUrl,
+        model,
+      },
+    };
+  }
+
+  return {
+    status: 200,
+    payload: {
+      ok: true,
+      audioBase64,
+      audioContentType: "audio/mpeg",
+      fileName: "aican-voiceover.mp3",
+      model,
+      voice,
+      transcript: typeof message?.audio?.transcript === "string" ? message.audio.transcript : "",
+      upstreamUrl,
+    },
+  };
+}
+
+async function proxyVideoDownload(url) {
+  const targetUrl = url.searchParams.get("url") || "";
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(targetUrl);
+  } catch {
+    return { status: 400, payload: { error: "Video download URL is invalid." } };
+  }
+  if (!/^https?:$/i.test(parsedUrl.protocol)) {
+    return { status: 400, payload: { error: "Only HTTP video URLs can be downloaded." } };
+  }
+
+  const response = await fetch(parsedUrl.toString(), {
+    method: "GET",
+    headers: {
+      "User-Agent": "Mozilla/5.0 VideoAssetDownloader/1.0",
+    },
+  });
+  const bytes = Buffer.from(await response.arrayBuffer());
+  if (!response.ok) {
+    return {
+      status: response.status,
+      payload: {
+        error: `Video download failed (${response.status}).`,
+        upstreamUrl: parsedUrl.toString(),
+      },
+    };
+  }
+  if (!bytes.length) {
+    return { status: 502, payload: { error: "Video download returned an empty file.", upstreamUrl: parsedUrl.toString() } };
+  }
+
+  const contentType = response.headers.get("content-type") || "";
+  return {
+    status: 200,
+    binary: true,
+    body: bytes,
+    headers: {
+      "Content-Type": /^video\//i.test(contentType) ? contentType : "video/mp4",
+      "Content-Length": String(bytes.length),
+      "Content-Disposition": 'attachment; filename="video-asset.mp4"',
+      "Cache-Control": "no-store",
+    },
+  };
+}
+
+function getLocalDownloadsDir() {
+  const homeDir = process.env.USERPROFILE || process.env.HOME || "";
+  return homeDir ? `${homeDir}\\Downloads` : "";
+}
+
+function createLocalVideoFileName() {
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  return `subtitle-voiceover-preview-${stamp}.mp4`;
+}
+
+function createRenderedVideoFileName() {
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  return `subtitle-voiceover-rendered-${stamp}.mp4`;
+}
+
+function isAllowedLocalVideoPath(filePath) {
+  const normalized = resolve(filePath).toLowerCase();
+  const cwd = resolve(process.cwd()).toLowerCase();
+  const downloadsDir = getLocalDownloadsDir();
+  const downloads = downloadsDir ? resolve(downloadsDir).toLowerCase() : "";
+  if (!normalized.endsWith(".mp4")) return false;
+  return normalized.startsWith(`${cwd}\\`) || (downloads && normalized.startsWith(`${downloads}\\`));
+}
+
+function serveLocalVideo(url, req) {
+  const filePath = typeof url?.searchParams?.get("path") === "string" ? url.searchParams.get("path").trim() : "";
+  const resolvedPath = resolve(filePath);
+  if (!filePath || !isAllowedLocalVideoPath(resolvedPath) || !existsSync(resolvedPath)) {
+    return createApiResponse(404, { error: "Local video asset was not found." });
+  }
+  const stat = statSync(resolvedPath);
+  if (!stat.isFile() || stat.size <= 0) return createApiResponse(404, { error: "Local video asset is empty." });
+
+  const range = typeof req?.headers?.range === "string" ? req.headers.range : "";
+  const headers = {
+    "Content-Type": "video/mp4",
+    "Accept-Ranges": "bytes",
+    "Cache-Control": "no-store",
+  };
+  if (range) {
+    const match = range.match(/^bytes=(\d*)-(\d*)$/);
+    const start = match?.[1] ? Number(match[1]) : 0;
+    const end = match?.[2] ? Number(match[2]) : stat.size - 1;
+    if (Number.isFinite(start) && Number.isFinite(end) && start >= 0 && end >= start && start < stat.size) {
+      const safeEnd = Math.min(end, stat.size - 1);
+      const bytes = readFileSync(resolvedPath).subarray(start, safeEnd + 1);
+      return {
+        binary: true,
+        status: 206,
+        body: bytes,
+        headers: {
+          ...headers,
+          "Content-Length": String(bytes.length),
+          "Content-Range": `bytes ${start}-${safeEnd}/${stat.size}`,
+        },
+      };
+    }
+  }
+
+  const bytes = readFileSync(resolvedPath);
+  return {
+    binary: true,
+    status: 200,
+    body: bytes,
+    headers: {
+      ...headers,
+      "Content-Length": String(bytes.length),
+    },
+  };
+}
+
+function serveHistoryAsset(fileName) {
+  const cleanFileName = String(fileName || "").replace(/[\\/]/g, "");
+  const filePath = resolve(LOCAL_HISTORY_ASSET_DIR, cleanFileName);
+  const assetRoot = resolve(LOCAL_HISTORY_ASSET_DIR).toLowerCase();
+  const normalized = filePath.toLowerCase();
+  if (!cleanFileName || !normalized.startsWith(`${assetRoot}\\`) || !existsSync(filePath)) {
+    return createApiResponse(404, { error: "History asset was not found." });
+  }
+  const bytes = readFileSync(filePath);
+  if (!bytes.length) return createApiResponse(404, { error: "History asset is empty." });
+  const extension = cleanFileName.toLowerCase().split(".").pop();
+  const contentType =
+    extension === "png"
+      ? "image/png"
+      : extension === "webp"
+        ? "image/webp"
+        : extension === "gif"
+          ? "image/gif"
+          : "image/jpeg";
+  return {
+    binary: true,
+    status: 200,
+    body: bytes,
+    headers: {
+      "Content-Type": contentType,
+      "Content-Length": String(bytes.length),
+      "Cache-Control": "no-store",
+    },
+  };
+}
+
+function decodeBase64Payload(value) {
+  const raw = typeof value === "string" ? value.trim() : "";
+  const base64 = raw.includes(",") ? raw.split(",").pop() || "" : raw;
+  return Buffer.from(base64, "base64");
+}
+
+function getAudioFileExtension(contentType) {
+  const normalized = typeof contentType === "string" ? contentType.toLowerCase() : "";
+  if (normalized.includes("wav")) return "wav";
+  if (normalized.includes("aac") || normalized.includes("mp4")) return "m4a";
+  return "mp3";
+}
+
+function formatSrtTimestamp(seconds) {
+  const totalMs = Math.max(0, Math.round(Number(seconds || 0) * 1000));
+  const ms = totalMs % 1000;
+  const totalSeconds = Math.floor(totalMs / 1000);
+  const second = totalSeconds % 60;
+  const totalMinutes = Math.floor(totalSeconds / 60);
+  const minute = totalMinutes % 60;
+  const hour = Math.floor(totalMinutes / 60);
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}:${String(second).padStart(2, "0")},${String(ms).padStart(3, "0")}`;
+}
+
+function buildSrtContent(segments) {
+  const lines = [];
+  const usableSegments = Array.isArray(segments) ? segments : [];
+  for (const segment of usableSegments) {
+    const start = Number(segment?.start);
+    const end = Number(segment?.end);
+    const subtitle = typeof segment?.subtitle === "string" ? segment.subtitle.trim() : "";
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start || !subtitle) continue;
+    lines.push(
+      String(lines.length / 4 + 1),
+      `${formatSrtTimestamp(start)} --> ${formatSrtTimestamp(end)}`,
+      subtitle.replace(/\r/g, "").split("\n").map((line) => line.trim()).filter(Boolean).join("\n"),
+      "",
+    );
+  }
+  return lines.join("\n");
+}
+
+function escapeFfmpegFilterPath(filePath) {
+  return resolve(filePath).replace(/\\/g, "/").replace(/:/g, "\\:").replace(/'/g, "\\'");
+}
+
+function runProcess(command, args) {
+  return new Promise((resolveRun, rejectRun) => {
+    const child = spawn(command, args, { windowsHide: true });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    child.on("error", rejectRun);
+    child.on("close", (code) => {
+      if (code === 0) {
+        resolveRun({ stdout, stderr });
+        return;
+      }
+      rejectRun(new Error(stderr || stdout || `${command} exited with code ${code}`));
+    });
+  });
+}
+
+async function hasAudioStream(videoPath) {
+  if (!FFPROBE_BINARY || !existsSync(FFPROBE_BINARY)) return false;
+  try {
+    const result = await runProcess(FFPROBE_BINARY, [
+      "-v",
+      "error",
+      "-select_streams",
+      "a:0",
+      "-show_entries",
+      "stream=index",
+      "-of",
+      "json",
+      videoPath,
+    ]);
+    const parsed = JSON.parse(result.stdout || "{}");
+    return Array.isArray(parsed.streams) && parsed.streams.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+async function writeRenderSourceVideo(payload, outputPath) {
+  const sourceVideoBase64 = typeof payload?.sourceVideoBase64 === "string" ? payload.sourceVideoBase64.trim() : "";
+  if (sourceVideoBase64) {
+    const bytes = decodeBase64Payload(sourceVideoBase64);
+    if (!bytes.length) throw new Error("Source video data is empty.");
+    writeFileSync(outputPath, bytes);
+    return;
+  }
+
+  const sourceVideoUrl = typeof payload?.sourceVideoUrl === "string" ? payload.sourceVideoUrl.trim() : "";
+  if (!/^https?:\/\//i.test(sourceVideoUrl)) {
+    throw new Error("Source video must be an HTTP URL or uploaded as local video data.");
+  }
+  const response = await fetch(sourceVideoUrl, {
+    method: "GET",
+    headers: { "User-Agent": "Mozilla/5.0 VideoPostRenderer/1.0" },
+  });
+  const bytes = Buffer.from(await response.arrayBuffer());
+  if (!response.ok) throw new Error(`Source video download failed (${response.status}).`);
+  if (!bytes.length) throw new Error("Source video download returned an empty file.");
+  writeFileSync(outputPath, bytes);
+}
+
+async function renderPostVideo(payload) {
+  if (!FFMPEG_BINARY || !existsSync(FFMPEG_BINARY)) {
+    return { status: 500, payload: { error: "Local ffmpeg renderer is not available." } };
+  }
+  const includeSubtitles = payload?.includeSubtitles !== false;
+  const includeVoiceover = payload?.includeVoiceover !== false;
+  const voiceoverAudioBase64 = typeof payload?.voiceoverAudioBase64 === "string" ? payload.voiceoverAudioBase64.trim() : "";
+  if (includeVoiceover && !voiceoverAudioBase64) return { status: 400, payload: { error: "Voiceover audio is missing. Generate subtitle and voiceover first." } };
+  const srtContent = buildSrtContent(payload?.segments);
+  if (includeSubtitles && !srtContent.trim()) return { status: 400, payload: { error: "Subtitle timeline is empty." } };
+
+  const workId = new Date().toISOString().replace(/[:.]/g, "-");
+  const workDir = `${LOCAL_POST_RENDER_DIR}\\${workId}`;
+  mkdirSync(workDir, { recursive: true });
+  const inputVideoPath = `${workDir}\\source.mp4`;
+  const subtitlePath = `${workDir}\\subtitles.srt`;
+  const audioPath = `${workDir}\\voiceover.${getAudioFileExtension(payload?.voiceoverAudioContentType)}`;
+  const downloadsDir = getLocalDownloadsDir();
+  if (!downloadsDir) return { status: 500, payload: { error: "Downloads folder could not be resolved." } };
+  mkdirSync(downloadsDir, { recursive: true });
+  const fileName = createRenderedVideoFileName();
+  const outputPath = `${downloadsDir}\\${fileName}`;
+
+  try {
+    await writeRenderSourceVideo(payload, inputVideoPath);
+    if (includeSubtitles) writeFileSync(subtitlePath, srtContent, "utf8");
+    if (includeVoiceover) {
+      const audioBytes = decodeBase64Payload(voiceoverAudioBase64);
+      if (!audioBytes.length) throw new Error("Voiceover audio data is empty.");
+      writeFileSync(audioPath, audioBytes);
+    }
+
+    const subtitleFilter = includeSubtitles ? `subtitles='${escapeFfmpegFilterPath(subtitlePath)}'` : "";
+    const sourceHasAudio = await hasAudioStream(inputVideoPath);
+    const baseVideoArgs = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p"];
+    let args;
+    if (includeVoiceover && sourceHasAudio) {
+      args = [
+        "-y",
+        "-i",
+        inputVideoPath,
+        "-i",
+        audioPath,
+        "-filter_complex",
+        includeSubtitles
+          ? `[0:v]${subtitleFilter}[v];[0:a][1:a]amix=inputs=2:duration=first:dropout_transition=2[a]`
+          : `[0:a][1:a]amix=inputs=2:duration=first:dropout_transition=2[a]`,
+        "-map",
+        includeSubtitles ? "[v]" : "0:v",
+        "-map",
+        "[a]",
+        ...baseVideoArgs,
+        "-c:a",
+        "aac",
+        "-b:a",
+        "192k",
+        "-shortest",
+        "-movflags",
+        "+faststart",
+        outputPath,
+      ];
+    } else if (includeVoiceover) {
+      args = [
+        "-y",
+        "-i",
+        inputVideoPath,
+        "-i",
+        audioPath,
+        ...(includeSubtitles ? ["-vf", subtitleFilter] : []),
+        "-map",
+        "0:v",
+        "-map",
+        "1:a",
+        ...baseVideoArgs,
+        "-c:a",
+        "aac",
+        "-b:a",
+        "192k",
+        "-shortest",
+        "-movflags",
+        "+faststart",
+        outputPath,
+      ];
+    } else {
+      args = [
+        "-y",
+        "-i",
+        inputVideoPath,
+        ...(includeSubtitles ? ["-vf", subtitleFilter] : []),
+        ...baseVideoArgs,
+        ...(sourceHasAudio ? ["-c:a", "aac", "-b:a", "192k"] : ["-an"]),
+        "-movflags",
+        "+faststart",
+        outputPath,
+      ];
+    }
+    await runProcess(FFMPEG_BINARY, args);
+    return { status: 200, payload: { ok: true, fileName, filePath: outputPath, sourceHasAudio } };
+  } catch (error) {
+    return { status: 500, payload: { error: error instanceof Error ? error.message : "Post-production render failed." } };
+  }
+}
+
+async function saveVideoDownload(payload) {
+  const dataBase64 = typeof payload?.dataBase64 === "string" ? payload.dataBase64.trim() : "";
+  const sourcePath = typeof payload?.sourcePath === "string" ? payload.sourcePath.trim() : "";
+  const downloadsDir = getLocalDownloadsDir();
+  if (!downloadsDir) return { status: 500, payload: { error: "Downloads folder could not be resolved." } };
+  mkdirSync(downloadsDir, { recursive: true });
+
+  if (sourcePath) {
+    const resolvedSourcePath = resolve(sourcePath);
+    if (!isAllowedLocalVideoPath(resolvedSourcePath) || !existsSync(resolvedSourcePath)) {
+      return { status: 400, payload: { error: "Saved video path is invalid or no longer exists." } };
+    }
+    const bytes = readFileSync(resolvedSourcePath);
+    if (!bytes.length) return { status: 400, payload: { error: "Saved video file is empty." } };
+    const fileName = createLocalVideoFileName();
+    const filePath = `${downloadsDir}\\${fileName}`;
+    writeFileSync(filePath, bytes);
+    return {
+      status: 200,
+      payload: {
+        ok: true,
+        fileName,
+        filePath,
+        bytes: bytes.length,
+        contentType: "video/mp4",
+      },
+    };
+  }
+
+  if (dataBase64) {
+    let bytes;
+    try {
+      bytes = Buffer.from(dataBase64, "base64");
+    } catch {
+      return { status: 400, payload: { error: "Video file data is invalid." } };
+    }
+    if (!bytes.length) return { status: 400, payload: { error: "Video file data is empty." } };
+    const fileName = createLocalVideoFileName();
+    const filePath = `${downloadsDir}\\${fileName}`;
+    writeFileSync(filePath, bytes);
+    return {
+      status: 200,
+      payload: {
+        ok: true,
+        fileName,
+        filePath,
+        bytes: bytes.length,
+        contentType: typeof payload?.contentType === "string" ? payload.contentType : "video/mp4",
+      },
+    };
+  }
+
+  const targetUrl = typeof payload?.url === "string" ? payload.url.trim() : "";
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(targetUrl);
+  } catch {
+    return { status: 400, payload: { error: "Video download URL is invalid." } };
+  }
+  if (!/^https?:$/i.test(parsedUrl.protocol)) {
+    return { status: 400, payload: { error: "Only HTTP video URLs can be saved by the local downloader." } };
+  }
+
+  const response = await fetch(parsedUrl.toString(), {
+    method: "GET",
+    headers: {
+      "User-Agent": "Mozilla/5.0 VideoAssetDownloader/1.0",
+    },
+  });
+  const bytes = Buffer.from(await response.arrayBuffer());
+  if (!response.ok) {
+    return { status: response.status, payload: { error: `Video download failed (${response.status}).`, upstreamUrl: parsedUrl.toString() } };
+  }
+  if (!bytes.length) {
+    return { status: 502, payload: { error: "Video download returned an empty file.", upstreamUrl: parsedUrl.toString() } };
+  }
+
+  const fileName = createLocalVideoFileName();
+  const filePath = `${downloadsDir}\\${fileName}`;
+  writeFileSync(filePath, bytes);
+  return {
+    status: 200,
+    payload: {
+      ok: true,
+      fileName,
+      filePath,
+      bytes: bytes.length,
+      contentType: response.headers.get("content-type") || "video/mp4",
+    },
+  };
+}
+
 async function testProxy(fallbackPath, payload, kind = "generic") {
   const { baseUrl, apiKey, upstreamUrl: configuredUrl, upstreamPayload } = pickProxyConfig(payload, fallbackPath, kind);
   const model = typeof upstreamPayload.model === "string" ? upstreamPayload.model.trim() : "";
@@ -2139,6 +3031,15 @@ async function testProxy(fallbackPath, payload, kind = "generic") {
       payload: apiKey
         ? { ok: true, model, modelFound: Boolean(model), upstreamUrl: configuredUrl, note: "ToAPI video models use /videos/generations and are not listed by /models.", modelLimits }
         : { error: "Video service API key is not configured.", upstreamUrl: configuredUrl },
+    };
+  }
+  if (kind === "video" && isKlingVideoUrl(configuredUrl)) {
+    const authState = getKlingAuthPublicState(apiKey);
+    return {
+      status: authState.ok ? 200 : 400,
+      payload: authState.ok
+        ? { ok: true, model, modelFound: Boolean(model), upstreamUrl: configuredUrl, note: "Kling Direct uses /v1/videos/omni-video with one full prompt, the approved first frame, and reference images. Multi-shot is only used for explicitly timed shot prompts.", modelLimits, auth: authState }
+        : { error: authState.error, code: authState.code, upstreamUrl: configuredUrl, auth: authState },
     };
   }
   if (isDashScopeUrl(configuredUrl) || (kind === "video" && isVolcengineUrl(configuredUrl))) {
@@ -2483,7 +3384,7 @@ function normalizeStoryIntentPayload(parsed, payload = {}, upstreamUrl = "") {
 
 function buildStoryIntentPayload(payload) {
   const productType = typeof payload.product_type === "string" && payload.product_type.trim() ? sanitizeProductText(payload.product_type) : "wearable inflatable product";
-  const userDirection = typeof payload.user_direction === "string" ? truncateTextByChars(sanitizeProductText(payload.user_direction), 900) : "";
+  const userDirection = typeof payload.user_direction === "string" ? truncateTextByChars(sanitizeProductText(getVisualScriptText(payload.user_direction)), 900) : "";
   const revisionInstruction = typeof payload.revision_instruction === "string" ? truncateTextByChars(sanitizeProductText(payload.revision_instruction), 900) : "";
   const currentIntent = payload.current_intent && typeof payload.current_intent === "object" ? JSON.stringify(payload.current_intent).slice(0, 3000) : "";
   const contract = buildProductLockContract(productType, payload.locked_nodes);
@@ -2498,6 +3399,7 @@ function buildStoryIntentPayload(payload) {
           "You are a product-safe short-video story director for image-to-video generation.",
           "Return parseable JSON only. Do not include Markdown.",
           "Generate or revise only the story/action intent. Do not write subtitles, sign text, price, SKU, discount, CTA, channel targeting, product selling points, or post-production copy.",
+          "The user's subtitle and voiceover lines are post-production assets. Use only visual action, scene, sound-effect, and background-audio intent for the video generation plan.",
           "The video must be interesting enough for a short product clip, but all action must stay grounded, low-risk, and compatible with four-view product consistency.",
           "The story intent must come before storyboard generation. Do not describe final video provider settings.",
         ].join("\n"),
@@ -2797,14 +3699,14 @@ function collectPreflightRequestText(payload) {
   const storyIntent = payload?.story_intent || payload?.storyIntent || {};
   const storyboards = Array.isArray(payload?.storyboards) ? payload.storyboards : [];
   const beats = Array.isArray(storyIntent.beats) ? storyIntent.beats : [];
-  return [
+  return getVisualScriptText([
     storyIntent.storyIntent,
     storyIntent.sceneAnchor,
     ...beats.flatMap((beat) => [beat?.beat, beat?.action]),
     ...storyboards.flatMap((storyboard) => [storyboard?.beat, storyboard?.action]),
   ]
     .filter((item) => typeof item === "string" && item.trim())
-    .join("\n")
+    .join("\n"))
     .toLowerCase();
 }
 
@@ -2820,18 +3722,18 @@ function collectStoryboardPreflightIssues(payload) {
   const storyIntent = payload.story_intent || payload.storyIntent;
   const storyboards = Array.isArray(payload.storyboards) ? payload.storyboards : [];
   const motionMode = payload.motion_mode === "strict" || payload.motion_mode === "balanced" || payload.motion_mode === "creative" ? payload.motion_mode : "balanced";
-  const minimumFrames = motionMode === "strict" ? 3 : 3;
+  const minimumFrames = 1;
   const maximumFrames = 5;
   const requestText = stripNegativeGuardrailPhrases(collectPreflightRequestText(payload));
   if (!productType) issues.push({ severity: "fail", code: "missing_product_type", message: "Missing product type." });
   if (!storyIntent || typeof storyIntent !== "object") issues.push({ severity: "fail", code: "missing_story_intent", message: "Story intent is required before video submission." });
-  if (storyboards.length < minimumFrames) issues.push({ severity: "fail", code: "not_enough_storyboards", message: `At least ${minimumFrames} selected storyboards are required before video submission.` });
-  if (storyboards.length > maximumFrames) issues.push({ severity: "risky", code: "too_many_storyboards", message: "Use 3-5 selected storyboards so the video model receives a compact path." });
+  if (storyboards.length < minimumFrames) issues.push({ severity: "fail", code: "missing_first_frame", message: "Approve one generated first frame before video submission." });
+  if (storyboards.length > maximumFrames) issues.push({ severity: "risky", code: "too_many_storyboards", message: "Use one approved first frame, or up to 5 timed shots only when the script is explicitly split by seconds." });
   if (storyboards.some((storyboard) => !storyboard || typeof storyboard !== "object" || typeof storyboard.imageUrl !== "string" || !storyboard.imageUrl.trim())) {
-    issues.push({ severity: "fail", code: "missing_storyboard_image", message: "Every selected storyboard needs an image URL." });
+    issues.push({ severity: "fail", code: "missing_storyboard_image", message: "The approved first frame needs an image URL." });
   }
   if (storyboards.some((storyboard) => Array.isArray(storyboard.checks) && storyboard.checks.some((check) => check?.status === "fail"))) {
-    issues.push({ severity: "fail", code: "failed_storyboard_check", message: "A selected storyboard has a failed check." });
+    issues.push({ severity: "fail", code: "failed_storyboard_check", message: "The approved first frame has a failed check." });
   }
   if (/\b(add|show|include|display|overlay|readable)\b[^.;,，。；\n]*(subtitle|caption|price|discount|cta|call to action|logo)/i.test(requestText)) {
     issues.push({ severity: "fail", code: "requested_text_or_sales_copy", message: "Remove requested subtitles, readable sales copy, price, CTA, or logo before video submission." });
@@ -2854,23 +3756,30 @@ function buildFinalVideoPromptFromPackage(payload, preflight) {
   const storyboards = Array.isArray(payload.storyboards) ? payload.storyboards : [];
   const storyboardLines = storyboards
     .slice(0, 5)
-    .map((storyboard, index) => `${index + 1}. ${sanitizeProductText(storyboard.beat || storyboard.action || "")}; camera=${sanitizeProductText(storyboard.viewAngle || "front")}`)
+    .map((storyboard, index) => {
+      const visualBeat = getVisualScriptText([storyboard.beat, storyboard.action].filter(Boolean).join("\n"));
+      return `${index + 1}. ${sanitizeProductText(visualBeat)}; camera=${sanitizeProductText(storyboard.viewAngle || "front")}`;
+    })
     .join("\n");
   const contract = buildProductLockContract(payload.product_type, payload.locked_nodes);
+  const visualStoryIntent = getVisualScriptText(storyIntent.storyIntent);
+  const visualSceneAnchor = getVisualScriptText(storyIntent.sceneAnchor);
   return fitPromptToLimit(
     [
       "FINAL VIDEO EXECUTION PACKAGE PROMPT.",
-      "Use the selected storyboard keyframes as the action path for one expensive video generation. Do not invent a different story.",
+      "Use the approved first frame plus the user's single script as the action path for one expensive video generation. Do not invent a different story.",
+      "ABSOLUTE NO-READABLE-TEXT RULE: do not render subtitles, captions, title cards, English words, Chinese words, fake letters, random glyphs, signs, logos, labels, UI text, stickers, or readable writing anywhere in the scene, on the costume, on walls, on props, or floating in frame. Subtitle and voiceover text are post-production assets only.",
       `Product: ${storyIntent.stableProductName}`,
-      `Story intent: ${storyIntent.storyIntent}`,
-      `Scene anchor: ${storyIntent.sceneAnchor}`,
-      `Selected storyboard path:\n${storyboardLines}`,
+      `Visual story intent: ${visualStoryIntent}`,
+      `Scene anchor: ${visualSceneAnchor}`,
+      storyboardLines ? `Approved first frame / optional timed shot path:\n${storyboardLines}` : "",
       `Camera path: ${preflight.cameraPath}`,
       `Motion mode: ${storyIntent.motionMode}`,
       formatProductLockContract(contract, 14),
       "The first frame and later frames must preserve the same wearable inflatable product identity, human-scale volume, material wrinkles, seams, zipper, valves, appendages, shoes, and view-correct component placement.",
-      "No subtitles, signs, price tags, CTA, logos, stickers, or post-production sales text. No large turn, no jump, no run, no fall, no fast zoom, no product-obscuring props.",
-      "Show 2-3 readable visual action beats from the storyboard path. The result must not collapse into a static micro-animation.",
+      "Controlled body turns are allowed when requested. If the product turns enough to show the back, BACK_VIEW is the absolute reference: rear tail location, size, length, direction, black tip, rear patch layout, back zipper/seam, valve/hardware, and rear silhouette must stay unchanged and must not be invented or rearranged.",
+      "No uncontrolled full spin, no jump, no run, no fall, no fast zoom, no product-obscuring props.",
+      "Show the user's requested action beats from the single script. The result must not collapse into a static micro-animation.",
     ],
     getVideoModelLimit(payload.video_provider, payload.model).promptSoftLimit || SHISHI_PROMPT_SOFT_LIMIT,
   );
@@ -2964,8 +3873,10 @@ async function proxyVideoStatus(payload) {
       ? { baseUrl: WISECH_VIDEO_BASE_URL, apiKey: WISECH_VIDEO_API_KEY }
       : videoProvider === "shishi"
         ? { baseUrl: SHISHI_VIDEO_BASE_URL, apiKey: SHISHI_VIDEO_API_KEY }
-        : videoProvider === "toapis"
-          ? { baseUrl: VIDEO_BASE_URL || TOAPIS_BASE_URL, apiKey: VIDEO_API_KEY || TOAPIS_API_KEY }
+        : videoProvider === "kling"
+          ? { baseUrl: KLING_VIDEO_BASE_URL, apiKey: KLING_VIDEO_API_KEY || KLING_ACCESS_KEY }
+          : videoProvider === "toapis"
+            ? { baseUrl: VIDEO_BASE_URL || TOAPIS_BASE_URL, apiKey: VIDEO_API_KEY || TOAPIS_API_KEY }
         : null;
   const baseUrl = (providerConfig?.baseUrl || cleanEndpointText(body.base_url) || VIDEO_BASE_URL).replace(/\/+$/, "");
   const apiKey = providerConfig?.apiKey || (typeof body.api_key === "string" && body.api_key.trim() ? body.api_key.trim() : VIDEO_API_KEY);
@@ -2980,15 +3891,29 @@ async function proxyVideoStatus(payload) {
       ? buildVolcengineTaskUrl(baseUrl, taskId)
       : isShishiKejiUrl(baseUrl)
         ? `${baseUrl}/api/task/${encodeURIComponent(taskId)}?refresh_video_url=1`
+      : isKlingVideoUrl(baseUrl)
+        ? `${baseUrl}${KLING_OMNI_VIDEO_PATH}/${encodeURIComponent(taskId)}`
       : /^https?:\/\//i.test(statusPath)
         ? statusPath.replace("{task_id}", encodeURIComponent(taskId))
         : `${baseUrl}${normalizePath(statusPath || `${OPENAI_VIDEO_GENERATIONS_PATH}/${taskId}`, "")}`;
 
+  let authHeaders;
+  try {
+    authHeaders = isShishiKejiUrl(upstreamUrl) ? { "X-License-Key": apiKey } : createBearerAuthHeaders(upstreamUrl, apiKey, "video");
+  } catch (error) {
+    return {
+      status: 400,
+      payload: {
+        error: error instanceof Error ? error.message : String(error),
+        code: error?.code || "VIDEO_AUTH_CONFIG_INVALID",
+        upstreamUrl,
+      },
+    };
+  }
+
   const response = await fetch(upstreamUrl, {
     method: "GET",
-    headers: {
-      ...(isShishiKejiUrl(upstreamUrl) ? { "X-License-Key": apiKey } : { Authorization: `Bearer ${apiKey}` }),
-    },
+    headers: authHeaders,
   });
   const text = await response.text();
   const data = parseUpstreamBody(text, response.status);
@@ -3006,6 +3931,11 @@ const apiRoutes = [
         hasApiKey: Boolean(TOAPIS_API_KEY),
         imageTextBaseUrl: IMAGE_TEXT_BASE_URL,
         hasImageTextApiKey: Boolean(IMAGE_TEXT_API_KEY),
+        ttsProvider: TTS_PROVIDER,
+        ttsBaseUrl: TTS_BASE_URL,
+        ttsModel: TTS_MODEL,
+        ttsVoice: TTS_VOICE,
+        hasTtsApiKey: Boolean(TTS_API_KEY),
         videoBaseUrl: VIDEO_BASE_URL,
         videoModel: VIDEO_MODEL,
         hasVideoApiKey: Boolean(VIDEO_API_KEY),
@@ -3019,6 +3949,14 @@ const apiRoutes = [
             baseUrl: WISECH_VIDEO_BASE_URL,
             model: WISECH_VIDEO_MODEL,
             hasApiKey: Boolean(WISECH_VIDEO_API_KEY),
+          },
+          kling: {
+            baseUrl: KLING_VIDEO_BASE_URL,
+            model: KLING_VIDEO_MODEL,
+            hasApiKey: Boolean(KLING_VIDEO_API_KEY || KLING_ACCESS_KEY),
+            authConfigured: getKlingAuthPublicState(KLING_VIDEO_API_KEY).ok,
+            auth: getKlingAuthPublicState(KLING_VIDEO_API_KEY),
+            endpoint: KLING_OMNI_VIDEO_PATH,
           },
           toapis: {
             baseUrl: VIDEO_BASE_URL || TOAPIS_BASE_URL,
@@ -3044,7 +3982,7 @@ const apiRoutes = [
     path: "/api/video",
     handler: async ({ body }) => {
       if (!hasPassingVideoExecutionPackage(body)) {
-        return createApiResponse(400, { error: "Please pass storyboard preflight and compile a video execution package before generating video." });
+        return createApiResponse(400, { error: "Please pass first-frame preflight and compile a video execution package before generating video." });
       }
       const firstFrameUrl = getVideoFirstFrameUrl(body);
       if (!firstFrameUrl || !isReadableVideoFirstFrameUrl(firstFrameUrl)) {
@@ -3055,7 +3993,7 @@ const apiRoutes = [
         ...body,
         action_prompt: executionPackage.finalVideoPrompt,
         scene_prompt: executionPackage.storyIntent?.sceneAnchor || body.scene_prompt,
-        motion_rule: `Use verified storyboard camera path: ${executionPackage.cameraPath || "front -> front_three_quarter -> front"}`,
+        motion_rule: `Use verified first-frame camera path: ${executionPackage.cameraPath || "front -> front_three_quarter -> front"}`,
       };
       const baseConfig = pickProxyConfig(executionPayload, OPENAI_VIDEO_GENERATIONS_PATH, "video");
       return proxyJson(OPENAI_VIDEO_GENERATIONS_PATH, buildVideoPayload(executionPayload, { compactShishiPrompt: isShishiKejiUrl(baseConfig.upstreamUrl) }), "video");
@@ -3089,6 +4027,11 @@ const apiRoutes = [
   },
   {
     method: "POST",
+    path: "/api/voiceover",
+    handler: async ({ body }) => proxyVoiceover(body),
+  },
+  {
+    method: "POST",
     path: "/api/prompt-suggestion",
     handler: async ({ body }) => proxyPromptSuggestion(body),
   },
@@ -3112,6 +4055,36 @@ const apiRoutes = [
     path: "/api/video-status",
     handler: async ({ body }) => proxyVideoStatus(body),
   },
+  {
+    method: "GET",
+    path: "/api/video-download",
+    handler: async ({ url }) => proxyVideoDownload(url),
+  },
+  {
+    method: "POST",
+    path: "/api/save-video-download",
+    handler: async ({ body }) => saveVideoDownload(body),
+  },
+  {
+    method: "POST",
+    path: "/api/render-post-video",
+    handler: async ({ body }) => renderPostVideo(body),
+  },
+  {
+    method: "GET",
+    path: "/api/local-video",
+    handler: async ({ url, req }) => serveLocalVideo(url, req),
+  },
+  {
+    method: "GET",
+    path: "/api/history",
+    handler: async () => createApiResponse(200, { ok: true, items: readLocalHistoryItems() }),
+  },
+  {
+    method: "POST",
+    path: "/api/history",
+    handler: async ({ body }) => createApiResponse(200, { ok: true, items: writeLocalHistoryItems(body?.items) }),
+  },
 ];
 
 function findApiRoute(method, pathname) {
@@ -3126,6 +4099,13 @@ function findApiRoute(method, pathname) {
         if (!taskId) return createApiResponse(400, { error: "Missing video task id. Please generate again." });
         return proxyVideoStatus({ task_id: taskId });
       },
+    };
+  }
+  if (method === "GET" && pathname.startsWith("/api/history-asset/")) {
+    return {
+      method,
+      path: "/api/history-asset/:file",
+      handler: async () => serveHistoryAsset(decodeURIComponent(pathname.replace("/api/history-asset/", ""))),
     };
   }
   return null;
@@ -3146,6 +4126,10 @@ async function handleApiRequest(req, res) {
 
   const body = await readRequestBody(req);
   const result = await route.handler({ req, url, body });
+  if (result.binary) {
+    sendBinary(res, result.status, result.body, result.headers);
+    return;
+  }
   sendJson(res, result.status, result.payload);
 }
 

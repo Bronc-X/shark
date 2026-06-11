@@ -4,17 +4,19 @@ import {
   ClipboardCheck,
   CloudUpload,
   Database,
-  Dices,
+  Download,
   FileImage,
   Film,
   KeyRound,
   LoaderCircle,
+  Pause,
   Play,
   Send,
   ShieldCheck,
   Sparkles,
   Trash2,
   Upload,
+  Volume2,
   Wand2,
   X,
 } from "lucide-react";
@@ -95,6 +97,8 @@ type StoryboardFrame = {
   beat: string;
   action: string;
   viewAngle: string;
+  kind?: "firstFrame" | "shot";
+  useAsShot?: boolean;
   checks?: StoryboardCheck[];
 };
 
@@ -167,7 +171,7 @@ type LockNode = {
 type ApiSettings = {
   imagePath: string;
   imageModel: string;
-  videoProvider: "shishi" | "wisech" | "toapis";
+  videoProvider: "shishi" | "wisech" | "kling" | "toapis";
   videoBaseUrl: string;
   videoPath: string;
   videoApiKey: string;
@@ -184,6 +188,7 @@ type HistoryItem = {
   status: "成功" | "失败" | "处理中";
   productType?: string;
   sceneTitle?: string;
+  sourceScript?: string;
   scenePrompt?: string;
   videoPrompt?: string;
   model?: string;
@@ -195,6 +200,8 @@ type HistoryItem = {
   detailUrl?: string;
   firstFrameUrl?: string;
   videoUrl?: string;
+  renderedVideoPath?: string;
+  renderedVideoFileName?: string;
   productViewUrls?: string[];
   supportImageUrls?: string[];
   error?: string;
@@ -227,6 +234,14 @@ type ProductPreset = {
   views: readonly ProductPresetView[];
   supportViews?: readonly ProductPresetSupportView[];
   lockNodes: readonly LockNode[];
+};
+
+type TimedScriptSegment = {
+  start: number;
+  end: number;
+  body: string;
+  subtitle: string;
+  voiceover: string;
 };
 
 const STORAGE_KEY = "videoai.apiSettings";
@@ -275,12 +290,13 @@ function sanitizeLockNode(node: LockNode): LockNode {
 const VIDEO_PROVIDER_DURATION_CAPS: Record<ApiSettings["videoProvider"], { min: number; max: number; note: string }> = {
   shishi: { min: 5, max: 15, note: "石狮通道会按所选秒数提交，实际成片仍以上游返回为准。" },
   wisech: { min: 4, max: 15, note: "Wisech / 云书 Seedance 2.0 按官方区间可提交 4-15 秒；实际成片仍以上游返回为准。" },
+  kling: { min: 3, max: 15, note: "Kling Direct 走官方 Omni-Video：默认一次提交完整脚本、已确认首帧和四视图参考；只有脚本明确按秒拆段时才启用 multi-shot。" },
   toapis: { min: 4, max: 15, note: "ToAPI video models use the backend key; the final clip length follows the upstream model response." },
 };
 
 const steps: Array<{ id: StepId; label: string; shortLabel: string; description: string; icon: LucideIcon }> = [
   { id: "upload", label: "上传产品四视图", shortLabel: "上传", description: "正面、左侧、右侧、背面四张核心图", icon: Upload },
-  { id: "storyboard", label: "生成分镜", shortLabel: "分镜", description: "先生成剧情意图，再生成可预检分镜", icon: ClipboardCheck },
+  { id: "storyboard", label: "生成并确认首帧", shortLabel: "首帧", description: "贴脚本，先生首帧，确认后进视频", icon: ClipboardCheck },
   { id: "video", label: "生成视频", shortLabel: "视频", description: "通过执行包预检后一次提交", icon: Film },
 ];
 const visibleSteps = steps;
@@ -800,6 +816,10 @@ const VIDEO_MODEL_OPTIONS: Record<ApiSettings["videoProvider"], readonly { value
     { value: "yunshu-2-0-260128-1080p", label: "\u4e91\u4e66 Seedance 2.0 - 1080p - \u00a52.48/\u79d2 - yunshu-2-0-260128-1080p" },
     { value: "yunshu-2-0-260128-720p", label: "\u4e91\u4e66 Seedance 2.0 - 720p - \u00a50.99/\u79d2 - yunshu-2-0-260128-720p" },
   ],
+  kling: [
+    { value: "kling-v3-omni", label: "Kling VIDEO 3.0 Omni - prompt + first frame + references - official pricing" },
+    { value: "kling-video-o1", label: "Kling O1 Omni - references + first/end frame - official pricing" },
+  ],
   toapis: [
     { value: "kling-v3", label: "kling-v3 - \u00a50.84/\u79d2 (12 credits/\u79d2)" },
     { value: "seedance-2-fast", label: "seedance-2-fast - \u00a51.44/\u79d2 (20.5714 credits/\u79d2)" },
@@ -811,6 +831,7 @@ const VIDEO_MODEL_OPTIONS: Record<ApiSettings["videoProvider"], readonly { value
 const VIDEO_PROVIDER_OPTIONS = [
   { value: "shishi", label: "石狮接口", baseUrl: "https://api.shishikeji.com", model: "2.0" },
   { value: "wisech", label: "Wisech / 云书 Seedance", baseUrl: "https://ai.wisech.com/v1", model: "yunshu-2-0-260128-1080p" },
+  { value: "kling", label: "Kling Direct / 官方 Omni", baseUrl: "https://api-singapore.klingai.com", model: "kling-v3-omni" },
   { value: "toapis", label: "ToAPI", baseUrl: "https://toapis.com/v1", model: "kling-v3" },
 ] as const;
 
@@ -835,6 +856,12 @@ function getVideoModelDurationCap(provider: ApiSettings["videoProvider"], model:
   if (provider === "wisech") {
     return { min: 4, max: 15, note: "Seedance 2.0 系列官方 duration 区间为 4-15 秒，或设置为 -1 由模型自选。" };
   }
+  if (provider === "kling" && /o1/i.test(model)) {
+    return { min: 3, max: 10, note: "Kling O1 Omni 常规图生视频时长按官方文档限制在 3-10 秒。" };
+  }
+  if (provider === "kling") {
+    return { min: 3, max: 15, note: "Kling VIDEO 3.0 Omni 默认使用单条完整 prompt；multi-shot 只用于用户脚本已经明确按秒拆段的场景。" };
+  }
   return getVideoDurationCap(provider);
 }
 
@@ -849,6 +876,7 @@ function getDefaultVideoModel(provider: ApiSettings["videoProvider"]) {
 function getVideoModelResolution(provider: ApiSettings["videoProvider"], model: string) {
   if (provider === "shishi") return "720p";
   if (provider === "wisech" && /720p/i.test(model)) return "720p";
+  if (provider === "kling") return /4k/i.test(model) ? "4k" : "1080p";
   return "1080p";
 }
 
@@ -937,6 +965,244 @@ function getStatusMessageTone(message: string): "success" | "info" | "" {
   return "";
 }
 
+function normalizeTimingLine(line: string) {
+  const match = line.match(/^\s*(\d+(?:\.\d+)?)\s*(?:-|–|—|到|至)\s*(\d+(?:\.\d+)?)\s*秒?/);
+  if (!match) return null;
+  const start = Number(match[1]);
+  const end = Number(match[2]);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null;
+  return { start, end };
+}
+
+function stripScriptLabel(line: string) {
+  return line.replace(/^\s*(画面|字幕|旁白|配音|音效|音乐|镜头|场景|动作)\s*[:：]\s*/i, "").trim();
+}
+
+function getScriptLineLabel(line: string) {
+  const match = line.match(/^\s*([A-Za-z\u4e00-\u9fa5]+)\s*[:：]/);
+  return match ? match[1].trim().toLowerCase() : "";
+}
+
+function isTimedScriptLine(line: string) {
+  return /^\s*(?:第\s*)?\d+(?:\.\d+)?\s*(?:-|~|–|—|到|至)\s*\d+(?:\.\d+)?\s*秒?/i.test(line);
+}
+
+function stripPostProductionTextFromScript(script: string) {
+  const postLabels = new Set(["字幕", "subtitle", "subtitles", "caption", "captions", "旁白", "配音", "voiceover", "vo"]);
+  const visualOrSoundLabels = new Set(["画面", "镜头", "场景", "动作", "音效", "音乐", "bgm", "sound", "sfx"]);
+  const output: string[] = [];
+  let skipping = false;
+  for (const rawLine of script.split(/\r?\n/)) {
+    const label = getScriptLineLabel(rawLine);
+    if (isTimedScriptLine(rawLine)) {
+      skipping = false;
+      output.push(rawLine);
+      continue;
+    }
+    if (postLabels.has(label)) {
+      skipping = true;
+      continue;
+    }
+    if (visualOrSoundLabels.has(label)) {
+      skipping = false;
+      output.push(rawLine);
+      continue;
+    }
+    if (skipping) continue;
+    output.push(rawLine);
+  }
+  return output.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+function collectLabeledBlock(lines: string[], labels: string[]) {
+  const labelPattern = new RegExp(`^\\s*(${labels.join("|")})\\s*[:：]\\s*(.*)$`, "i");
+  const stopPattern = /^\s*(画面|字幕|旁白|配音|音效|音乐|镜头|场景|动作)\s*[:：]/i;
+  const output: string[] = [];
+  let collecting = false;
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    const match = line.match(labelPattern);
+    if (match) {
+      collecting = true;
+      if (match[2]?.trim()) output.push(match[2].trim());
+      continue;
+    }
+    if (collecting && stopPattern.test(line)) break;
+    if (collecting && line) output.push(line);
+  }
+  return output.join("\n").trim();
+}
+
+function parseTimedScriptSegments(script: string): TimedScriptSegment[] {
+  const lines = script.split(/\r?\n/);
+  const segments: Array<{ start: number; end: number; lines: string[] }> = [];
+  let current: { start: number; end: number; lines: string[] } | null = null;
+  for (const line of lines) {
+    const timing = normalizeTimingLine(line);
+    if (timing) {
+      if (current) segments.push(current);
+      current = { ...timing, lines: [] };
+      continue;
+    }
+    if (current) current.lines.push(line);
+  }
+  if (current) segments.push(current);
+
+  return segments.map((segment) => {
+    const cleanLines = segment.lines.map((line) => line.trim()).filter(Boolean);
+    const subtitle = collectLabeledBlock(cleanLines, ["字幕", "subtitle", "caption"]) || cleanLines.map(stripScriptLabel).filter(Boolean).join("\n");
+    const voiceover = collectLabeledBlock(cleanLines, ["旁白", "配音", "voiceover", "vo"]) || subtitle;
+    return {
+      start: segment.start,
+      end: segment.end,
+      body: cleanLines.join("\n"),
+      subtitle,
+      voiceover,
+    };
+  });
+}
+
+function formatSrtTime(seconds: number) {
+  const safe = Math.max(0, seconds);
+  const hours = Math.floor(safe / 3600);
+  const minutes = Math.floor((safe % 3600) / 60);
+  const secs = Math.floor(safe % 60);
+  const millis = Math.round((safe - Math.floor(safe)) * 1000);
+  return [hours, minutes, secs].map((item) => String(item).padStart(2, "0")).join(":") + `,${String(millis).padStart(3, "0")}`;
+}
+
+function formatTimelineTime(seconds: number) {
+  const safe = Math.max(0, seconds);
+  const minutes = Math.floor(safe / 60);
+  const secs = Math.floor(safe % 60);
+  return `${minutes}:${String(secs).padStart(2, "0")}`;
+}
+
+function buildPostSubtitleDraft(script: string) {
+  const segments = parseTimedScriptSegments(script);
+  if (!segments.length) return script.trim();
+  return segments.map((segment) => segment.subtitle).filter(Boolean).join("\n\n");
+}
+
+function buildPostVoiceoverDraft(script: string) {
+  const segments = parseTimedScriptSegments(script);
+  if (!segments.length) return script.trim();
+  return segments.map((segment) => segment.voiceover).filter(Boolean).join("\n");
+}
+
+function buildSrtFromScript(script: string) {
+  const segments = parseTimedScriptSegments(script).filter((segment) => segment.subtitle);
+  return segments
+    .map((segment, index) => [
+      String(index + 1),
+      `${formatSrtTime(segment.start)} --> ${formatSrtTime(segment.end)}`,
+      segment.subtitle,
+    ].join("\n"))
+    .join("\n\n");
+}
+
+function downloadTextFile(fileName: string, text: string) {
+  if (typeof window === "undefined") return;
+  const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+  const url = window.URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = fileName;
+  anchor.click();
+  window.URL.revokeObjectURL(url);
+}
+
+function createAudioObjectUrlFromBase64(base64: string, contentType = "audio/mpeg") {
+  const binary = window.atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return window.URL.createObjectURL(new Blob([bytes], { type: contentType }));
+}
+
+function arrayBufferToBase64(buffer: ArrayBuffer) {
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
+  }
+  return window.btoa(binary);
+}
+
+async function saveVideoAssetToDownloads(videoUrl: string) {
+  let body: Record<string, string>;
+  if (/^[A-Za-z]:[\\/]/.test(videoUrl)) {
+    body = { sourcePath: videoUrl };
+  } else if (/^https?:\/\//i.test(videoUrl)) {
+    body = { url: videoUrl };
+  } else {
+    const sourceResponse = await fetch(videoUrl);
+    if (!sourceResponse.ok) throw new Error("无法读取当前预览视频，请重新载入历史记录后再保存。");
+    const sourceBlob = await sourceResponse.blob();
+    if (!sourceBlob.size) throw new Error("当前预览视频为空，不能保存。");
+    body = {
+      dataBase64: arrayBufferToBase64(await sourceBlob.arrayBuffer()),
+      contentType: sourceBlob.type || "video/mp4",
+    };
+  }
+  const response = await fetch("/api/save-video-download", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const data: unknown = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(extractErrorMessage(data, response.status));
+  }
+  const record = data && typeof data === "object" ? (data as Record<string, unknown>) : {};
+  const filePath = typeof record.filePath === "string" ? record.filePath : "";
+  if (!filePath) throw new Error("视频已保存，但没有拿到本地文件路径。");
+  return filePath;
+}
+
+async function renderPostVideoToDownloads(
+  videoUrl: string,
+  segments: TimedScriptSegment[],
+  voiceoverAudioBase64: string,
+  voiceoverAudioContentType: string,
+  includeSubtitles: boolean,
+  includeVoiceover: boolean,
+) {
+  const body: Record<string, unknown> = {
+    segments,
+    voiceoverAudioBase64,
+    voiceoverAudioContentType,
+    includeSubtitles,
+    includeVoiceover,
+  };
+  if (/^https?:\/\//i.test(videoUrl)) {
+    body.sourceVideoUrl = videoUrl;
+  } else {
+    const sourceResponse = await fetch(videoUrl);
+    if (!sourceResponse.ok) throw new Error("无法读取当前预览视频，请重新载入历史记录后再保存。");
+    const sourceBlob = await sourceResponse.blob();
+    if (!sourceBlob.size) throw new Error("当前预览视频为空，不能保存。");
+    body.sourceVideoBase64 = arrayBufferToBase64(await sourceBlob.arrayBuffer());
+    body.sourceVideoContentType = sourceBlob.type || "video/mp4";
+  }
+  const response = await fetch("/api/render-post-video", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const data: unknown = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(extractErrorMessage(data, response.status));
+  }
+  const record = data && typeof data === "object" ? (data as Record<string, unknown>) : {};
+  const filePath = typeof record.filePath === "string" ? record.filePath : "";
+  const fileName = typeof record.fileName === "string" ? record.fileName : "";
+  if (!filePath) throw new Error("完整 MP4 已生成，但没有拿到本地文件路径。");
+  return { filePath, fileName };
+}
+
 function loadApiSettings(): ApiSettings {
   if (typeof window === "undefined") return defaultApiSettings;
   try {
@@ -949,10 +1215,12 @@ function loadApiSettings(): ApiSettings {
     if (merged.imagePath === "/images/generations") merged.imagePath = "";
     if (merged.videoPath === "/videos/generations") merged.videoPath = "";
     const normalizedVideoBaseUrl = typeof merged.videoBaseUrl === "string" ? merged.videoBaseUrl.replace(/\/+$/, "") : "";
-    if (parsed.videoProvider !== "wisech" && parsed.videoProvider !== "shishi" && parsed.videoProvider !== "toapis") {
+    if (parsed.videoProvider !== "wisech" && parsed.videoProvider !== "shishi" && parsed.videoProvider !== "kling" && parsed.videoProvider !== "toapis") {
       merged.videoProvider =
         normalizedVideoBaseUrl === "https://ai.wisech.com/v1"
           ? "wisech"
+          : normalizedVideoBaseUrl === "https://api-singapore.klingai.com" || normalizedVideoBaseUrl === "https://api-beijing.klingai.com"
+            ? "kling"
           : normalizedVideoBaseUrl === "https://toapis.com/v1"
             ? "toapis"
             : "shishi";
@@ -963,6 +1231,8 @@ function loadApiSettings(): ApiSettings {
       normalizedVideoBaseUrl === "https://dashscope.aliyuncs.com/api/v1" ||
       normalizedVideoBaseUrl === "https://dashscope.aliyuncs.com/api/v1/services/aigc/video-generation/video-synthesis" ||
       normalizedVideoBaseUrl === "https://api.shishikeji.com" ||
+      normalizedVideoBaseUrl === "https://api-singapore.klingai.com" ||
+      normalizedVideoBaseUrl === "https://api-beijing.klingai.com" ||
       normalizedVideoBaseUrl === "https://toapis.com/v1"
     ) {
       merged.videoBaseUrl = defaultApiSettings.videoBaseUrl;
@@ -1059,6 +1329,30 @@ function loadHistoryItems(): HistoryItem[] {
   }
 }
 
+function getHistorySortValue(item: HistoryItem) {
+  const value = Date.parse(item.createdAt || item.time || "");
+  return Number.isFinite(value) ? value : 0;
+}
+
+function getHistoryItemsStorageSignature(items: HistoryItem[]) {
+  return JSON.stringify(items.slice(0, MAX_HISTORY_ITEMS).map(sanitizeHistoryItemForStorage));
+}
+
+function mergeHistoryItems(currentItems: HistoryItem[], incomingItems: HistoryItem[]) {
+  const byId = new Map<string, HistoryItem>();
+  for (const item of currentItems) byId.set(item.id, item);
+  for (const item of incomingItems) {
+    const existing = byId.get(item.id);
+    byId.set(item.id, existing ? { ...existing, ...item } : item);
+  }
+  const mergedItems = Array.from(byId.values())
+    .sort((first, second) => getHistorySortValue(second) - getHistorySortValue(first))
+    .slice(0, MAX_HISTORY_ITEMS);
+  return getHistoryItemsStorageSignature(mergedItems) === getHistoryItemsStorageSignature(currentItems)
+    ? currentItems
+    : mergedItems;
+}
+
 function createHistoryItem(
   id: string,
   kind: "firstFrame" | "video",
@@ -1068,8 +1362,8 @@ function createHistoryItem(
   const now = new Date();
   return {
     id,
-    type: kind === "firstFrame" ? "分镜" : "视频",
-    title: kind === "firstFrame" ? "分镜生成" : "视频生成",
+    type: kind === "firstFrame" ? "首帧" : "视频",
+    title: kind === "firstFrame" ? "首帧生成" : "视频生成",
     time: formatHistoryTime(now),
     createdAt: now.toISOString(),
     status,
@@ -1091,6 +1385,14 @@ function isHistoryAssetRef(value?: string) {
 
 function isLargeInlineAsset(value?: string) {
   return typeof value === "string" && value.startsWith("data:");
+}
+
+function isLocalVideoPath(value?: string) {
+  return typeof value === "string" && /^[A-Za-z]:[\\/].+\.mp4$/i.test(value);
+}
+
+function getLocalVideoAssetUrl(value?: string) {
+  return isLocalVideoPath(value) ? `/api/local-video?path=${encodeURIComponent(value || "")}` : "";
 }
 
 function openHistoryAssetDb() {
@@ -1170,6 +1472,13 @@ function sanitizeHistoryItemForStorage(item: HistoryItem): HistoryItem {
 function saveHistoryItems(items: HistoryItem[]) {
   const storedItems = items.slice(0, MAX_HISTORY_ITEMS).map(sanitizeHistoryItemForStorage);
   void Promise.all(items.slice(0, MAX_HISTORY_ITEMS).map(writeHistoryItemAssets)).catch(() => undefined);
+  if (storedItems.length > 0) {
+    void fetch("/api/history", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ items: storedItems }),
+    }).catch(() => undefined);
+  }
   try {
     window.localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(storedItems));
   } catch (error) {
@@ -1183,6 +1492,21 @@ function saveHistoryItems(items: HistoryItem[]) {
       }
     }
   }
+}
+
+function clearSavedHistoryItems() {
+  if (typeof window !== "undefined") {
+    try {
+      window.localStorage.removeItem(HISTORY_STORAGE_KEY);
+    } catch {
+      // Ignore storage cleanup failures.
+    }
+  }
+  void fetch("/api/history", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ items: [] }),
+  }).catch(() => undefined);
 }
 
 function extractTaskId(data: unknown) {
@@ -1302,6 +1626,10 @@ function extractErrorMessage(data: unknown, status = 0) {
       : "这次请求没有成功，请稍后再试。";
   if (!data || typeof data !== "object") return fallback;
   const record = data as Record<string, unknown>;
+  const nestedData = record.data && typeof record.data === "object" ? (record.data as Record<string, unknown>) : {};
+  for (const value of [record.task_status_msg, record.fail_reason, nestedData.task_status_msg, nestedData.fail_reason]) {
+    if (typeof value === "string" && value.trim()) return toUserMessage(value);
+  }
   const error = record.error;
   if (typeof error === "string") return toUserMessage(error);
   if (error && typeof error === "object") {
@@ -1311,6 +1639,9 @@ function extractErrorMessage(data: unknown, status = 0) {
   }
   if (typeof record.message === "string") return toUserMessage(record.message);
   if (typeof record.code === "string") return toUserMessage(record.code);
+  const nestedError = nestedData.error && typeof nestedData.error === "object" ? (nestedData.error as Record<string, unknown>) : {};
+  if (typeof nestedError.message === "string") return toUserMessage(nestedError.message);
+  if (typeof nestedError.code === "string") return toUserMessage(nestedError.code);
   if (typeof record.raw === "string" && record.raw.includes("Error code 524")) {
     return "这次处理时间太久了，请稍后再试。";
   }
@@ -1349,7 +1680,7 @@ function toUserMessage(message: string) {
     return `上游服务这次内部处理失败，系统已经停止本次任务。可以直接重试一次${requestId ? `；请求编号：${requestId}` : ""}。`;
   }
   if (/InputTextSensitiveContentDetected|sensitive information|sensitive content|敏感/i.test(text)) {
-    return "视频通道拦截了本次完整请求。这不一定是你输入的单句提示词有问题，也可能来自系统拼接后的产品锁、起始分镜图、素材组合或上游通道策略。";
+    return "视频通道拦截了本次完整请求。这不一定是你输入的单句提示词有问题，也可能来自系统拼接后的产品锁、首帧图、素材组合或上游通道策略。";
   }
   if (/api key|unauthorized|forbidden|not configured|missing key|请先填写 API Key/i.test(text)) {
     return "服务密钥还没有配置好，请先让管理员确认后台配置。";
@@ -1360,7 +1691,7 @@ function toUserMessage(message: string) {
   if (/model_not_found|No available channel|没有找到模型|模型不存在|模型不可用|model .*not/i.test(text)) {
     return "当前模型暂时不可用，请换一个模型，或让管理员确认模型名称。";
   }
-  if (/上游图片服务连接失败|上游视频服务连接失败|分镜生成服务暂时连不上|视频生成服务暂时连不上/i.test(text)) {
+  if (/上游图片服务连接失败|上游视频服务连接失败|首帧生成服务暂时连不上|分镜生成服务暂时连不上|视频生成服务暂时连不上/i.test(text)) {
     return text;
   }
   if (/timeout|timed out|Error code 524|超时/i.test(text)) {
@@ -1376,7 +1707,7 @@ function toUserMessage(message: string) {
     return "本地预设图片没有加载成功，请刷新页面或重新选择产品。";
   }
   if (/image\/url|图片地址|image_url|b64_json/i.test(text)) {
-    return "这次没有拿到分镜图片结果，请稍后再试，或换一个分镜模型。";
+    return "这次没有拿到首帧图片结果，请稍后再试，或换一个首帧模型。";
   }
   if (/视频地址|任务号|video url|task id/i.test(text)) {
     return "这次没有拿到视频结果，也没有拿到可查询的任务号，请重新生成一次。";
@@ -1494,6 +1825,27 @@ function getSlotImageUrl(slot?: UploadSlot) {
   return slot.dataUrl || "";
 }
 
+function createManualStoryIntent(script: string, productType: string, motionMode: MotionMode): StoryIntent {
+  const text = stripPostProductionTextFromScript(script).trim() || "产品在生活化场景里完成一个轻松、可见、低风险的小动作。";
+  return {
+    storyTitle: "用户视频脚本",
+    storyIntent: text,
+    sceneAnchor: text,
+    motionMode,
+    productType,
+    stableProductName: productType,
+    beats: [
+      {
+        id: "manual_script",
+        beat: "首帧确认后的完整动作脚本",
+        action: text,
+        camera: "front",
+      },
+    ],
+    riskNotes: [],
+  };
+}
+
 export function App() {
   const [activeStep, setActiveStep] = useState<StepId>("upload");
   const [slots, setSlots] = useState(() => createPresetSlots(SHARK_INFLATABLE_TYPE));
@@ -1510,7 +1862,6 @@ export function App() {
   const [aspectRatio, setAspectRatio] = useState("9:16");
   const [motionMode, setMotionMode] = useState<MotionMode>("strict");
   const [storyDirection, setStoryDirection] = useState("");
-  const [storyRevision, setStoryRevision] = useState("");
   const [storyIntent, setStoryIntent] = useState<StoryIntent | null>(null);
   const [storyboards, setStoryboards] = useState<StoryboardFrame[]>([]);
   const [selectedStoryboardIds, setSelectedStoryboardIds] = useState<string[]>([]);
@@ -1521,19 +1872,80 @@ export function App() {
   const [videoTaskId, setVideoTaskId] = useState("");
   const [videoStatus, setVideoStatus] = useState<VideoStatus>("idle");
   const [videoUrl, setVideoUrl] = useState("");
+  const [currentVideoHistoryItemId, setCurrentVideoHistoryItemId] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [testing, setTesting] = useState<"image" | "video" | "">("");
   const [activeJob, setActiveJob] = useState<WorkflowJobKind | "">("");
   const [progressEvents, setProgressEvents] = useState<ProgressEvent[]>([]);
   const currentJobIdRef = useRef("");
+  const backendHistorySyncedRef = useRef(false);
 
   useEffect(() => {
     saveApiSettings(apiSettings);
   }, [apiSettings]);
 
+  function patchHistoryItem(id: string, patch: Partial<HistoryItem>) {
+    if (!id) return;
+    setHistoryItems((current) => current.map((item) => (item.id === id ? { ...item, ...patch } : item)));
+  }
+
+  function saveRenderedVideoHistory(filePath: string, fileName: string) {
+    if (!filePath) return;
+    const title = fileName ? `字幕旁白完整视频：${fileName}` : "字幕旁白完整视频";
+    const historyItem = createHistoryItem(
+      `POST-${Date.now()}`,
+      "video",
+      "成功",
+      createHistoryDetail("video", "成功", {
+        title,
+        taskId: videoTaskId || currentVideoHistoryItemId || undefined,
+        videoUrl: videoUrl || undefined,
+        detailUrl: videoUrl || undefined,
+        renderedVideoPath: filePath,
+        renderedVideoFileName: fileName,
+      }),
+    );
+    setHistoryItems((current) => upsertHistoryItem(current, historyItem));
+  }
+
   useEffect(() => {
+    if (!backendHistorySyncedRef.current) return;
     saveHistoryItems(historyItems);
   }, [historyItems]);
+
+  function syncHistoryFromBackend() {
+    return fetch("/api/history")
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data: unknown) => {
+        if (!data || typeof data !== "object") return;
+        const items = (data as { items?: unknown }).items;
+        if (!Array.isArray(items)) {
+          backendHistorySyncedRef.current = true;
+          return;
+        }
+        const restoredItems = items.filter(isHistoryItem).map((item) => ({ ...item, createdAt: item.createdAt || item.time })).slice(0, MAX_HISTORY_ITEMS);
+        if (restoredItems.length) setHistoryItems((current) => mergeHistoryItems(current, restoredItems));
+        backendHistorySyncedRef.current = true;
+      })
+      .catch(() => {
+        backendHistorySyncedRef.current = true;
+      });
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+    const syncIfActive = () => {
+      if (!cancelled) void syncHistoryFromBackend();
+    };
+    syncIfActive();
+    window.addEventListener("focus", syncIfActive);
+    const intervalId = window.setInterval(syncIfActive, 5000);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", syncIfActive);
+      window.clearInterval(intervalId);
+    };
+  }, []);
 
   useEffect(() => {
     const preset = getProductPreset(costumeType);
@@ -1602,6 +2014,7 @@ export function App() {
     return {
       productType: costumeType,
       sceneTitle: storyIntent?.storyTitle || "",
+      sourceScript: storyDirection,
       scenePrompt: storyIntent?.storyIntent || storyDirection,
       videoPrompt: videoExecutionPackage?.finalVideoPrompt || storyIntent?.storyIntent || "",
       model: kind === "firstFrame" ? apiSettings.imageModel : apiSettings.videoModel,
@@ -1655,6 +2068,7 @@ export function App() {
   const usesFixedVideoBackend =
     apiSettings.videoProvider === "shishi" ||
     apiSettings.videoProvider === "wisech" ||
+    apiSettings.videoProvider === "kling" ||
     apiSettings.videoProvider === "toapis" ||
     !normalizedVideoBaseUrlForRequest ||
     normalizedVideoBaseUrlForRequest === defaultApiSettings.videoBaseUrl;
@@ -1691,12 +2105,13 @@ export function App() {
       video_provider: apiSettings.videoProvider,
     },
   };
+  const usesKlingDirect = apiSettings.videoProvider === "kling";
   const videoSubmitPayload = {
     ...videoPayload,
-    image_urls: [],
-    support_image_urls: [],
+    image_urls: usesKlingDirect ? requiredUrls : [],
+    support_image_urls: usesKlingDirect ? supportImageUrls : [],
     detail_image_urls: [],
-    storyboards: selectedStoryboards.map(redactStoryboardImageForSubmit),
+    storyboards: usesKlingDirect ? selectedStoryboards : selectedStoryboards.map(redactStoryboardImageForSubmit),
     video_execution_package: slimVideoExecutionPackage,
   };
   const videoSafetyPayload = {
@@ -1759,7 +2174,6 @@ export function App() {
 
   function invalidateGeneratedOutputs() {
     setStoryIntent(null);
-    setStoryRevision("");
     setStoryboards([]);
     setSelectedStoryboardIds([]);
     setStoryboardPreflight(null);
@@ -1771,7 +2185,6 @@ export function App() {
   function invalidateStoryboardOutputs(keepIntent = true) {
     if (!keepIntent) {
       setStoryIntent(null);
-      setStoryRevision("");
     }
     setStoryboards([]);
     setSelectedStoryboardIds([]);
@@ -1841,80 +2254,59 @@ export function App() {
     if (activeStep !== "upload") setActiveStep("storyboard");
   }
 
-  async function requestStoryIntent(revisionInstruction = "") {
-    setActiveJob("storyIntent");
-    resetProgress("storyIntent", revisionInstruction ? "剧情意图改写" : "剧情意图生成");
-    setStoryboardError("");
-    setVideoError("");
-    try {
-      addProgressEvent("step.started", "调用剧情模型", "根据产品锁点、动作模式和用户方向生成可拍的小剧情。");
-      const response = await fetch("/api/story-intent", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: apiSettings.promptModel,
-          product_type: costumeType,
-          user_direction: storyDirection,
-          revision_instruction: revisionInstruction,
-          current_intent: storyIntent,
-          motion_mode: motionMode,
-          locked_nodes: lockedNodePayload,
-        }),
-      });
-      const data: unknown = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(extractErrorMessage(data, response.status));
-      const nextIntent = data as StoryIntent;
-      if (!nextIntent.storyIntent || !Array.isArray(nextIntent.beats)) throw new Error("Story model did not return a usable intent.");
-      invalidateStoryboardOutputs(true);
-      setStoryIntent(nextIntent);
-      setStoryRevision("");
-      addProgressEvent("artifact.created", "剧情意图已生成", nextIntent.storyTitle || "Story intent ready", "done");
-      addProgressEvent("job.completed", "剧情意图完成", "可以继续生成候选分镜。", "done");
-    } catch (error) {
-      const message = error instanceof Error ? toUserMessage(error.message) : "剧情意图没有生成成功，请稍后再试。";
-      addProgressEvent("step.failed", "剧情意图失败", message, "failed");
-      setStoryboardError(message);
-    } finally {
-      setActiveJob("");
-    }
-  }
-
   async function requestStoryboards() {
-    if (!storyIntent) {
-      setStoryboardError("请先生成或确认剧情意图，再生成分镜。");
+    const intent = storyIntent || createManualStoryIntent(storyDirection, costumeType, motionMode);
+    if (!intent.storyIntent.trim()) {
+      setStoryboardError("请先贴上视频脚本或动作文字，再生成首帧。");
       return;
     }
     setActiveJob("storyboard");
-    resetProgress("storyboard", "分镜生成");
+    resetProgress("storyboard", "首帧生成");
     setStoryboardError("");
     setVideoError("");
     try {
-      addProgressEvent("step.started", "整理四视图和剧情", "把四张核心视图、辅助角度、结构化锁点和剧情意图打包给图片模型。");
+      addProgressEvent("step.started", "整理四视图和脚本", "把四张核心视图、辅助角度、结构化锁点和用户脚本打包给首帧模型。");
       const requestPayload = {
-        ...(await prepareFirstFramePayloadForSubmit(storyboardPayload)),
-        story_intent: storyIntent,
+        ...(await prepareFirstFramePayloadForSubmit({
+          ...storyboardPayload,
+          scene_prompt: stripPostProductionTextFromScript(intent.storyIntent),
+          story_intent: intent,
+        })),
       };
-      addProgressEvent("tool.started", "提交分镜模型", "分镜可以多次生成，用来在低成本阶段收敛动作路径。");
-      const response = await fetch("/api/storyboards", {
+      addProgressEvent("tool.started", "提交首帧模型", "先生成一张首帧，用户确认后再进入 Kling 视频生成。");
+      const response = await fetch("/api/first-frame", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(requestPayload),
       });
       const data: unknown = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(extractErrorMessage(data, response.status));
-      const record = data && typeof data === "object" ? (data as Record<string, unknown>) : {};
-      const nextStoryboards = Array.isArray(record.storyboards) ? (record.storyboards as StoryboardFrame[]) : [];
-      if (nextStoryboards.length < 3) throw new Error("分镜模型没有返回足够的候选分镜。");
-      setStoryboards(nextStoryboards);
-      setSelectedStoryboardIds(nextStoryboards.slice(0, motionMode === "strict" ? 3 : 5).map((storyboard) => storyboard.id));
+      const firstFrameUrl = extractImageUrl(data);
+      if (!firstFrameUrl) throw new Error("首帧模型没有返回可用图片。");
+      const firstFrame: StoryboardFrame = {
+        id: `first-frame-${Date.now()}`,
+        imageUrl: firstFrameUrl,
+        beat: "已确认首帧",
+        action: intent.storyIntent,
+        viewAngle: "front",
+        kind: "firstFrame",
+        useAsShot: false,
+        checks: [{ id: "first_frame_anchor", status: "pending", detail: "Waiting for user approval before video generation." }],
+      };
+      setStoryIntent(intent);
+      setStoryboards([firstFrame]);
+      setSelectedStoryboardIds([firstFrame.id]);
       setStoryboardPreflight(null);
       setVideoExecutionPackage(null);
       invalidateVideoOutputs();
-      addProgressEvent("artifact.created", "候选分镜已返回", `${nextStoryboards.length} 张分镜候选已生成。`, "done");
-      addProgressEvent("job.completed", "分镜生成完成", "下一步会在提交视频前做执行包预检。", "done");
+      setHistoryItems((current) =>
+        upsertHistoryItem(current, createHistoryItem(firstFrame.id, "firstFrame", "成功", createHistoryDetail("firstFrame", "成功", { firstFrameUrl }))),
+      );
+      addProgressEvent("artifact.created", "首帧已返回", "请确认首帧是否可用；确认后会把首帧和四视图一起提交给 Kling。", "done");
+      addProgressEvent("job.completed", "首帧生成完成", "下一步确认首帧并进入视频生成。", "done");
     } catch (error) {
-      const message = error instanceof Error ? toUserMessage(error.message) : "分镜没有生成成功，请稍后再试。";
-      addProgressEvent("step.failed", "分镜生成失败", message, "failed");
+      const message = error instanceof Error ? toUserMessage(error.message) : "首帧没有生成成功，请稍后再试。";
+      addProgressEvent("step.failed", "首帧生成失败", message, "failed");
       setStoryboardError(message);
     } finally {
       setActiveJob("");
@@ -1922,8 +2314,9 @@ export function App() {
   }
 
   async function compileVideoPackage() {
-    if (!storyIntent || selectedStoryboards.length < 3) {
-      setStoryboardError("请先生成并选择至少 3 张分镜，再编译视频执行包。");
+    const intent = storyIntent || createManualStoryIntent(storyDirection, costumeType, motionMode);
+    if (!intent || selectedStoryboards.length < 1) {
+      setStoryboardError("请先生成并确认一张首帧，再进入视频生成。");
       return;
     }
     setActiveJob("storyboard");
@@ -1933,14 +2326,14 @@ export function App() {
     try {
       const payload = {
         product_type: costumeType,
-        story_intent: storyIntent,
+        story_intent: intent,
         storyboards: selectedStoryboards,
         locked_nodes: lockedNodePayload,
         motion_mode: motionMode,
         video_provider: apiSettings.videoProvider,
         model: apiSettings.videoModel,
       };
-      addProgressEvent("tool.started", "提交前预检", "检查分镜数量、文字禁用项、动作路径和失败分镜。");
+      addProgressEvent("tool.started", "提交前预检", "检查首帧、脚本、文字禁用项和产品锁点。");
       const response = await fetch("/api/video-package", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1955,7 +2348,8 @@ export function App() {
         throw new Error(pkg.preflight?.issues?.[0]?.message || "执行包预检没有通过。");
       }
       addProgressEvent("tool.completed", "预检通过", `镜头路径：${pkg.cameraPath}`, "done");
-      addProgressEvent("artifact.created", "视频执行包已编译", "视频页将使用这份执行包一次性提交给视频模型。", "done");
+      setStoryIntent(intent);
+      addProgressEvent("artifact.created", "视频执行包已编译", "视频页将使用首帧、四视图和一次性脚本提交给视频模型。", "done");
       addProgressEvent("job.completed", "执行包完成", "可以进入视频生成。", "done");
       setActiveStep("video");
     } catch (error) {
@@ -2006,7 +2400,10 @@ export function App() {
   }
 
   function applyHistoryItemToCurrentFlow(item: HistoryItem) {
-    if (item.scenePrompt) setStoryDirection(item.scenePrompt);
+    const restoredScript = item.sourceScript || item.scenePrompt || item.videoPrompt || "";
+    const restoredVideoUrl =
+      item.videoUrl || getLocalVideoAssetUrl(item.renderedVideoPath) || (item.type === "视频" ? item.detailUrl : "") || "";
+    if (restoredScript) setStoryDirection(restoredScript);
     if (item.aspectRatio) setAspectRatio(item.aspectRatio);
     if (item.duration) setDuration(item.requestedDuration || item.duration);
     if (item.motionMode) setMotionMode(item.motionMode);
@@ -2015,7 +2412,7 @@ export function App() {
       const restoredStoryboard: StoryboardFrame = {
         id: `history-storyboard-${item.id}`,
         imageUrl: item.firstFrameUrl,
-        beat: item.scenePrompt || "历史分镜起始图",
+        beat: restoredScript || "历史首帧图",
         action: item.videoPrompt || "历史执行包动作",
         viewAngle: "front",
         checks: [],
@@ -2023,11 +2420,19 @@ export function App() {
       setStoryboards([restoredStoryboard]);
       setSelectedStoryboardIds([restoredStoryboard.id]);
     }
-    if (item.videoUrl) setVideoUrl(item.videoUrl);
-    setVideoStatus(item.videoUrl ? "succeeded" : item.type === "视频" && item.status === "处理中" ? "polling" : "idle");
-    setStoryboardError(item.firstFrameUrl ? "已从历史记录载入起始分镜资产。" : "");
-    setVideoError(item.videoUrl ? "已从历史记录载入视频资产。" : item.error || "");
-    setActiveStep(item.videoUrl ? "video" : "storyboard");
+    if (restoredVideoUrl) setVideoUrl(restoredVideoUrl);
+    setVideoStatus(restoredVideoUrl ? "succeeded" : item.type === "视频" && item.status === "处理中" ? "polling" : "idle");
+    setStoryboardError(item.firstFrameUrl ? "已从历史记录载入首帧资产。" : "");
+    setVideoError(restoredVideoUrl ? "已从历史记录载入视频资产，可继续处理字幕和旁白。" : item.error || "");
+    setActiveStep(restoredVideoUrl || item.type === "视频" ? "video" : "storyboard");
+  }
+
+  function inferHistoryVideoProvider(item: HistoryItem): ApiSettings["videoProvider"] {
+    const model = (item.model || "").toLowerCase();
+    if (model.includes("kling")) return "kling";
+    if (model.includes("yunshu") || model.includes("wisech")) return "wisech";
+    if (model.includes("toapis")) return "toapis";
+    return "shishi";
   }
 
   async function openHistoryItem(item: HistoryItem) {
@@ -2039,7 +2444,7 @@ export function App() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             task_id: resolvedItem.taskId,
-            video_provider: resolvedItem.model?.toLowerCase().includes("yunshu") ? "wisech" : "shishi",
+            video_provider: inferHistoryVideoProvider(resolvedItem),
           }),
         });
         const data: unknown = await response.json().catch(() => ({}));
@@ -2069,7 +2474,7 @@ export function App() {
   async function callBackend(kind: "video") {
     if (kind !== "video") return;
     if (!videoExecutionPackage?.ok || !selectedStoryboardAnchor) {
-      setVideoError("请先在分镜页通过预检并生成视频执行包。");
+      setVideoError("请先在首帧确认页通过预检并生成视频执行包。");
       return;
     }
     resetProgress("video", "视频生成");
@@ -2079,9 +2484,9 @@ export function App() {
     setVideoUrl("");
     setVideoStatus("submitted");
     try {
-      addProgressEvent("step.started", "输入检查", "检查执行包、起始分镜、视频模型和时长。");
+      addProgressEvent("step.started", "输入检查", "检查执行包、首帧、视频模型和时长。");
       const requestPayload = videoSubmitPayload;
-      addProgressEvent("tool.completed", "视频请求整理完成", "已把入选分镜、产品锁点、动作路径和执行包组合成完整请求。", "done");
+      addProgressEvent("tool.completed", "视频请求整理完成", "已把首帧、四视图、产品锁点、动作路径和执行包组合成完整请求。", "done");
       addProgressEvent("tool.started", "安全预检", "先检测完整视频请求；这一步发生在正式提交视频前。");
       const safetyResponse = await fetch("/api/video-safety", {
         method: "POST",
@@ -2120,13 +2525,15 @@ export function App() {
         throw new Error("这次没有拿到视频结果，也没有拿到可查询的任务号，请稍后再试。");
       }
       const nextHistoryStatus: HistoryItem["status"] = immediateVideoUrl ? "成功" : "处理中";
+      const historyItemId = newTaskId || `LOCAL-${Date.now()}`;
       const historyDetail = createHistoryDetail("video", nextHistoryStatus, {
         taskId: newTaskId || undefined,
         detailUrl: immediateVideoUrl,
         firstFrameUrl: selectedStoryboardAnchor || undefined,
         videoUrl: immediateVideoUrl || undefined,
       });
-      setHistoryItems((current) => upsertHistoryItem(current, createHistoryItem(newTaskId || `LOCAL-${Date.now()}`, "video", nextHistoryStatus, historyDetail)));
+      setCurrentVideoHistoryItemId(historyItemId);
+      setHistoryItems((current) => upsertHistoryItem(current, createHistoryItem(historyItemId, "video", nextHistoryStatus, historyDetail)));
       if (immediateVideoUrl) addProgressEvent("job.completed", "视频任务完成", "本次任务已经拿到可用产物。", "done");
     } catch (error) {
       const message = error instanceof Error ? toUserMessage(error.message) : "这次请求没有成功，请稍后再试。";
@@ -2166,7 +2573,7 @@ export function App() {
 
         const status = extractTaskStatus(data);
         const nextVideoUrl = extractVideoUrl(data);
-        if (nextVideoUrl || status === "SUCCEEDED" || status === "SUCCESS") {
+        if (nextVideoUrl || status === "SUCCEEDED" || status === "SUCCESS" || status === "SUCCEED") {
           if (!nextVideoUrl) {
             throw new Error("视频已完成，但暂时没有拿到播放地址，请稍后再查一次。");
           }
@@ -2175,6 +2582,7 @@ export function App() {
           setVideoError("视频生成好了。");
           addProgressEvent("artifact.created", "视频地址已返回", "上游任务完成，已拿到视频播放地址。", "done");
           addProgressEvent("job.completed", "视频任务完成", "视频生成流程已完成。", "done");
+          setCurrentVideoHistoryItemId(videoTaskId);
           setHistoryItems((current) =>
             current.map((item) => (item.id === videoTaskId ? { ...item, status: "成功", detailUrl: nextVideoUrl, videoUrl: nextVideoUrl } : item)),
           );
@@ -2182,7 +2590,7 @@ export function App() {
           return;
         }
 
-        if (status === "FAILED" || status === "ERROR" || status === "CANCELED" || status === "UNKNOWN") {
+        if (status === "FAILED" || status === "FAILURE" || status === "ERROR" || status === "CANCELED" || status === "UNKNOWN") {
           throw new Error(extractErrorMessage(data, response.status));
         }
 
@@ -2221,7 +2629,7 @@ export function App() {
       if (!response.ok) {
         throw new Error(extractErrorMessage(data, response.status));
       }
-      const message = kind === "image" ? "分镜服务连接正常。" : "视频服务连接正常。";
+      const message = kind === "image" ? "首帧服务连接正常。" : "视频服务连接正常。";
       if (kind === "image") setStoryboardError(message);
       if (kind === "video") setVideoError(message);
     } catch (error) {
@@ -2244,7 +2652,7 @@ export function App() {
             </div>
             <div className="min-w-0">
               <strong className="block truncate text-[26px] font-black tracking-[0] text-[#07363d]">Product Lock Video Studio</strong>
-              <span className="block truncate text-[14px] font-bold text-[#607276]">四视图锁定  -  剧情分镜  -  视频生成</span>
+              <span className="block truncate text-[14px] font-bold text-[#607276]">四视图锁定  -  首帧确认  -  Kling 视频生成</span>
             </div>
           </div>
         </div>
@@ -2301,6 +2709,7 @@ export function App() {
             error={historyError}
             onClear={() => {
               setHistoryError("");
+              clearSavedHistoryItems();
               setHistoryItems([]);
             }}
             onRemove={(id) => setHistoryItems((current) => current.filter((item) => item.id !== id))}
@@ -2332,32 +2741,23 @@ export function App() {
                 <StoryboardStep
                   storyDirection={storyDirection}
                   setStoryDirection={updateStoryDirection}
-                  storyRevision={storyRevision}
-                  setStoryRevision={setStoryRevision}
                   storyIntent={storyIntent}
                   storyboards={storyboards}
                   selectedStoryboardIds={selectedStoryboardIds}
                   preflight={storyboardPreflight}
                   videoPackage={videoExecutionPackage}
                   apiSettings={apiSettings}
-                  updateApiSettings={updateApiSettings}
                   aspectRatio={aspectRatio}
-                  setAspectRatio={updateAspectRatio}
                   motionMode={motionMode}
-                  setMotionMode={setMotionMode}
                   productViews={slots}
                   error={storyboardError}
                   canGenerate={storyIntentCanGenerate}
                   isSubmitting={isSubmitting}
                   progressEvents={progressEvents}
                   activeJob={activeJob}
-                  onGenerateIntent={() => requestStoryIntent()}
-                  onReviseIntent={() => requestStoryIntent(storyRevision)}
                   onGenerateStoryboards={requestStoryboards}
                   onCompilePackage={compileVideoPackage}
                   onToggleStoryboard={toggleStoryboardSelection}
-                  onTestImage={() => testApi("image")}
-                  isTestingImage={testing === "image"}
                 />
               )}
               {activeStep === "video" && (
@@ -2380,9 +2780,13 @@ export function App() {
                   taskId={videoTaskId}
                   videoUrl={videoUrl}
                   videoPrompt={videoExecutionPackage?.finalVideoPrompt || ""}
+                  sourceScript={storyDirection}
+                  historyItemId={currentVideoHistoryItemId}
                   progressEvents={progressEvents}
                   onGenerate={() => callBackend("video")}
                   onTest={() => testApi("video")}
+                  onPatchHistoryItem={patchHistoryItem}
+                  onSaveRenderedVideoHistory={saveRenderedVideoHistory}
                 />
               )}
             </motion.div>
@@ -2443,8 +2847,11 @@ function HistoryInlinePanel(props: {
                 </div>
               </button>
               {expandedId === item.id && <HistoryDetail item={item} onOpenItem={() => props.onOpenItem(item)} />}
-              <button className="icon-action subtle history-remove" aria-label="删除记录" onClick={() => props.onRemove(item.id)}>
-                <Trash2 size={16} />
+              <button className="icon-action subtle history-remove" type="button" aria-label="删除记录" onClick={(event) => {
+                event.stopPropagation();
+                props.onRemove(item.id);
+              }}>
+                  <Trash2 size={16} />
               </button>
             </article>
           ))
@@ -2471,7 +2878,7 @@ function UploadStep(props: {
   return (
     <section className="stage-panel">
       <StageHeader eyebrow="第 1 步" title="上传产品四视图" />
-      <div className="lock-note">核心四视图上传后才进入剧情和分镜。正面、左侧、右侧、背面用于锁定尺寸、比例、外形和拓扑；选择本地预设产品时，已保存的辅助角度会在后台自动作为一致性证据进入模型。</div>
+      <div className="lock-note">核心四视图上传后进入脚本和首帧确认。正面、左侧、右侧、背面用于锁定尺寸、比例、外形和拓扑；选择本地预设产品时，已保存的辅助角度会在后台自动作为一致性证据进入模型。</div>
       <div className="field-grid">
         <label>
           产品类型
@@ -2535,78 +2942,43 @@ function UploadStep(props: {
 function StoryboardStep(props: {
   storyDirection: string;
   setStoryDirection: (value: string) => void;
-  storyRevision: string;
-  setStoryRevision: (value: string) => void;
   storyIntent: StoryIntent | null;
   storyboards: StoryboardFrame[];
   selectedStoryboardIds: string[];
   preflight: StoryboardPreflight | null;
   videoPackage: VideoExecutionPackage | null;
   apiSettings: ApiSettings;
-  updateApiSettings: (patch: Partial<ApiSettings>) => void;
   aspectRatio: string;
-  setAspectRatio: (value: string) => void;
   motionMode: MotionMode;
-  setMotionMode: (value: MotionMode) => void;
   productViews: UploadSlot[];
   error: string;
   canGenerate: boolean;
   isSubmitting: boolean;
   progressEvents: ProgressEvent[];
   activeJob: WorkflowJobKind | "";
-  onGenerateIntent: () => void;
-  onReviseIntent: () => void;
   onGenerateStoryboards: () => void;
   onCompilePackage: () => void;
   onToggleStoryboard: (id: string) => void;
-  onTestImage: () => void;
-  isTestingImage: boolean;
 }) {
+  const hasFirstFrame = props.selectedStoryboardIds.length > 0;
+  const working = props.activeJob === "storyboard";
   return (
     <section className="stage-panel">
-      <StageHeader eyebrow="第 2 步" title="剧情意图与候选分镜" />
-      <div className="lock-note">视频提交前先收敛剧情、动作路径、入选分镜和产品锁点；执行包预检未通过时不会提交视频模型。</div>
+      <StageHeader eyebrow="第 2 步" title="脚本生成首帧" />
+      <div className="lock-note">贴上一次性视频脚本或动作文字，先自动生成一张首帧；用户确认首帧后，下一步会像 Kling 一样把同一段脚本、首帧和四视图一起提交视频模型。</div>
       <div className="two-col">
         <div className="stack">
-          <div className="scenario-card prompt-card prompt-pair-card">
+          <div className="scenario-card prompt-card first-frame-script-card">
             <div className="prompt-label-row">
-              <span>剧情 / 动作意图</span>
-              <button className="dice-action" type="button" title="调用模型生成剧情意图" aria-label="调用模型生成剧情意图" disabled={props.activeJob === "storyIntent"} onClick={props.onGenerateIntent}>
-                {props.activeJob === "storyIntent" ? <LoaderCircle className="spin" size={16} /> : <Dices size={17} />}
+              <span>视频脚本 / 动作文字</span>
+            </div>
+            <textarea value={props.storyDirection} onChange={(event) => props.setStoryDirection(event.target.value)} placeholder="把视频脚本直接贴在这里。默认按一整段 prompt 生成首帧；如果你自己写了 0-2 秒、2-5 秒这样的节奏，后面视频再按这个节奏处理。" />
+            <div className="center-flow-actions">
+              <button className="primary-action" type="button" disabled={!props.canGenerate || working} onClick={props.onGenerateStoryboards}>
+                {working ? <LoaderCircle className="spin" size={16} /> : <Send size={16} />}
+                生成首帧
               </button>
             </div>
-            <div className="prompt-pair-grid">
-              <label>
-                <span>方向</span>
-                <textarea value={props.storyDirection} onChange={(event) => props.setStoryDirection(event.target.value)} placeholder="可留空，也可以写一句方向" />
-              </label>
-              <label>
-                <span>修改意见</span>
-                <textarea value={props.storyRevision} onChange={(event) => props.setStoryRevision(event.target.value)} placeholder="生成后可让模型改写" />
-              </label>
-            </div>
-            <div className="review-flow-actions">
-              <button className="primary-action compact-action" type="button" disabled={!props.canGenerate || props.activeJob === "storyIntent"} onClick={props.onGenerateIntent}>
-                {props.activeJob === "storyIntent" ? <LoaderCircle className="spin" size={15} /> : <Wand2 size={15} />}
-                生成剧情意图
-              </button>
-              <button className="secondary-action compact-action" type="button" disabled={!props.storyIntent || !props.storyRevision.trim() || props.activeJob === "storyIntent"} onClick={props.onReviseIntent}>
-                {props.activeJob === "storyIntent" ? <LoaderCircle className="spin" size={15} /> : <Sparkles size={15} />}
-                用模型修改
-              </button>
-            </div>
-            {props.storyIntent && (
-              <div className="story-intent-card">
-                <strong>{props.storyIntent.storyTitle}</strong>
-                <p>{props.storyIntent.storyIntent}</p>
-                <small>{props.storyIntent.sceneAnchor}</small>
-                <div className="story-beat-list">
-                  {props.storyIntent.beats.map((beat) => (
-                    <span key={beat.id}>{beat.beat}</span>
-                  ))}
-                </div>
-              </div>
-            )}
           </div>
           <div className="storyboard-reference-grid">
             {props.productViews.map((slot) => (
@@ -2626,11 +2998,11 @@ function StoryboardStep(props: {
               </div>
             ))}
           </div>
-          <div className="storyboard-grid">
+          <div className="storyboard-grid first-frame-review-grid">
             {props.storyboards.length === 0 ? (
               <div className="frame-placeholder storyboard-empty">
                 <Wand2 size={38} />
-                <strong>等待分镜</strong>
+                <strong>等待首帧</strong>
               </div>
             ) : (
               props.storyboards.map((storyboard) => {
@@ -2646,6 +3018,12 @@ function StoryboardStep(props: {
               })
             )}
           </div>
+          <div className="center-flow-actions">
+            <button className="secondary-action confirm-first-frame-action" disabled={!hasFirstFrame || working} onClick={props.onCompilePackage}>
+              {working ? <LoaderCircle className="spin" size={16} /> : <ShieldCheck size={16} />}
+              确认首帧并进入视频
+            </button>
+          </div>
           {(props.preflight || props.videoPackage) && (
             <div className={cn("preflight-card", props.preflight?.status || "pass")}>
               <strong>执行包预检：{props.preflight?.status || "pass"}</strong>
@@ -2657,61 +3035,23 @@ function StoryboardStep(props: {
           )}
         </div>
         <div className="parameter-panel">
-          <h3>分镜参数</h3>
-          <label>
-            提示词模型
-            <input value={props.apiSettings.promptModel} onChange={(event) => props.updateApiSettings({ promptModel: event.target.value })} placeholder={DEFAULT_PROMPT_MODEL} />
-          </label>
-          <label>
-            分镜模型
-            <input value={props.apiSettings.imageModel} onChange={(event) => props.updateApiSettings({ imageModel: event.target.value })} placeholder={DEFAULT_IMAGE_MODEL} />
-          </label>
-          <button className="secondary-action full-width" type="button" onClick={props.onTestImage} disabled={props.isTestingImage}>
-            {props.isTestingImage ? <LoaderCircle className="spin" size={16} /> : <Sparkles size={16} />}
-            测试分镜接口
-          </button>
+          <h3>首帧状态</h3>
           <div className="api-fixed-note">
-            <strong>图片 / 文字接口</strong>
-            <span>后台固定配置</span>
+            <strong>模型</strong>
+            <span>{props.apiSettings.imageModel}</span>
           </div>
-          <label>
-            清晰度
-            <div className="resolution-value">1080p</div>
-          </label>
-          <label>
-            画面比例
-            <div className="ratio-grid">
-              {["16:9", "1:1", "9:16"].map((ratio) => (
-                <button type="button" className={props.aspectRatio === ratio ? "active" : ""} onClick={() => props.setAspectRatio(ratio)} key={ratio}>
-                  <i data-ratio={ratio} />
-                  {ratio}
-                </button>
-              ))}
-            </div>
-          </label>
-          <div className="segmented">
-            {[
-              ["strict", "高一致性"],
-              ["balanced", "平衡"],
-              ["creative", "创意"],
-            ].map(([value, label]) => (
-              <button key={value} className={props.motionMode === value ? "active" : ""} onClick={() => props.setMotionMode(value as MotionMode)}>
-                {label}
-              </button>
-            ))}
+          <div className="api-fixed-note">
+            <strong>比例</strong>
+            <span>{props.aspectRatio}</span>
           </div>
-          <button className="primary-action" disabled={!props.storyIntent || props.activeJob === "storyboard"} onClick={props.onGenerateStoryboards}>
-            {props.activeJob === "storyboard" ? <LoaderCircle className="spin" size={16} /> : <Send size={16} />}
-            生成候选分镜
-          </button>
-          <button className="secondary-action full-width" disabled={props.selectedStoryboardIds.length < 3 || props.activeJob === "storyboard"} onClick={props.onCompilePackage}>
-            {props.activeJob === "storyboard" ? <LoaderCircle className="spin" size={16} /> : <ShieldCheck size={16} />}
-            预检并编译执行包
-          </button>
+          <div className="api-fixed-note">
+            <strong>一致性</strong>
+            <span>{props.motionMode === "strict" ? "高一致性" : props.motionMode === "creative" ? "创意" : "平衡"}</span>
+          </div>
           {props.error && <div className={cn("field-error", getStatusMessageTone(props.error))}>{props.error}</div>}
           {!props.canGenerate && <div className="field-hint">请先确认四张核心视图已加载。</div>}
-          {props.canGenerate && !props.storyIntent && <div className="field-hint">先生成或确认剧情意图，再生成候选分镜。</div>}
-          <ProgressPanel events={props.progressEvents} emptyText="生成剧情、分镜或执行包时会显示真实步骤。" />
+          {props.canGenerate && !hasFirstFrame && <div className="field-hint">中间粘贴脚本后生成首帧。</div>}
+          <ProgressPanel events={props.progressEvents} emptyText="生成首帧或确认执行包时会显示真实步骤。" />
         </div>
       </div>
     </section>
@@ -2737,9 +3077,13 @@ function VideoStep(props: {
   taskId: string;
   videoUrl: string;
   videoPrompt: string;
+  sourceScript: string;
+  historyItemId: string;
   progressEvents: ProgressEvent[];
   onGenerate: () => void;
   onTest: () => void;
+  onPatchHistoryItem: (id: string, patch: Partial<HistoryItem>) => void;
+  onSaveRenderedVideoHistory: (filePath: string, fileName: string) => void;
 }) {
   const isWorking = props.isSubmitting || props.status === "submitted" || props.status === "polling";
   const durationCap = getVideoModelDurationCap(props.apiSettings.videoProvider, props.apiSettings.videoModel);
@@ -2751,7 +3095,7 @@ function VideoStep(props: {
         <div className="stack">
           <div className={cn("video-preview", `media-ratio-${props.aspectRatio.replace(":", "-")}`)}>
             {props.videoUrl ? (
-              <video controls playsInline src={props.videoUrl} />
+              <video controls controlsList="nodownload" playsInline src={props.videoUrl} />
             ) : isWorking ? (
               <div className="video-status-card video-generating-card">
                 <div className="video-generating-frame" aria-hidden="true">
@@ -2774,6 +3118,13 @@ function VideoStep(props: {
               </div>
             )}
           </div>
+          <PostProductionPanel
+            sourceScript={props.sourceScript}
+            videoUrl={props.videoUrl}
+            historyItemId={props.historyItemId}
+            onPatchHistoryItem={props.onPatchHistoryItem}
+            onSaveRenderedVideoHistory={props.onSaveRenderedVideoHistory}
+          />
         </div>
         <div className="parameter-panel">
           <h3>视频参数</h3>
@@ -2871,6 +3222,301 @@ function VideoStep(props: {
         </div>
       </div>
     </section>
+  );
+}
+
+function PostProductionPanel(props: {
+  sourceScript: string;
+  videoUrl: string;
+  historyItemId: string;
+  onPatchHistoryItem: (id: string, patch: Partial<HistoryItem>) => void;
+  onSaveRenderedVideoHistory: (filePath: string, fileName: string) => void;
+}) {
+  const [generatedSegments, setGeneratedSegments] = useState<TimedScriptSegment[]>([]);
+  const [editableSegments, setEditableSegments] = useState<TimedScriptSegment[]>([]);
+  const [voiceoverAudioUrl, setVoiceoverAudioUrl] = useState("");
+  const [voiceoverAudioBase64, setVoiceoverAudioBase64] = useState("");
+  const [voiceoverAudioContentType, setVoiceoverAudioContentType] = useState("audio/mpeg");
+  const [voiceGender, setVoiceGender] = useState<"female" | "male">("female");
+  const [subtitlesEnabled, setSubtitlesEnabled] = useState(true);
+  const [voiceoverEnabled, setVoiceoverEnabled] = useState(true);
+  const [assetStatus, setAssetStatus] = useState("");
+  const [isGeneratingAssets, setIsGeneratingAssets] = useState(false);
+  const [isDownloadingVideo, setIsDownloadingVideo] = useState(false);
+  const [isPreviewPlaying, setIsPreviewPlaying] = useState(false);
+  const [previewTime, setPreviewTime] = useState(0);
+  const [previewDuration, setPreviewDuration] = useState(0);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const voiceoverAudioRef = useRef<HTMLAudioElement | null>(null);
+  const sourceSegments = useMemo(() => parseTimedScriptSegments(props.sourceScript), [props.sourceScript]);
+  const voiceoverText = useMemo(() => editableSegments.map((segment) => segment.voiceover.trim()).filter(Boolean).join("\n"), [editableSegments]);
+  const activeSubtitle = useMemo(
+    () => (subtitlesEnabled ? generatedSegments.find((segment) => previewTime >= segment.start && previewTime < segment.end)?.subtitle || "" : ""),
+    [generatedSegments, previewTime, subtitlesEnabled],
+  );
+  const canGenerateAssets = Boolean(props.videoUrl && editableSegments.length && (subtitlesEnabled || (voiceoverEnabled && voiceoverText.trim())));
+
+  useEffect(() => {
+    setEditableSegments(sourceSegments);
+    setGeneratedSegments([]);
+    setPreviewTime(0);
+    setPreviewDuration(0);
+    setIsPreviewPlaying(false);
+    setAssetStatus("");
+    setVoiceoverAudioBase64("");
+    setVoiceoverAudioContentType("audio/mpeg");
+    setVoiceoverAudioUrl((current) => {
+      if (current) window.URL.revokeObjectURL(current);
+      return "";
+    });
+  }, [sourceSegments, props.videoUrl]);
+
+  useEffect(() => () => {
+    if (voiceoverAudioUrl) window.URL.revokeObjectURL(voiceoverAudioUrl);
+  }, [voiceoverAudioUrl]);
+
+  function updateEditableSegment(index: number, field: "subtitle" | "voiceover", value: string) {
+    setEditableSegments((current) =>
+      current.map((segment, segmentIndex) => (segmentIndex === index ? { ...segment, [field]: value } : segment)),
+    );
+  }
+
+  async function syncVoiceoverWithVideo(video: HTMLVideoElement) {
+    const audio = voiceoverAudioRef.current;
+    if (!voiceoverEnabled || !audio || !voiceoverAudioUrl) return;
+    if (Math.abs(audio.currentTime - video.currentTime) > 0.25) {
+      audio.currentTime = Math.min(Math.max(video.currentTime, 0), Number.isFinite(audio.duration) ? audio.duration : video.currentTime);
+    }
+    if (video.paused || video.ended) {
+      audio.pause();
+      return;
+    }
+    await audio.play().catch(() => undefined);
+  }
+
+  async function togglePreviewPlayback() {
+    const video = videoRef.current;
+    if (!video) return;
+    if (video.paused || video.ended) {
+      await video.play().catch(() => undefined);
+      await syncVoiceoverWithVideo(video);
+    } else {
+      video.pause();
+      voiceoverAudioRef.current?.pause();
+    }
+  }
+
+  function seekPreview(value: string) {
+    const nextTime = Number(value);
+    const video = videoRef.current;
+    if (!Number.isFinite(nextTime) || !video) return;
+    video.currentTime = nextTime;
+    setPreviewTime(nextTime);
+    void syncVoiceoverWithVideo(video);
+  }
+
+  async function generatePostAssets() {
+    if (!props.videoUrl) {
+      setAssetStatus("请先生成或从历史记录载入视频。");
+      return;
+    }
+    if (!editableSegments.length) {
+      setAssetStatus("脚本里没有识别到 0-3秒 这类时间段，暂时不能对齐字幕。");
+      return;
+    }
+    if (!subtitlesEnabled && !voiceoverEnabled) {
+      setAssetStatus("请至少打开字幕或旁白中的一个。");
+      return;
+    }
+    const text = voiceoverText.trim();
+    if (voiceoverEnabled && !text) {
+      setAssetStatus("脚本里没有可生成旁白的文本。");
+      return;
+    }
+    setIsGeneratingAssets(true);
+    setAssetStatus(voiceoverEnabled ? "正在生成字幕和旁白..." : "正在生成字幕...");
+    try {
+      if (voiceoverEnabled) {
+        const response = await fetch("/api/voiceover", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text, voiceGender }),
+        });
+        const data: unknown = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(extractErrorMessage(data, response.status));
+        const record = data && typeof data === "object" ? (data as Record<string, unknown>) : {};
+        const audioBase64 = typeof record.audioBase64 === "string" ? record.audioBase64 : "";
+        if (!audioBase64) throw new Error("旁白服务没有返回可播放的音频。");
+        const contentType = typeof record.audioContentType === "string" ? record.audioContentType : "audio/mpeg";
+        if (voiceoverAudioUrl) window.URL.revokeObjectURL(voiceoverAudioUrl);
+        setVoiceoverAudioBase64(audioBase64);
+        setVoiceoverAudioContentType(contentType);
+        setVoiceoverAudioUrl(createAudioObjectUrlFromBase64(audioBase64, contentType));
+      } else {
+        if (voiceoverAudioUrl) window.URL.revokeObjectURL(voiceoverAudioUrl);
+        setVoiceoverAudioUrl("");
+        setVoiceoverAudioBase64("");
+      }
+      setGeneratedSegments(editableSegments);
+      setPreviewTime(0);
+      setAssetStatus(voiceoverEnabled ? "字幕和旁白已生成，播放视频可预览对齐效果。" : "字幕已生成，播放视频可预览对齐效果。");
+    } catch (error) {
+      setGeneratedSegments([]);
+      setVoiceoverAudioUrl("");
+      setVoiceoverAudioBase64("");
+      setAssetStatus(error instanceof Error ? error.message : "字幕和旁白生成失败。");
+    } finally {
+      setIsGeneratingAssets(false);
+    }
+  }
+
+  async function downloadPreviewVideo() {
+    if (!props.videoUrl) {
+      setAssetStatus("请先生成或从历史记录载入视频。");
+      return;
+    }
+    if (!generatedSegments.length || (voiceoverEnabled && !voiceoverAudioBase64)) {
+      setAssetStatus("请先点击一键生成字幕和旁白，再保存完整 MP4。");
+      return;
+    }
+    setIsDownloadingVideo(true);
+    setAssetStatus("正在保存 MP4 到本机下载文件夹...");
+    try {
+      const { filePath, fileName } = await renderPostVideoToDownloads(
+        props.videoUrl,
+        generatedSegments,
+        voiceoverAudioBase64,
+        voiceoverAudioContentType,
+        subtitlesEnabled,
+        voiceoverEnabled,
+      );
+      props.onPatchHistoryItem(props.historyItemId, { renderedVideoPath: filePath, renderedVideoFileName: fileName });
+      props.onSaveRenderedVideoHistory(filePath, fileName);
+      setAssetStatus(`已保存为可打开的 MP4：${filePath}`);
+    } catch (error) {
+      setAssetStatus(error instanceof Error ? error.message : "视频下载失败。");
+    } finally {
+      setIsDownloadingVideo(false);
+    }
+  }
+
+  return (
+    <div className="post-production-panel">
+      <div className="post-production-head">
+        <div>
+          <span>后期资产</span>
+          <strong>字幕 / 旁白编辑器</strong>
+        </div>
+        <em>{props.videoUrl ? "视频已就绪" : "等待视频"}</em>
+      </div>
+      <div className="post-production-controls">
+        <label className="toggle-control">
+          <input type="checkbox" checked={subtitlesEnabled} onChange={(event) => setSubtitlesEnabled(event.target.checked)} />
+          字幕
+        </label>
+        <label className="toggle-control">
+          <input type="checkbox" checked={voiceoverEnabled} onChange={(event) => setVoiceoverEnabled(event.target.checked)} />
+          旁白
+        </label>
+        <div className="segmented voice-choice" aria-label="旁白声音">
+          {[
+            ["female", "女声"],
+            ["male", "男声"],
+          ].map(([value, label]) => (
+            <button key={value} type="button" className={voiceGender === value ? "active" : ""} onClick={() => setVoiceGender(value as "female" | "male")}>
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+      {editableSegments.length ? (
+        <div className="caption-voice-editor">
+          {editableSegments.map((segment, index) => (
+            <article className="caption-voice-row" key={`${segment.start}-${segment.end}-${index}`}>
+              <div className="caption-voice-time">
+                {formatTimelineTime(segment.start)} - {formatTimelineTime(segment.end)}
+              </div>
+              <label className={!subtitlesEnabled ? "disabled-field" : ""}>
+                字幕
+                <textarea disabled={!subtitlesEnabled} value={segment.subtitle} onChange={(event) => updateEditableSegment(index, "subtitle", event.target.value)} />
+              </label>
+              <label className={!voiceoverEnabled ? "disabled-field" : ""}>
+                旁白
+                <textarea disabled={!voiceoverEnabled} value={segment.voiceover} onChange={(event) => updateEditableSegment(index, "voiceover", event.target.value)} />
+              </label>
+            </article>
+          ))}
+        </div>
+      ) : null}
+      <div className="post-production-actions single-action-row">
+        <button className="primary-action compact-action" type="button" disabled={isGeneratingAssets || !canGenerateAssets} onClick={generatePostAssets}>
+          {isGeneratingAssets ? <LoaderCircle className="spin" size={16} /> : <Volume2 size={16} />}
+          {isGeneratingAssets ? "生成中" : "一键生成字幕和旁白"}
+        </button>
+      </div>
+      {assetStatus && <small className="post-production-status">{assetStatus}</small>}
+      {!sourceSegments.length && <small className="post-production-status">脚本需要包含 0-3秒、3-6秒 这样的时间段，系统会按这些时间点上字幕。</small>}
+      <div className="post-asset-preview">
+        {props.videoUrl ? (
+          <div className="captioned-video-shell">
+            <video
+              ref={videoRef}
+              playsInline
+              src={props.videoUrl}
+              onClick={() => void togglePreviewPlayback()}
+              onLoadedMetadata={(event) => setPreviewDuration(event.currentTarget.duration || 0)}
+              onPlay={(event) => {
+                setIsPreviewPlaying(true);
+                void syncVoiceoverWithVideo(event.currentTarget);
+              }}
+              onPause={() => {
+                setIsPreviewPlaying(false);
+                voiceoverAudioRef.current?.pause();
+              }}
+              onSeeked={(event) => void syncVoiceoverWithVideo(event.currentTarget)}
+              onTimeUpdate={(event) => {
+                setPreviewTime(event.currentTarget.currentTime);
+                if (!event.currentTarget.paused) void syncVoiceoverWithVideo(event.currentTarget);
+              }}
+              onEnded={() => {
+                setIsPreviewPlaying(false);
+                voiceoverAudioRef.current?.pause();
+              }}
+            />
+            {activeSubtitle && <div className="caption-overlay">{activeSubtitle}</div>}
+            <div className="preview-video-controls">
+              <button type="button" onClick={() => void togglePreviewPlayback()} aria-label={isPreviewPlaying ? "暂停预览" : "播放预览"}>
+                {isPreviewPlaying ? <Pause size={15} /> : <Play size={15} />}
+              </button>
+              <span>{formatTimelineTime(previewTime)}</span>
+              <input
+                type="range"
+                min="0"
+                max={previewDuration || 0}
+                step="0.1"
+                value={Math.min(previewTime, previewDuration || previewTime)}
+                onChange={(event) => seekPreview(event.target.value)}
+              />
+              <span>{formatTimelineTime(previewDuration || 0)}</span>
+            </div>
+          </div>
+        ) : (
+          <div className="post-asset-empty">生成视频后，这里会显示字幕和旁白预览。</div>
+        )}
+        {voiceoverEnabled && voiceoverAudioUrl && (
+          <div className="voiceover-preview">
+            <span>旁白音轨</span>
+            <audio ref={voiceoverAudioRef} controls controlsList="nodownload" src={voiceoverAudioUrl} />
+          </div>
+        )}
+        {props.videoUrl && (
+          <button className="secondary-action compact-action download-video-action" type="button" disabled={isDownloadingVideo} onClick={downloadPreviewVideo}>
+            {isDownloadingVideo ? <LoaderCircle className="spin" size={15} /> : <Download size={15} />}
+            {isDownloadingVideo ? "保存中" : "保存到下载文件夹 MP4"}
+          </button>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -2988,7 +3634,10 @@ function HistoryDrawer(props: {
                   </div>
                 </button>
                 {expandedId === item.id && <HistoryDetail item={item} onOpenItem={() => props.onOpenItem(item)} />}
-                <button className="icon-action subtle history-remove" aria-label="删除记录" onClick={() => props.onRemove(item.id)}>
+                <button className="icon-action subtle history-remove" type="button" aria-label="删除记录" onClick={(event) => {
+                  event.stopPropagation();
+                  props.onRemove(item.id);
+                }}>
                   <Trash2 size={15} />
                 </button>
               </article>
@@ -3002,10 +3651,14 @@ function HistoryDrawer(props: {
 
 function HistoryDetail(props: { item: HistoryItem; onOpenItem: () => void }) {
   const storedAssetUrl = props.item.videoUrl || props.item.firstFrameUrl || props.item.detailUrl || "";
+  const renderedAssetUrl = getLocalVideoAssetUrl(props.item.renderedVideoPath);
   const [resolvedAssetUrl, setResolvedAssetUrl] = useState(isHistoryAssetRef(storedAssetUrl) ? "" : storedAssetUrl);
   const [assetLoading, setAssetLoading] = useState(isHistoryAssetRef(storedAssetUrl));
-  const assetUrl = isHistoryAssetRef(storedAssetUrl) ? resolvedAssetUrl : storedAssetUrl;
-  const isVideoAsset = Boolean(props.item.videoUrl);
+  const [downloadStatus, setDownloadStatus] = useState("");
+  const [isSavingVideo, setIsSavingVideo] = useState(false);
+  const assetUrl = renderedAssetUrl || (isHistoryAssetRef(storedAssetUrl) ? resolvedAssetUrl : storedAssetUrl);
+  const isVideoAsset = Boolean(props.item.videoUrl || props.item.renderedVideoPath);
+  const assetMissing = !assetLoading && !assetUrl && isHistoryAssetRef(storedAssetUrl);
 
   useEffect(() => {
     let cancelled = false;
@@ -3022,6 +3675,21 @@ function HistoryDetail(props: { item: HistoryItem; onOpenItem: () => void }) {
     };
   }, [storedAssetUrl]);
 
+  async function saveHistoryVideo() {
+    const saveTarget = props.item.renderedVideoPath || assetUrl;
+    if (!saveTarget || !isVideoAsset) return;
+    setIsSavingVideo(true);
+    setDownloadStatus("正在保存 MP4 到下载文件夹...");
+    try {
+      const filePath = await saveVideoAssetToDownloads(saveTarget);
+      setDownloadStatus(`已保存：${filePath}`);
+    } catch (error) {
+      setDownloadStatus(error instanceof Error ? error.message : "历史视频保存失败。");
+    } finally {
+      setIsSavingVideo(false);
+    }
+  }
+
   const rows = [
     ["产品", props.item.productType],
     ["场景", props.item.sceneTitle],
@@ -3035,10 +3703,11 @@ function HistoryDetail(props: { item: HistoryItem; onOpenItem: () => void }) {
   return (
     <div className="history-detail">
       {assetLoading && <div className="history-asset-loading">正在恢复这条历史记录里的资产...</div>}
+      {assetMissing && <div className="history-asset-loading">这条历史的原始资产只存在于之前浏览器的本机资产库里，当前浏览器没有读到。请优先使用已保存的 MP4 历史。</div>}
       {assetUrl && (
         <div className="history-asset-preview">
           {isVideoAsset ? (
-            <video controls playsInline src={assetUrl} />
+            <video controls controlsList="nodownload" playsInline src={assetUrl} />
           ) : (
             <img src={assetUrl} alt={`${props.item.title}资产预览`} />
           )}
@@ -3046,14 +3715,20 @@ function HistoryDetail(props: { item: HistoryItem; onOpenItem: () => void }) {
       )}
       <div className="history-detail-actions">
         <button className="primary-action compact-action" type="button" onClick={props.onOpenItem}>
-          载入到当前流程
+          载入到字幕/旁白流程
         </button>
         {assetUrl && (
           <a className="secondary-action compact-action" href={assetUrl} target="_blank" rel="noreferrer">
             单独打开资产
           </a>
         )}
+        {(assetUrl || props.item.renderedVideoPath) && isVideoAsset && (
+          <button className="secondary-action compact-action" type="button" disabled={isSavingVideo} onClick={saveHistoryVideo}>
+            {isSavingVideo ? "保存中" : "保存 MP4"}
+          </button>
+        )}
       </div>
+      {downloadStatus && <div className="history-asset-loading">{downloadStatus}</div>}
       <div className="history-detail-grid">
         {rows.map(([label, value]) => (
           <span key={label}>
@@ -3062,10 +3737,10 @@ function HistoryDetail(props: { item: HistoryItem; onOpenItem: () => void }) {
           </span>
         ))}
       </div>
-      {props.item.scenePrompt && (
+      {(props.item.sourceScript || props.item.scenePrompt) && (
         <div className="history-detail-text">
-          <b>剧情意图</b>
-          <p>{props.item.scenePrompt}</p>
+          <b>原始脚本 / 后期字幕旁白来源</b>
+          <p>{props.item.sourceScript || props.item.scenePrompt}</p>
         </div>
       )}
       {props.item.videoPrompt && (
