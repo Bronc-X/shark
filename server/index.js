@@ -1,20 +1,27 @@
 import http from "node:http";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+
+function loadEnvFile(fileRef) {
+  if (!existsSync(fileRef)) return;
+  const lines = readFileSync(fileRef, "utf8").split(/\r?\n/);
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const match = trimmed.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+    if (!match) continue;
+    const [, key, rawValue] = match;
+    if (process.env[key]) continue;
+    process.env[key] = rawValue.replace(/^['"]|['"]$/g, "");
+  }
+}
 
 function loadLocalEnv() {
+  const sharedEnvFile = process.env.VIDEO_PLATFORM_SHARED_ENV || new URL("../../图生视频平台.shared.env.local", import.meta.url);
+  loadEnvFile(sharedEnvFile);
   for (const fileName of [".env.local", ".env"]) {
     const fileUrl = new URL(`../${fileName}`, import.meta.url);
-    if (!existsSync(fileUrl)) continue;
-    const lines = readFileSync(fileUrl, "utf8").split(/\r?\n/);
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith("#")) continue;
-      const match = trimmed.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
-      if (!match) continue;
-      const [, key, rawValue] = match;
-      if (process.env[key]) continue;
-      process.env[key] = rawValue.replace(/^['"]|['"]$/g, "");
-    }
+    loadEnvFile(fileUrl);
   }
 }
 
@@ -25,21 +32,10 @@ const TOAPIS_BASE_URL = (process.env.TOAPIS_BASE_URL || "https://toapis.com/v1")
 const TOAPIS_API_KEY = process.env.TOAPIS_API_KEY || "";
 const IMAGE_TEXT_BASE_URL = (process.env.IMAGE_TEXT_BASE_URL || "https://aicanapi.com/v1").replace(/\/+$/, "");
 const IMAGE_TEXT_API_KEY = process.env.IMAGE_TEXT_API_KEY || TOAPIS_API_KEY;
-const VIDEO_BASE_URL = (process.env.VIDEO_BASE_URL || TOAPIS_BASE_URL).replace(/\/+$/, "");
-const VIDEO_API_KEY = process.env.VIDEO_API_KEY || TOAPIS_API_KEY;
-const VIDEO_MODEL = process.env.VIDEO_MODEL || "";
-const TOAPIS_VIDEO_MODEL = process.env.TOAPIS_VIDEO_MODEL || VIDEO_MODEL || "kling-v3";
 const WISECH_VIDEO_BASE_URL = (process.env.WISECH_VIDEO_BASE_URL || "https://ai.wisech.com/v1").replace(/\/+$/, "");
 const WISECH_VIDEO_API_KEY = process.env.WISECH_VIDEO_API_KEY || "";
-const WISECH_VIDEO_MODEL = process.env.WISECH_VIDEO_MODEL || "yunshu-2-0-260128-1080p";
-const SHISHI_VIDEO_BASE_URL = (process.env.SHISHI_VIDEO_BASE_URL || "https://api.shishikeji.com").replace(/\/+$/, "");
-const SHISHI_VIDEO_API_KEY = process.env.SHISHI_VIDEO_API_KEY || "";
-const SHISHI_VIDEO_MODEL = process.env.SHISHI_VIDEO_MODEL || "2.0";
+const WISECH_VIDEO_MODEL = process.env.WISECH_VIDEO_MODEL || "yunshu-2-0-260128-720p";
 const WISECH_DEFAULT_VIDEO_DURATION_SECONDS = 5;
-const SHISHI_MIN_VIDEO_DURATION_SECONDS = 5;
-const SHISHI_MAX_VIDEO_DURATION_SECONDS = 15;
-const SHISHI_MAX_PROMPT_CHARS = 6000;
-const SHISHI_PROMPT_SOFT_LIMIT = 5600;
 const LOCAL_PROMPT_MODEL = "local-safety-draft";
 const DEFAULT_PROMPT_MODEL = "gpt-5.4-mini";
 const DEFAULT_IMAGE_MODEL = "gpt-image-2";
@@ -50,12 +46,10 @@ const UPSTREAM_TIMEOUT_MS = 360000;
 const VIDEO_UPSTREAM_TIMEOUT_MS = 90000;
 const MAX_JSON_BODY_BYTES = 50 * 1024 * 1024;
 const OPENAI_VIDEO_GENERATIONS_PATH = "/video/generations";
-const TOAPIS_VIDEO_GENERATIONS_PATH = "/videos/generations";
 const TOAPIS_IMAGE_UPLOAD_PATH = "/uploads/images";
 const DASHSCOPE_IMAGE_GENERATION_PATH = "/services/aigc/multimodal-generation/generation";
 const DASHSCOPE_VIDEO_SYNTHESIS_PATH = "/services/aigc/video-generation/video-synthesis";
 const VOLCENGINE_VIDEO_TASKS_PATH = "/contents/generations/tasks";
-const SHISHI_VIDEO_GENERATION_PATH = "/api/generate-video";
 const TOAPIS_MAX_UPLOAD_IMAGE_BYTES = 10 * 1024 * 1024;
 const PROMPT_MODEL_NOT_CONFIGURED_MESSAGE = "Prompt model is not configured.";
 const PROMPT_MODEL_UNAVAILABLE_MESSAGE = "Prompt model is temporarily unavailable.";
@@ -68,23 +62,54 @@ const IMAGE_MODEL_LIMITS = {
   [DEFAULT_IMAGE_MODEL]: DEFAULT_IMAGE_MODEL_LIMIT,
 };
 const VIDEO_MODEL_LIMITS = {
-  shishi: {
-    default: { minDuration: 5, maxDuration: 15, promptSoftLimit: 5600, promptHardLimit: 6000, resolution: "720p" },
-    "2.0": { minDuration: 5, maxDuration: 15, promptSoftLimit: 5600, promptHardLimit: 6000, resolution: "720p" },
-    "transit9-fast": { minDuration: 5, maxDuration: 15, promptSoftLimit: 5200, promptHardLimit: 6000, resolution: "720p" },
-    "transit9-2.0": { minDuration: 5, maxDuration: 15, promptSoftLimit: 5200, promptHardLimit: 6000, resolution: "720p" },
-  },
   wisech: {
     default: { minDuration: 4, maxDuration: 15, promptSoftLimit: 5200, promptHardLimit: 6000, resolution: "1080p" },
     "yunshu-2-0-260128-1080p": { minDuration: 4, maxDuration: 15, promptSoftLimit: 5200, promptHardLimit: 6000, resolution: "1080p" },
     "yunshu-2-0-260128-720p": { minDuration: 4, maxDuration: 15, promptSoftLimit: 5200, promptHardLimit: 6000, resolution: "720p" },
   },
-  toapis: {
-    default: { minDuration: 4, maxDuration: 15, promptSoftLimit: 4600, promptHardLimit: 5200, resolution: "1080p" },
-    "kling-v3": { minDuration: 4, maxDuration: 15, promptSoftLimit: 4600, promptHardLimit: 5200, resolution: "1080p" },
-    "seedance-2-fast": { minDuration: 4, maxDuration: 15, promptSoftLimit: 4600, promptHardLimit: 5200, resolution: "1080p" },
-    "doubao-seedance-1-5-pro": { minDuration: 4, maxDuration: 12, promptSoftLimit: 4200, promptHardLimit: 4800, resolution: "1080p" },
-    "grok-video-3": { minDuration: 6, maxDuration: 6, promptSoftLimit: 1800, promptHardLimit: 2200, resolution: "1080p" },
+};
+const VIDEO_VISUAL_INPUT_CAPABILITIES = {
+  wisech: {
+    default: {
+      visualMode: "first_last_frame",
+      firstFrameField: "image_with_roles",
+      lastFrameField: "image_with_roles",
+      maxStageFrameInputs: 2,
+      maxReferenceImages: 0,
+      supportsLastFrame: true,
+      supportsReferenceImages: false,
+      supportsMixedFrameAndReferences: false,
+      acceptsDataImage: false,
+      source: "Wisech Yunshu Seedance is treated as Seedance first/last-frame compatible; verify channel docs before enabling references",
+    },
+  },
+  dashscope: {
+    default: {
+      visualMode: "first_last_frame",
+      firstFrameField: "media.first_frame",
+      lastFrameField: "media.last_frame",
+      maxStageFrameInputs: 2,
+      maxReferenceImages: 0,
+      supportsLastFrame: true,
+      supportsReferenceImages: false,
+      supportsMixedFrameAndReferences: false,
+      acceptsDataImage: false,
+      source: "DashScope Wan first/last-frame API uses media type first_frame and last_frame",
+    },
+  },
+  volcengine: {
+    default: {
+      visualMode: "first_last_frame",
+      firstFrameField: "content.image_url.role=first_frame",
+      lastFrameField: "content.image_url.role=last_frame",
+      maxStageFrameInputs: 2,
+      maxReferenceImages: 0,
+      supportsLastFrame: true,
+      supportsReferenceImages: false,
+      supportsMixedFrameAndReferences: false,
+      acceptsDataImage: false,
+      source: "Volcengine/Seedance native-compatible content roles",
+    },
   },
 };
 const CORE_VIEW_LABELS = [
@@ -168,6 +193,45 @@ function sanitizeProductText(text) {
   return value.replace(/\s{2,}/g, " ").trim();
 }
 
+const IMAGE_REVIEW_TEXT_REPLACEMENTS = [
+  [/万圣节|Halloween/gi, "节日派对"],
+  [/骷髅|skeleton/gi, "黑白派对装扮"],
+  [/幽灵|鬼怪|鬼|ghost/gi, "白色布艺派对装饰"],
+  [/恐怖|惊悚|吓人|horror|scary|creepy/gi, "轻松有趣"],
+  [/朋友们|朋友|人群|路人|真人|真实人物|可识别人物|露脸|人脸|面孔/gi, "背景宾客以虚化背影或侧影呈现，不出现清晰面部特征"],
+  [/\b(?:people|persons?|friends?|crowd|real person|human face)\b/gi, "soft background party silhouettes"],
+  [/骨架|骨头|bones?/gi, "黑白图案"],
+  [/面具/gi, "派对装饰"],
+  [/\bmask\b/gi, "party prop"],
+];
+
+function sanitizeImageGenerationText(text) {
+  let value = sanitizeProductText(text);
+  for (const [pattern, replacement] of IMAGE_REVIEW_TEXT_REPLACEMENTS) {
+    value = value.replace(pattern, replacement);
+  }
+  return value.replace(/\s{2,}/g, " ").trim();
+}
+
+function sanitizeImageStoryIntent(storyIntent) {
+  return {
+    ...storyIntent,
+    storyTitle: sanitizeImageGenerationText(storyIntent.storyTitle),
+    storyIntent: sanitizeImageGenerationText(storyIntent.storyIntent),
+    sceneAnchor: sanitizeImageGenerationText(storyIntent.sceneAnchor),
+    beats: Array.isArray(storyIntent.beats)
+      ? storyIntent.beats.map((beat) => ({
+          ...beat,
+          beat: sanitizeImageGenerationText(beat.beat),
+          action: sanitizeImageGenerationText(beat.action),
+          camera: sanitizeImageGenerationText(beat.camera),
+          risk: sanitizeImageGenerationText(beat.risk),
+        }))
+      : [],
+    riskNotes: Array.isArray(storyIntent.riskNotes) ? storyIntent.riskNotes.map((item) => sanitizeImageGenerationText(item)) : [],
+  };
+}
+
 function sanitizeApiPayload(value) {
   if (typeof value === "string") {
     if (/^(data:|https?:\/\/)/i.test(value)) return value;
@@ -191,9 +255,9 @@ function getImageModelLimit(model) {
 }
 
 function getVideoModelLimit(provider, model) {
-  const providerKey = typeof provider === "string" && provider.trim() ? provider.trim().toLowerCase() : "shishi";
+  const providerKey = typeof provider === "string" && provider.trim() ? provider.trim().toLowerCase() : "wisech";
   const modelKey = typeof model === "string" ? model.trim() : "";
-  const providerLimits = VIDEO_MODEL_LIMITS[providerKey] || VIDEO_MODEL_LIMITS.shishi;
+  const providerLimits = VIDEO_MODEL_LIMITS[providerKey] || VIDEO_MODEL_LIMITS.wisech;
   if (providerLimits[modelKey]) return providerLimits[modelKey];
   if (providerKey === "wisech" && /1-5|1\.5/i.test(modelKey)) {
     return { minDuration: 4, maxDuration: 12, promptSoftLimit: 4800, promptHardLimit: 5200, resolution: "1080p" };
@@ -202,12 +266,7 @@ function getVideoModelLimit(provider, model) {
 }
 
 function resolveVideoProviderFromUrl(upstreamUrl, fallbackProvider = "") {
-  const fallback = typeof fallbackProvider === "string" && fallbackProvider.trim() ? fallbackProvider.trim().toLowerCase() : "";
-  if (fallback) return fallback;
-  if (isShishiKejiUrl(upstreamUrl)) return "shishi";
-  if (isWisechVideoUrl(upstreamUrl)) return "wisech";
-  if (isToapisUrl(upstreamUrl)) return "toapis";
-  return "toapis";
+  return "wisech";
 }
 
 function formatLockedNodeLines(lockedNodes, maxLines = 10, maxChars = 1800, labelSeparator = " / ") {
@@ -252,6 +311,143 @@ function sendJson(res, status, payload) {
 
 function createApiResponse(status, payload) {
   return { status, payload };
+}
+
+function createTraceId() {
+  return `trace_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function compactDiagnosticText(value, maxChars = 1200) {
+  const text = typeof value === "string" ? value : JSON.stringify(value || {});
+  const compact = text
+    .replace(/data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]+/g, "[data-image-redacted]")
+    .replace(/Bearer\s+[A-Za-z0-9._~+/-]+/g, "Bearer [redacted]")
+    .replace(/\s+/g, " ")
+    .trim();
+  return compact.length > maxChars ? `${compact.slice(0, maxChars)}...` : compact;
+}
+
+function summarizeProxyPayload(payload) {
+  const record = payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {};
+  const visualSources = record.video_visual_sources && typeof record.video_visual_sources === "object" ? record.video_visual_sources : {};
+  return {
+    model: typeof record.model === "string" ? record.model : "",
+    provider: typeof record.video_provider === "string" ? record.video_provider : "",
+    duration: record.duration ?? "",
+    promptChars: typeof record.prompt === "string" ? record.prompt.length : 0,
+    hasImageUrl: typeof record.image_url === "string" && Boolean(record.image_url),
+    hasLastImageUrl: typeof record.last_image_url === "string" && Boolean(record.last_image_url),
+    roleImageCount: Array.isArray(record.image_with_roles) ? record.image_with_roles.length : 0,
+    storyboardFrameCount: Array.isArray(visualSources.storyboardFrameUrls) ? visualSources.storyboardFrameUrls.length : 0,
+    productReferenceCount: Array.isArray(visualSources.productReferenceUrls) ? visualSources.productReferenceUrls.length : 0,
+    hasExecutionPackage: Boolean(record.video_execution_package || record.videoExecutionPackage),
+  };
+}
+
+function buildUpstreamDiagnostic({ traceId, stage, kind, method = "POST", upstreamUrl = "", status = 0, rawText = "", data = {}, requestPayload = {}, retryReason = "", error = "" }) {
+  const errorText = error || getUpstreamErrorText(data) || rawText;
+  const errorRecord = data && typeof data === "object" && data.error && typeof data.error === "object" ? data.error : {};
+  return {
+    traceId,
+    stage,
+    kind,
+    method,
+    upstreamUrl,
+    upstreamStatus: status || undefined,
+    upstreamRequestId: extractUpstreamRequestId(rawText || errorText),
+    upstreamErrorCode: typeof data?.code === "string" ? data.code : typeof errorRecord.code === "string" ? errorRecord.code : "",
+    upstreamMessage: compactDiagnosticText(errorText, 500),
+    upstreamBodyExcerpt: rawText ? compactDiagnosticText(rawText, 1200) : "",
+    retryReason,
+    requestShape: summarizeProxyPayload(requestPayload),
+  };
+}
+
+const UPSTREAM_CAPTURE_DIR = new URL("../.runtime-logs/upstream-captures/", import.meta.url);
+
+function safeCaptureName(value) {
+  return String(value || "item").replace(/[^a-zA-Z0-9._-]+/g, "_").slice(0, 80) || "item";
+}
+
+function saveCaptureImageDataUrl(value, traceId, pathHint) {
+  const match = String(value || "").match(/^data:([^;]+);base64,([A-Za-z0-9+/=]+)$/);
+  if (!match) return null;
+  const [, mimeType, base64] = match;
+  const bytes = Buffer.from(base64, "base64");
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  const extension = mimeType.includes("jpeg") ? "jpg" : mimeType.includes("webp") ? "webp" : mimeType.includes("gif") ? "gif" : "png";
+  const fileName = `${safeCaptureName(traceId)}-${safeCaptureName(pathHint)}-${sha256.slice(0, 12)}.${extension}`;
+  mkdirSync(UPSTREAM_CAPTURE_DIR, { recursive: true });
+  writeFileSync(new URL(fileName, UPSTREAM_CAPTURE_DIR), bytes);
+  return {
+    type: "data-image",
+    file: fileName,
+    mimeType,
+    bytes: bytes.length,
+    sha256,
+  };
+}
+
+function serializeCaptureValue(value, traceId, pathHint = "payload") {
+  if (typeof value === "string") {
+    const imageInfo = saveCaptureImageDataUrl(value, traceId, pathHint);
+    if (imageInfo) return imageInfo;
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item, index) => serializeCaptureValue(item, traceId, `${pathHint}_${index}`));
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([key]) => !/api[_-]?key|authorization|token|secret/i.test(key))
+        .map(([key, item]) => [key, serializeCaptureValue(item, traceId, `${pathHint}_${key}`)]),
+    );
+  }
+  return value;
+}
+
+function buildMultipartFieldSummary(proxyPayload) {
+  if (!proxyPayload || typeof proxyPayload !== "object") return [];
+  const fields = [];
+  if (proxyPayload.model) fields.push({ name: "model", value: proxyPayload.model });
+  fields.push({ name: "prompt", value: typeof proxyPayload.prompt === "string" ? proxyPayload.prompt : "" });
+  fields.push({ name: "n", value: String(proxyPayload.n || 1) });
+  if (proxyPayload.size) fields.push({ name: "size", value: proxyPayload.size });
+  if (proxyPayload.input_fidelity) fields.push({ name: "input_fidelity", value: proxyPayload.input_fidelity });
+  const images = Array.isArray(proxyPayload.images) ? proxyPayload.images : [];
+  images.forEach((image, index) => fields.push({ name: "image[]", index, source: image?.image_url || "" }));
+  return fields;
+}
+
+function writeUpstreamCapture({ traceId, kind, upstreamUrl, fallbackPath, requestPayload, normalizedUpstreamPayload, proxyPayload, transport }) {
+  try {
+    mkdirSync(UPSTREAM_CAPTURE_DIR, { recursive: true });
+    const capture = {
+      createdAt: new Date().toISOString(),
+      traceId,
+      kind,
+      method: "POST",
+      upstreamUrl,
+      fallbackPath,
+      transport,
+      requestShape: summarizeProxyPayload(normalizedUpstreamPayload || requestPayload),
+      note: "Authorization/API keys are intentionally omitted. Data images are written as sibling files and referenced here by filename.",
+      appPayloadBeforeProviderNormalization: serializeCaptureValue(requestPayload, traceId, "app_payload"),
+      upstreamPayloadBeforeProviderAdapter: serializeCaptureValue(normalizedUpstreamPayload, traceId, "normalized_payload"),
+      providerPayload: serializeCaptureValue(proxyPayload, traceId, "provider_payload"),
+      multipartFields: transport === "multipart/form-data" ? serializeCaptureValue(buildMultipartFieldSummary(proxyPayload), traceId, "multipart") : [],
+    };
+    const fileName = `${new Date().toISOString().replace(/[:.]/g, "-")}-${safeCaptureName(kind)}-${safeCaptureName(traceId)}.json`;
+    writeFileSync(new URL(fileName, UPSTREAM_CAPTURE_DIR), `${JSON.stringify(capture, null, 2)}\n`, "utf8");
+    console.info("[proxy] upstream capture written", { traceId, kind, fileName });
+  } catch (error) {
+    console.error("[proxy] upstream capture failed", {
+      traceId,
+      kind,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 async function readRequestBody(req) {
@@ -322,15 +518,7 @@ function normalizeUpstreamModel(model, kind) {
 function pickProxyConfig(payload, fallbackPath, kind = "generic") {
   const body = payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {};
   const { base_url, api_key, path, video_provider, ...upstreamPayload } = body;
-  const videoProvider = typeof video_provider === "string" ? video_provider.trim().toLowerCase() : "";
-  const providerConfig =
-    kind === "video" && videoProvider === "wisech"
-      ? { baseUrl: WISECH_VIDEO_BASE_URL, apiKey: WISECH_VIDEO_API_KEY, model: WISECH_VIDEO_MODEL }
-      : kind === "video" && videoProvider === "shishi"
-        ? { baseUrl: SHISHI_VIDEO_BASE_URL, apiKey: SHISHI_VIDEO_API_KEY, model: SHISHI_VIDEO_MODEL }
-        : kind === "video" && videoProvider === "toapis"
-          ? { baseUrl: VIDEO_BASE_URL || TOAPIS_BASE_URL, apiKey: VIDEO_API_KEY || TOAPIS_API_KEY, model: TOAPIS_VIDEO_MODEL, path: TOAPIS_VIDEO_GENERATIONS_PATH }
-        : null;
+  const providerConfig = kind === "video" ? { baseUrl: WISECH_VIDEO_BASE_URL, apiKey: WISECH_VIDEO_API_KEY, model: WISECH_VIDEO_MODEL } : null;
   if (providerConfig && providerConfig.model && !upstreamPayload.model) upstreamPayload.model = providerConfig.model;
   const normalizedModel = normalizeUpstreamModel(upstreamPayload.model, kind);
   if (normalizedModel) upstreamPayload.model = normalizedModel;
@@ -344,7 +532,7 @@ function pickProxyConfig(payload, fallbackPath, kind = "generic") {
       : providerConfig
         ? providerConfig.baseUrl
         : useVideoApi
-        ? VIDEO_BASE_URL
+        ? WISECH_VIDEO_BASE_URL
         : TOAPIS_BASE_URL;
   const apiKey = useFixedImageTextApi
     ? IMAGE_TEXT_API_KEY
@@ -353,7 +541,7 @@ function pickProxyConfig(payload, fallbackPath, kind = "generic") {
       : typeof api_key === "string" && api_key.trim()
       ? api_key.trim()
       : useVideoApi
-        ? VIDEO_API_KEY
+        ? WISECH_VIDEO_API_KEY
         : TOAPIS_API_KEY;
   const pathText = cleanEndpointText(path);
   const isDashScopeBase = (() => {
@@ -371,20 +559,11 @@ function pickProxyConfig(payload, fallbackPath, kind = "generic") {
       return false;
     }
   })();
-  const isShishiKejiBase = (() => {
-    try {
-      return new URL(rawBaseUrl).hostname === "api.shishikeji.com";
-    } catch {
-      return false;
-    }
-  })();
   const isHappyHorseModel =
     typeof upstreamPayload.model === "string" &&
     upstreamPayload.model.toLowerCase().includes("happyhorse");
   const dashScopeFallbackPath =
-    isShishiKejiBase && kind === "video"
-      ? SHISHI_VIDEO_GENERATION_PATH
-      : isDashScopeBase && kind === "video" && isHappyHorseModel
+    isDashScopeBase && kind === "video" && isHappyHorseModel
       ? DASHSCOPE_VIDEO_SYNTHESIS_PATH
       : isDashScopeBase && kind === "image"
         ? DASHSCOPE_IMAGE_GENERATION_PATH
@@ -522,9 +701,10 @@ function extractImageUrls(data) {
   return [...new Set(urls)];
 }
 
-function withUpstreamError(data, status, upstreamUrl) {
+function withUpstreamError(data, status, upstreamUrl, diagnostic = null) {
   if (status >= 200 && status < 300) return { ...data, upstreamUrl };
   const hasMessage = data && typeof data === "object" && ("error" in data || "message" in data);
+  const diagnosticPayload = diagnostic ? { diagnostic, traceId: diagnostic.traceId, upstreamStage: diagnostic.stage, upstreamStatus: diagnostic.upstreamStatus } : {};
   if (hasMessage) {
     const next = { ...data };
     if (typeof next.error === "string") {
@@ -535,15 +715,15 @@ function withUpstreamError(data, status, upstreamUrl) {
     } else if (typeof next.message === "string") {
       next.error = toPublicErrorMessage(next.message);
     }
-    return { ...next, upstreamUrl };
+    return { ...next, upstreamUrl, ...diagnosticPayload };
   }
-  return { ...data, error: `Service request failed (${status}). Please check the service configuration.`, upstreamUrl };
+  return { ...data, error: `Service request failed (${status}). Please check the service configuration.`, upstreamUrl, ...diagnosticPayload };
 }
 
 function toPublicErrorMessage(message) {
   const text = String(message || "").trim();
   if (!text) return "这次请求没有成功，请稍后再试。";
-  if (/server_error|retry your request|An error occurred while processing your request/i.test(text)) {
+  if (/server_error|retry your request|An error occurred while processing your request|do[_\s-]?request[_\s-]?failed/i.test(text)) {
     const requestId = extractUpstreamRequestId(text);
     return `上游服务这次内部处理失败，系统已经停止本次任务。可以直接重试一次${requestId ? `；请求编号：${requestId}` : ""}。`;
   }
@@ -1103,7 +1283,7 @@ function buildFirstFramePayload(payload) {
     ...upstreamPayload,
     image_urls: [...readableImages, ...readableSupportImages, ...(previousFirstFrameUrl ? [previousFirstFrameUrl] : [])],
     previous_first_frame_count: previousFirstFrameUrl ? 1 : 0,
-    prompt: sanitizeProductText(promptText),
+    prompt: sanitizeImageGenerationText(promptText),
   };
 }
 
@@ -1162,12 +1342,24 @@ function buildVideoFirstFramePixelAnchorLocks(productType) {
 
 function sanitizeVideoPromptText(text) {
   return sanitizeProductText(text)
+    .replace(/朋友们|朋友|人群|路人|真人|真实人物|可识别人物|露脸|人脸|面孔/gi, "背景虚化侧影")
+    .replace(/\b(?:people|persons?|friends?|crowd|real person|human face)\b/gi, "soft background silhouettes")
     .replace(/steal|stolen|attack|violence|danger|injury|fight|chase|escape|explode/gi, "safe playful beat")
     .trim();
 }
 
 function sanitizeUpstreamVideoPromptText(text) {
   return sanitizeProductText(text)
+    .replace(/朋友们|朋友|人群|路人|真人|真实人物|可识别人物|露脸|人脸|面孔/gi, "背景虚化侧影")
+    .replace(/\breal person wearing\b/gi, "wearer inside")
+    .replace(/\breal person inside\b/gi, "wearer inside")
+    .replace(/\bperson-sized\b/gi, "wearer-scale")
+    .replace(/\bhuman-scale\b/gi, "wearable-scale")
+    .replace(/\bhuman-wearable\b/gi, "wearable")
+    .replace(/\bHUMAN-BODY\b/g, "WEARABLE-BODY")
+    .replace(/\bskinny_person\b/gi, "thin-body drift")
+    .replace(/\breal_skin\b/gi, "skin-surface texture")
+    .replace(/\b(?:people|persons?|friends?|crowd|real person|human face)\b/gi, "soft background silhouettes")
     .replace(/locked dead across all frames/gi, "strictly consistent across all frames")
     .replace(/\bHARD FAIL DETAILS\b/g, "STRICT PRESERVATION DETAILS")
     .replace(/\bHard fail\b/g, "Strict preservation rule")
@@ -1187,6 +1379,24 @@ function sanitizeUpstreamVideoPromptText(text) {
     .replace(/\bchase\b/gi, "follow")
     .replace(/\bescape\b/gi, "leave")
     .replace(/\bexplode\b/gi, "pop")
+    .trim();
+}
+
+function sanitizeFinalVideoPromptForSubmission(text) {
+  return sanitizeUpstreamVideoPromptText(text)
+    .replace(/USER-SUPPLIED TIMELINE SCRIPT\. Preserve the user's exact sequence, timing, character entrance order, comic beats, and caption intent as the source of truth\.\s*/gi, "")
+    .replace(/Caption\/subtitle lines[^.\n]*\.\s*/gi, "Subtitle copy is post-production overlay context only. ")
+    .replace(/Do not render readable text in the generated scene\./gi, "The generated scene uses clean visuals without readable text.")
+    .replace(/\*\*/g, " ")
+    .replace(/全片要求[:：]?[^。；\n]*(?:。|；)?/g, "背景宾客只保留虚化背影或侧影。")
+    .replace(/字幕与画面中均[^。；\n]*(?:。|；)?/g, "字幕只作为后期叠加参考。")
+    .replace(/字幕[:：][^。；\n]*(?:。|；)?/g, "字幕只作为后期叠加参考。")
+    .replace(/镜头避开正脸或使用/g, "镜头使用")
+    .replace(/(?:不出现|不要|禁止|避免|不能|无)[^。；,\n]*(?:。|；|,)?/g, " ")
+    .replace(/\b(?:No|Without|Avoid|Do not|Don't|Never|Not)\b[^.;\n]*(?:\.|;)?/gi, " ")
+    .replace(/敏感词|正脸|清晰人脸|人脸/g, "")
+    .replace(/\s{2,}/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
 
@@ -1236,24 +1446,6 @@ function buildSensitiveSafeProductVideoPrompt(payload) {
   ].join("\n\n");
 }
 
-function summarizeVideoLockedNodes(lockedNodes, maxLines = 8) {
-  if (!Array.isArray(lockedNodes)) return "";
-  return lockedNodes
-    .filter((node) => node && typeof node === "object")
-    .slice(0, maxLines)
-    .map((node) => {
-      const label = typeof node.label === "string" ? sanitizeProductText(node.label) : "";
-      const detail = typeof node.detail === "string" ? sanitizeProductText(node.detail) : "";
-      return [label, detail].filter(Boolean).join(": ");
-    })
-    .filter(Boolean)
-    .join("; ");
-}
-
-function compactProductFeatureLock(productType) {
-  return `Product feature lock for ${getProductStableName(productType)}: preserve the approved first-frame silhouette, colors, facial/window details, zipper, valve, tail/ears/fins/scarf/belt, hands, shoes, wearer proportions, and fabric wrinkles. Do not beautify into a new mascot or add new components.`;
-}
-
 function truncateTextByChars(text, maxChars) {
   const value = String(text || "").trim();
   if (value.length <= maxChars) return value;
@@ -1278,37 +1470,15 @@ function fitPromptToLimit(parts, maxChars) {
   return fitted.join("\n\n").trim().slice(0, maxChars);
 }
 
-function buildCompactShishiProductVideoPrompt(payload) {
-  const actionPrompt = truncateTextByChars(sanitizeVideoPromptText(typeof payload.action_prompt === "string" ? payload.action_prompt.trim() : ""), 1200);
-  const scenePrompt = truncateTextByChars(sanitizeVideoPromptText(typeof payload.scene_prompt === "string" ? payload.scene_prompt.trim() : ""), 650);
-  const productType = typeof payload.product_type === "string" && payload.product_type.trim() ? sanitizeProductText(payload.product_type) : "current inflatable product";
-  const stableProductName = getProductStableName(productType);
-  const motionRule = typeof payload.motion_rule === "string" ? payload.motion_rule.trim() : "";
-  const lockedSummary = truncateTextByChars(summarizeVideoLockedNodes(payload.locked_nodes), 900);
-  const hasFourViews = Array.isArray(payload.image_urls) && payload.image_urls.filter((item) => typeof item === "string" && item.trim()).length === 4;
-  const supportSource = Array.isArray(payload.support_image_urls) ? payload.support_image_urls : payload.detail_image_urls;
-  const supportCount = Array.isArray(supportSource) ? supportSource.filter((item) => typeof item === "string" && item.trim()).length : 0;
-  const parts = [
-    `Generate a same-scene ecommerce short video from the uploaded first frame. The subject is always ${stableProductName}; frame 1 must preserve product shape, pose, color, face/window/zipper, hands, feet contact, props, and background placement.`,
-    actionPrompt ? `User action and small gag to prioritize: ${actionPrompt}` : "Action requirement: show 2-3 clear but small daily comedy beats with a pause and a tiny twist, not only standing or breathing.",
-    scenePrompt ? `Scene continuity: ${scenePrompt}` : "Scene continuity: keep the original location, camera, and visible props from the first frame.",
-    compactProductFeatureLock(productType),
-    hasFourViews ? `Four-view topology is only a product placement contract. Support views: ${supportCount}. The approved first frame is the direct video visual input.` : "If four-view metadata is incomplete, treat the approved first frame as the only direct visual anchor.",
-    lockedSummary ? `Confirmed lock nodes: ${lockedSummary}` : "",
-    "Camera rule: stable ecommerce shot, full body visible, no cuts, no fast zoom. Start from the approved first-frame view, then allow a controlled three-quarter, side, or brief rear glimpse when the user action needs it and the four-view topology proves that surface.",
-    "Motion rule: face window and zipper stay readable and mostly upright; feet remain grounded or make a short slide. Arm/hand, head direction, prop interaction, and a small body pivot must be visible enough to complete the gag. No jump, run, fall, full spin, or product-obscuring prop.",
-    motionRule ? `Extra motion boundary: ${motionRule}` : "",
-    "Balance rule: product identity and user action both must survive. Preserve silhouette, proportions, colors, wrinkles, hands, shoes, zipper, valves, tail/ears/fins/scarf/belt, and view-correct component placement, but do not drop the requested action into a nearly static first-frame micro-animation.",
-  ];
-  return fitPromptToLimit(parts, SHISHI_PROMPT_SOFT_LIMIT);
-}
-
 function buildProductVideoPrompt(payload) {
   const actionPrompt = sanitizeVideoPromptText(typeof payload.action_prompt === "string" ? payload.action_prompt.trim() : "");
   const scenePrompt = typeof payload.scene_prompt === "string" ? sanitizeProductText(payload.scene_prompt) : "";
   const productType = typeof payload.product_type === "string" ? sanitizeProductText(payload.product_type) : "wearable inflatable product";
   const motionRule = typeof payload.motion_rule === "string" ? sanitizeProductText(payload.motion_rule) : "Keep motion small and product-safe.";
   const lockedNodes = Array.isArray(payload.locked_nodes) ? payload.locked_nodes : [];
+  const storyboardFrameUrls = Array.isArray(payload.storyboard_frame_urls)
+    ? payload.storyboard_frame_urls.filter((item) => typeof item === "string" && item.trim())
+    : [];
   const readableImages = Array.isArray(payload.image_urls)
     ? payload.image_urls.filter((item) => typeof item === "string" && item.trim())
     : [];
@@ -1325,6 +1495,9 @@ function buildProductVideoPrompt(payload) {
     `REQUIRED USER MOTION BEATS. These beats must be visible before any generic idle display:\n${requiredMotionBeats}`,
     "Do not replace the user-named subject, scene, or props from the motion beats. Preserve named scene items as visible context when they are safe: laundry room, drum washer, blue basket, coin machine, waiting gesture, foot taps, tiny arm sway, glance, restrained pointing, or the user's equivalent props.",
     "The final video cannot be only standing, breathing, or barely swaying. It must show 2-3 small readable action beats while preserving product fidelity.",
+    storyboardFrameUrls.length >= 3
+      ? "VIDEO STORYBOARD PATH: three separate generated keyframe images exist for setup, tiny reversal, and recovery pose. The submitted first_frame is storyboard frame 1, and frames 2-3 define the required visual action path in the prompt package. Do not treat any storyboard sheet or image grid as a video frame."
+      : "VIDEO STORYBOARD PATH: separate storyboard keyframes are incomplete, so do not submit video until the product has three real generated keyframes.",
     "HIGHEST PRIORITY PRODUCT CONSISTENCY VIDEO CONTRACT.",
     "FOUR-VIEW PRODUCT TOPOLOGY CONTRACT. Approved first frame is the direct video starting frame. The uploaded core views are allowed topology evidence for controlled camera/pose changes: front, left side, right side, and back may be revealed only when the motion path physically reaches that surface and only with view-correct placement.",
     readableImages.length === 4
@@ -1350,7 +1523,7 @@ function buildProductVideoPrompt(payload) {
   ].join("\n\n");
 }
 
-function buildVideoPayload(payload, options = {}) {
+function buildVideoPayload(payload) {
   const {
     action_prompt,
     scene_prompt,
@@ -1360,6 +1533,7 @@ function buildVideoPayload(payload, options = {}) {
     image_urls,
     support_image_urls,
     detail_image_urls,
+    storyboard_frame_urls,
     story_intent,
     storyIntent,
     storyboards,
@@ -1371,20 +1545,34 @@ function buildVideoPayload(payload, options = {}) {
     prompt,
     ...upstreamPayload
   } = payload;
-  const model = typeof upstreamPayload.model === "string" && upstreamPayload.model.trim() ? upstreamPayload.model.trim() : VIDEO_MODEL;
+  const model = typeof upstreamPayload.model === "string" && upstreamPayload.model.trim() ? upstreamPayload.model.trim() : WISECH_VIDEO_MODEL;
   const provider = typeof payload.video_provider === "string" ? payload.video_provider.trim().toLowerCase() : "";
   const modelLimit = getVideoModelLimit(provider, model);
   const useSensitiveSafePrompt = Boolean(upstreamPayload.sensitive_safe_retry);
-  const useCompactShishiPrompt = Boolean(options.compactShishiPrompt);
-  const rawPrompt = sanitizeUpstreamVideoPromptText(
-    useSensitiveSafePrompt
-      ? buildSensitiveSafeProductVideoPrompt({ action_prompt, scene_prompt, product_type })
-      : useCompactShishiPrompt
-        ? buildCompactShishiProductVideoPrompt({ action_prompt, scene_prompt, product_type, locked_nodes, motion_rule, image_urls, support_image_urls, detail_image_urls })
-      : buildProductVideoPrompt({ action_prompt, scene_prompt, product_type, locked_nodes, motion_rule, image_urls, support_image_urls, detail_image_urls }),
-  );
-  const promptLimit = useCompactShishiPrompt ? Math.min(modelLimit.promptSoftLimit, SHISHI_PROMPT_SOFT_LIMIT) : modelLimit.promptSoftLimit;
+  const executionPrompt =
+    typeof prompt === "string" && prompt.trim()
+      ? prompt.trim()
+      : typeof video_execution_package?.finalVideoPrompt === "string" && video_execution_package.finalVideoPrompt.trim()
+        ? video_execution_package.finalVideoPrompt.trim()
+        : typeof videoExecutionPackage?.finalVideoPrompt === "string" && videoExecutionPackage.finalVideoPrompt.trim()
+          ? videoExecutionPackage.finalVideoPrompt.trim()
+          : "";
+  const rawPrompt = executionPrompt
+    ? sanitizeFinalVideoPromptForSubmission(executionPrompt)
+    : sanitizeUpstreamVideoPromptText(
+        useSensitiveSafePrompt
+          ? buildSensitiveSafeProductVideoPrompt({ action_prompt, scene_prompt, product_type })
+          : buildProductVideoPrompt({ action_prompt, scene_prompt, product_type, locked_nodes, motion_rule, image_urls, support_image_urls, detail_image_urls, storyboard_frame_urls }),
+      );
+  const promptLimit = modelLimit.promptSoftLimit;
   const fittedPrompt = fitPromptToLimit([rawPrompt], promptLimit);
+  const videoVisualSources = buildVideoVisualSources({
+    image_url: upstreamPayload.image_url,
+    image_urls,
+    support_image_urls,
+    detail_image_urls,
+    storyboard_frame_urls,
+  });
   return {
     ...upstreamPayload,
     ...(model ? { model } : {}),
@@ -1392,11 +1580,12 @@ function buildVideoPayload(payload, options = {}) {
     resolution: modelLimit.resolution || upstreamPayload.resolution,
     prompt: fittedPrompt,
     model_limits: modelLimit,
+    video_visual_sources: videoVisualSources,
     prompt_summary: {
       promptChars: fittedPrompt.length,
       promptLimit: modelLimit.promptHardLimit,
       promptSoftLimit: promptLimit,
-      promptCompacted: fittedPrompt.length < rawPrompt.length || useCompactShishiPrompt,
+      promptCompacted: fittedPrompt.length < rawPrompt.length,
     },
   };
 }
@@ -1408,6 +1597,7 @@ function createVideoPayloadSummary(payload, upstreamUrl, provider = "") {
   const prompt = typeof payload?.prompt === "string" ? payload.prompt.trim() : "";
   const submittedDuration = resolveSubmittedVideoDuration(payload, upstreamUrl);
   const requestedDuration = Number.isFinite(Number(payload?.requested_duration)) ? Number(payload.requested_duration) : Number(payload?.duration);
+  const visualPlan = buildVideoVisualSubmissionPlan(payload, upstreamUrl);
   return {
     durationSummary: {
       requestedDuration,
@@ -1427,21 +1617,21 @@ function createVideoPayloadSummary(payload, upstreamUrl, provider = "") {
       model,
       ...modelLimit,
     },
+    visualSummary: summarizeVideoVisualSubmissionPlan(visualPlan),
   };
 }
 
 async function proxyVideoSafety(payload) {
-  const baseConfig = pickProxyConfig(payload, OPENAI_VIDEO_GENERATIONS_PATH, "video");
-  const isShishiVideoRequest = isShishiKejiUrl(baseConfig.upstreamUrl);
-  const videoPayload = buildVideoPayload(payload, { compactShishiPrompt: isShishiVideoRequest });
+  const traceId = createTraceId();
+  const videoPayload = buildVideoPayload(payload);
   const { apiKey, upstreamUrl, upstreamPayload } = pickProxyConfig(videoPayload, OPENAI_VIDEO_GENERATIONS_PATH, "video");
   const prompt = typeof upstreamPayload.prompt === "string" ? upstreamPayload.prompt.trim() : "";
-  const { durationSummary, promptSummary, modelLimits } = createVideoPayloadSummary(upstreamPayload, upstreamUrl, payload?.video_provider);
+  const { durationSummary, promptSummary, modelLimits, visualSummary } = createVideoPayloadSummary(upstreamPayload, upstreamUrl, payload?.video_provider);
   if (!apiKey) {
-    return { status: 400, payload: { ok: false, verdict: "blocked", reason: "Video service API key is not configured.", safePrompt: buildSensitiveSafeVideoActionPrompt(payload), durationSummary, promptSummary, modelLimits } };
+    return { status: 400, payload: { ok: false, verdict: "blocked", reason: "Video service API key is not configured.", safePrompt: buildSensitiveSafeVideoActionPrompt(payload), durationSummary, promptSummary, modelLimits, visualSummary } };
   }
   if (prompt.length > modelLimits.promptHardLimit) {
-    return { status: 400, payload: { ok: false, verdict: "blocked", reason: `Full video prompt is still too long: ${prompt.length} chars; limit is ${modelLimits.promptHardLimit}.`, safePrompt: buildSensitiveSafeVideoActionPrompt(payload), promptPreview: prompt.slice(0, 500), durationSummary, promptSummary, modelLimits } };
+    return { status: 400, payload: { ok: false, verdict: "blocked", reason: `Full video prompt is still too long: ${prompt.length} chars; limit is ${modelLimits.promptHardLimit}.`, safePrompt: buildSensitiveSafeVideoActionPrompt(payload), promptPreview: prompt.slice(0, 500), durationSummary, promptSummary, modelLimits, visualSummary } };
   }
   const moderationUrl = (() => {
     try {
@@ -1454,25 +1644,49 @@ async function proxyVideoSafety(payload) {
       return "";
     }
   })();
-  if (!moderationUrl || isShishiKejiUrl(upstreamUrl) || isToapisUrl(upstreamUrl)) {
-    return { status: 200, payload: { ok: true, verdict: "skipped", reason: "No moderation endpoint is available for this provider.", upstreamUrl, promptPreview: prompt.slice(0, 500), durationSummary, promptSummary, modelLimits } };
+  if (!moderationUrl || isToapisUrl(upstreamUrl)) {
+    return { status: 200, payload: { ok: true, verdict: "skipped", reason: "No moderation endpoint is available for this provider.", upstreamUrl, promptPreview: prompt.slice(0, 500), durationSummary, promptSummary, modelLimits, visualSummary } };
   }
-  const response = await fetch(moderationUrl, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model: "omni-moderation-latest", input: prompt }),
-  });
+  let response;
+  try {
+    response = await fetch(moderationUrl, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "omni-moderation-latest", input: prompt }),
+    });
+  } catch (error) {
+    const diagnostic = buildUpstreamDiagnostic({
+      traceId,
+      stage: "video.safety_fetch",
+      kind: "video-safety",
+      upstreamUrl: moderationUrl,
+      error: error instanceof Error ? error.message : String(error),
+      requestPayload: upstreamPayload,
+    });
+    console.error("[proxy] video safety connection failed", diagnostic);
+    return { status: 200, payload: { ok: true, verdict: "skipped", reason: "Moderation endpoint could not be reached; continuing with provider request.", upstreamUrl: moderationUrl, diagnostic, traceId, promptPreview: prompt.slice(0, 500), durationSummary, promptSummary, modelLimits, visualSummary } };
+  }
   const text = await response.text();
   const data = parseUpstreamBody(text, response.status);
   if (!response.ok) {
-    return { status: 200, payload: { ok: true, verdict: "skipped", reason: `Moderation endpoint returned ${response.status}; continuing with provider request.`, upstreamUrl: moderationUrl, upstreamStatus: response.status, promptPreview: prompt.slice(0, 500), durationSummary, promptSummary, modelLimits } };
+    const diagnostic = buildUpstreamDiagnostic({
+      traceId,
+      stage: "video.safety_response",
+      kind: "video-safety",
+      upstreamUrl: moderationUrl,
+      status: response.status,
+      rawText: text,
+      data,
+      requestPayload: upstreamPayload,
+    });
+    return { status: 200, payload: { ok: true, verdict: "skipped", reason: `Moderation endpoint returned ${response.status}; continuing with provider request.`, upstreamUrl: moderationUrl, upstreamStatus: response.status, diagnostic, traceId, promptPreview: prompt.slice(0, 500), durationSummary, promptSummary, modelLimits, visualSummary } };
   }
   const results = Array.isArray(data?.results) ? data.results : [];
   const flagged = results.some((item) => item && typeof item === "object" && item.flagged === true);
   if (flagged) {
-    return { status: 200, payload: { ok: false, verdict: "blocked", reason: "Moderation flagged the video prompt.", categories: results[0]?.categories || {}, categoryScores: results[0]?.category_scores || {}, safePrompt: buildSensitiveSafeVideoActionPrompt(payload), promptPreview: prompt.slice(0, 500), durationSummary, promptSummary, modelLimits } };
+    return { status: 200, payload: { ok: false, verdict: "blocked", reason: "Moderation flagged the video prompt.", categories: results[0]?.categories || {}, categoryScores: results[0]?.category_scores || {}, safePrompt: buildSensitiveSafeVideoActionPrompt(payload), promptPreview: prompt.slice(0, 500), durationSummary, promptSummary, modelLimits, visualSummary } };
   }
-  return { status: 200, payload: { ok: true, verdict: "passed", reason: "Video prompt passed moderation.", upstreamUrl: moderationUrl, promptPreview: prompt.slice(0, 500), durationSummary, promptSummary, modelLimits } };
+  return { status: 200, payload: { ok: true, verdict: "passed", reason: "Video prompt passed moderation.", upstreamUrl: moderationUrl, promptPreview: prompt.slice(0, 500), durationSummary, promptSummary, modelLimits, visualSummary } };
 }
 
 function pickReadableImages(value) {
@@ -1525,14 +1739,6 @@ function isVolcengineUrl(url) {
   try {
     const hostname = new URL(url).hostname;
     return hostname.includes("volces.com") || hostname.includes("bytepluses.com");
-  } catch {
-    return false;
-  }
-}
-
-function isShishiKejiUrl(url) {
-  try {
-    return new URL(url).hostname === "api.shishikeji.com";
   } catch {
     return false;
   }
@@ -1709,44 +1915,108 @@ function extractUploadedImageUrl(value) {
   return "";
 }
 
-async function uploadToapisDataImage(dataImageUrl, apiKey) {
+function summarizeDataImageUrl(dataImageUrl) {
+  const match = String(dataImageUrl || "").match(/^data:([^;]+);base64,([A-Za-z0-9+/=]+)$/);
+  if (!match) return { mimeType: "unknown", bytes: 0, sha256: "" };
+  const bytes = Buffer.from(match[2], "base64");
+  return {
+    mimeType: match[1],
+    bytes: bytes.length,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+  };
+}
+
+function formatUploadImageLabel(label, imageInfo) {
+  const size = imageInfo.bytes ? `${(imageInfo.bytes / 1024 / 1024).toFixed(2)}MB` : "unknown-size";
+  const hash = imageInfo.sha256 ? `; sha256=${imageInfo.sha256.slice(0, 12)}` : "";
+  return `${label}; mime=${imageInfo.mimeType}; bytes=${imageInfo.bytes || "unknown"} (${size})${hash}`;
+}
+
+async function uploadToapisDataImage(dataImageUrl, apiKey, label = "image") {
+  const imageInfo = summarizeDataImageUrl(dataImageUrl);
   const { blob, fileName } = await imageUrlToBlob(dataImageUrl, 0);
   if (blob.size > TOAPIS_MAX_UPLOAD_IMAGE_BYTES) {
-    throw new Error("The approved first frame is larger than 10 MB after conversion. Please regenerate or compress it before creating video.");
+    throw new Error(`${formatUploadImageLabel(label, imageInfo)} is larger than 10 MB after conversion. Please regenerate or compress it before creating video.`);
   }
   const form = new FormData();
   form.append("file", blob, fileName);
   form.append("purpose", "vision");
   const upstreamUrl = `${TOAPIS_BASE_URL}${TOAPIS_IMAGE_UPLOAD_PATH}`;
-  const response = await fetch(upstreamUrl, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: form,
-  });
+  let response;
+  try {
+    response = await fetch(upstreamUrl, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: form,
+    });
+  } catch (error) {
+    throw new Error(`ToAPI image upload failed before Wisech submit: ${formatUploadImageLabel(label, imageInfo)}; reason=${error instanceof Error ? error.message : String(error)}`);
+  }
   const text = await response.text();
   const data = parseUpstreamBody(text, response.status);
   if (!response.ok) {
-    throw new Error(toPublicErrorMessage(text || getUpstreamErrorText(data)));
+    throw new Error(`ToAPI image upload failed before Wisech submit: ${formatUploadImageLabel(label, imageInfo)}; status=${response.status}; message=${toPublicErrorMessage(text || getUpstreamErrorText(data))}`);
   }
   const uploadedUrl = extractUploadedImageUrl(data);
   if (!uploadedUrl) {
-    throw new Error("Image upload succeeded but no public image URL was returned.");
+    throw new Error(`ToAPI image upload succeeded but no public URL was returned: ${formatUploadImageLabel(label, imageInfo)}; status=${response.status}; body=${compactDiagnosticText(text, 500)}`);
   }
   return uploadedUrl;
 }
 
 async function normalizeOpenAICompatibleVideoPayload(payload, upstreamUrl, apiKey) {
+  const dataImageUrls = new Map();
+  const addDataImageUrl = (label, url) => {
+    if (typeof url !== "string" || !url.startsWith("data:image/")) return;
+    const existing = dataImageUrls.get(url);
+    if (existing) {
+      existing.labels.push(label);
+      return;
+    }
+    dataImageUrls.set(url, { labels: [label] });
+  };
   const firstFrameUrl = getVideoFirstFrameUrl(payload);
-  if (!firstFrameUrl.startsWith("data:image/")) return payload;
+  addDataImageUrl("image_url/first_frame", firstFrameUrl);
+  const visualSources = payload?.video_visual_sources && typeof payload.video_visual_sources === "object" ? payload.video_visual_sources : null;
+  addDataImageUrl("video_visual_sources.firstFrameUrl", visualSources?.firstFrameUrl);
+  for (const key of ["storyboardFrameUrls", "productReferenceUrls"]) {
+    if (!Array.isArray(visualSources?.[key])) continue;
+    for (const [index, url] of visualSources[key].entries()) {
+      addDataImageUrl(`video_visual_sources.${key}[${index}]`, url);
+    }
+  }
+  if (!dataImageUrls.size) return payload;
   const uploadApiKey = isToapisUrl(upstreamUrl) ? apiKey : TOAPIS_API_KEY;
   if (!uploadApiKey) {
-    throw new Error("This video provider does not accept base64 first-frame images, and ToAPI image upload is not configured. Please use a public http(s) image URL for the approved first frame.");
+    throw new Error("This video provider does not accept base64 frame/reference images, and ToAPI image upload is not configured. Please use public http(s) image URLs for the approved storyboard frames.");
   }
+  const uploadedImages = new Map();
+  let imageIndex = 0;
+  for (const [dataImageUrl, imageRecord] of dataImageUrls.entries()) {
+    imageIndex += 1;
+    const label = `${imageRecord.labels.join(",")} (${imageIndex}/${dataImageUrls.size})`;
+    uploadedImages.set(dataImageUrl, await uploadToapisDataImage(dataImageUrl, uploadApiKey, label));
+  }
+  const replaceUploadedImage = (url) => (typeof url === "string" && uploadedImages.has(url) ? uploadedImages.get(url) : url);
+  const nextVisualSources =
+    visualSources
+      ? {
+          ...visualSources,
+          firstFrameUrl: replaceUploadedImage(visualSources.firstFrameUrl),
+          storyboardFrameUrls: Array.isArray(visualSources.storyboardFrameUrls)
+            ? visualSources.storyboardFrameUrls.map(replaceUploadedImage)
+            : visualSources.storyboardFrameUrls,
+          productReferenceUrls: Array.isArray(visualSources.productReferenceUrls)
+            ? visualSources.productReferenceUrls.map(replaceUploadedImage)
+            : visualSources.productReferenceUrls,
+        }
+      : null;
   return {
     ...payload,
-    image_url: await uploadToapisDataImage(firstFrameUrl, uploadApiKey),
+    image_url: replaceUploadedImage(firstFrameUrl),
+    ...(nextVisualSources ? { video_visual_sources: nextVisualSources } : {}),
   };
 }
 
@@ -1759,6 +2029,7 @@ function stripInternalPayloadFields(payload) {
   const {
     model_limits,
     prompt_summary,
+    video_visual_sources,
     story_intent,
     storyIntent,
     storyboards,
@@ -1773,9 +2044,9 @@ function stripInternalPayloadFields(payload) {
 }
 
 function buildVolcengineVideoPayload(payload) {
+  const visualPlan = buildVideoVisualSubmissionPlan(payload, "");
   payload = stripInternalPayloadFields(payload);
   const prompt = typeof payload.prompt === "string" ? payload.prompt : "";
-  const imageUrl = typeof payload.image_url === "string" ? payload.image_url : "";
   const duration = Number.isFinite(Number(payload.duration)) ? Number(payload.duration) : 8;
   const ratio = typeof payload.aspect_ratio === "string" ? payload.aspect_ratio : "9:16";
   const content = [
@@ -1785,11 +2056,21 @@ function buildVolcengineVideoPayload(payload) {
     },
   ];
 
-  if (imageUrl && imageUrl !== "PASTE_APPROVED_FIRST_FRAME_URL") {
+  if (visualPlan.firstFrameUrl) {
     content.push({
       type: "image_url",
+      role: "first_frame",
       image_url: {
-        url: imageUrl,
+        url: visualPlan.firstFrameUrl,
+      },
+    });
+  }
+  if (visualPlan.lastFrameUrl) {
+    content.push({
+      type: "image_url",
+      role: "last_frame",
+      image_url: {
+        url: visualPlan.lastFrameUrl,
       },
     });
   }
@@ -1807,21 +2088,16 @@ function buildVolcengineVideoPayload(payload) {
 }
 
 function buildDashScopeVideoPayload(payload) {
+  const visualPlan = buildVideoVisualSubmissionPlan(payload, "");
   payload = stripInternalPayloadFields(payload);
   const prompt = typeof payload.prompt === "string" ? payload.prompt : "";
-  const imageUrl = typeof payload.image_url === "string" ? payload.image_url : "";
   const duration = Number.isFinite(Number(payload.duration)) ? Number(payload.duration) : 8;
   const rawResolution = typeof payload.resolution === "string" ? payload.resolution : "1080P";
   const resolution = rawResolution.toUpperCase().replace("1080P", "1080P").replace("720P", "720P");
-  const media =
-    imageUrl && imageUrl !== "PASTE_APPROVED_FIRST_FRAME_URL"
-      ? [
-          {
-            type: "first_frame",
-            url: imageUrl,
-          },
-        ]
-      : [];
+  const media = [
+    ...(visualPlan.firstFrameUrl ? [{ type: "first_frame", url: visualPlan.firstFrameUrl }] : []),
+    ...(visualPlan.lastFrameUrl ? [{ type: "last_frame", url: visualPlan.lastFrameUrl }] : []),
+  ];
 
   return {
     model: payload.model,
@@ -1847,6 +2123,130 @@ function isReadableVideoFirstFrameUrl(value) {
   return /^https?:\/\//i.test(value) || value.startsWith("data:image/");
 }
 
+function pickVideoImageUrls(value) {
+  return Array.isArray(value)
+    ? value.map((item) => (typeof item === "string" ? item.trim() : "")).filter((item) => item && isReadableVideoFirstFrameUrl(item))
+    : [];
+}
+
+function uniqueVideoImageUrls(urls) {
+  const seen = new Set();
+  return urls.filter((url) => {
+    const key = String(url || "").trim();
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function publicVideoImageUrls(urls) {
+  return urls.filter((url) => /^https?:\/\//i.test(url));
+}
+
+function buildVideoVisualSources(payload) {
+  const supportSource = Array.isArray(payload?.support_image_urls) ? payload.support_image_urls : payload?.detail_image_urls;
+  const storyboardFrameUrls = uniqueVideoImageUrls(pickVideoImageUrls(payload?.storyboard_frame_urls));
+  const firstFrameUrl = getVideoFirstFrameUrl(payload) || storyboardFrameUrls[0] || "";
+  return {
+    firstFrameUrl,
+    storyboardFrameUrls,
+    productReferenceUrls: uniqueVideoImageUrls([
+      ...pickVideoImageUrls(payload?.image_urls),
+      ...pickVideoImageUrls(supportSource),
+    ]),
+  };
+}
+
+function resolveVideoCapabilityProvider(upstreamUrl, providerHint = "") {
+  if (isDashScopeUrl(upstreamUrl)) return "dashscope";
+  if (isVolcengineUrl(upstreamUrl)) return "volcengine";
+  return resolveVideoProviderFromUrl(upstreamUrl, providerHint);
+}
+
+function getVideoVisualCapability(provider, model, upstreamUrl = "") {
+  const providerKey = resolveVideoCapabilityProvider(upstreamUrl, provider);
+  const modelKey = typeof model === "string" ? model.trim() : "";
+  const providerCapabilities = VIDEO_VISUAL_INPUT_CAPABILITIES[providerKey] || VIDEO_VISUAL_INPUT_CAPABILITIES.wisech;
+  if (providerCapabilities[modelKey]) return { provider: providerKey, model: modelKey, ...providerCapabilities[modelKey] };
+  if (providerKey === "wisech" && /yunshu|seedance|doubao/i.test(modelKey)) {
+    return { provider: providerKey, model: modelKey, ...VIDEO_VISUAL_INPUT_CAPABILITIES.wisech.default };
+  }
+  return { provider: providerKey, model: modelKey, ...providerCapabilities.default };
+}
+
+function buildVideoVisualSubmissionPlan(payload, upstreamUrl) {
+  const capability = getVideoVisualCapability(payload?.video_provider, payload?.model, upstreamUrl);
+  const sources = payload?.video_visual_sources && typeof payload.video_visual_sources === "object"
+    ? payload.video_visual_sources
+    : buildVideoVisualSources(payload);
+  const allStoryboardFrames = uniqueVideoImageUrls(pickVideoImageUrls(sources.storyboardFrameUrls));
+  const firstFrameUrl = typeof sources.firstFrameUrl === "string" ? sources.firstFrameUrl.trim() : "";
+  const lastStoryboardFrame = allStoryboardFrames.length >= 2 ? allStoryboardFrames[allStoryboardFrames.length - 1] : "";
+  const lastFrameUrl =
+    capability.supportsLastFrame && lastStoryboardFrame && lastStoryboardFrame !== firstFrameUrl
+      ? lastStoryboardFrame
+      : "";
+  const middleStoryboardRefs = allStoryboardFrames.filter((url) => url && url !== firstFrameUrl && url !== lastFrameUrl);
+  const productReferenceUrls = uniqueVideoImageUrls(pickVideoImageUrls(sources.productReferenceUrls));
+  const referencePool = capability.supportsMixedFrameAndReferences
+    ? uniqueVideoImageUrls([...middleStoryboardRefs, ...productReferenceUrls])
+    : [];
+  const referenceUrls = publicVideoImageUrls(referencePool).slice(0, capability.maxReferenceImages || 0);
+  const imageRoleItems = [
+    ...(firstFrameUrl ? [{ url: firstFrameUrl, role: "first_frame" }] : []),
+    ...(lastFrameUrl ? [{ url: lastFrameUrl, role: "last_frame" }] : []),
+  ];
+  const stageReferenceCount = referenceUrls.filter((url) => middleStoryboardRefs.includes(url)).length;
+  const stageFramesSubmittedVisually = imageRoleItems.length + stageReferenceCount;
+  const stageFramesUsedInPrompt = allStoryboardFrames.length;
+  return {
+    capability,
+    sources,
+    firstFrameUrl,
+    lastFrameUrl,
+    imageRoleItems,
+    referenceUrls,
+    visualMode:
+      imageRoleItems.length >= 2
+        ? referenceUrls.length
+          ? "first_last_plus_references"
+          : "first_last_frame"
+        : imageRoleItems.length === 1
+          ? referenceUrls.length
+            ? "first_frame_plus_references"
+            : "first_frame_only"
+          : referenceUrls.length
+            ? "references_only"
+            : "prompt_only",
+    stageFramesSubmittedVisually,
+    stageFramesUsedInPrompt,
+    unsupportedVisualInputs: {
+      lastFrameDropped: Boolean(lastStoryboardFrame && !lastFrameUrl),
+      referenceImagesDropped: referencePool.length > referenceUrls.length,
+      middleStoryboardOnlyInPrompt: Math.max(0, middleStoryboardRefs.length - stageReferenceCount),
+    },
+  };
+}
+
+function summarizeVideoVisualSubmissionPlan(plan) {
+  return {
+    provider: plan.capability.provider,
+    model: plan.capability.model,
+    providerVisualMode: plan.capability.visualMode,
+    submittedVisualMode: plan.visualMode,
+    firstFrameField: plan.firstFrameUrl ? plan.capability.firstFrameField : "",
+    lastFrameField: plan.lastFrameUrl ? plan.capability.lastFrameField : "",
+    referenceImageField: plan.referenceUrls.length ? plan.capability.referenceImageField : "",
+    firstFrameSubmitted: Boolean(plan.firstFrameUrl),
+    lastFrameSubmitted: Boolean(plan.lastFrameUrl),
+    referenceImagesSubmitted: plan.referenceUrls.length,
+    stageFramesSubmittedVisually: plan.stageFramesSubmittedVisually,
+    stageFramesUsedInPrompt: plan.stageFramesUsedInPrompt,
+    unsupportedVisualInputs: plan.unsupportedVisualInputs,
+    source: plan.capability.source,
+  };
+}
+
 function buildVideoDimensions(aspectRatio) {
   if (aspectRatio === "16:9") return { width: 1920, height: 1080, size: "1920x1080" };
   if (aspectRatio === "1:1") return { width: 1080, height: 1080, size: "1080x1080" };
@@ -1854,6 +2254,7 @@ function buildVideoDimensions(aspectRatio) {
 }
 
 function buildOpenAICompatibleVideoPayload(payload, upstreamUrl) {
+  const visualPlan = buildVideoVisualSubmissionPlan(payload, upstreamUrl);
   payload = stripInternalPayloadFields(payload);
   const {
     image_url,
@@ -1885,7 +2286,40 @@ function buildOpenAICompatibleVideoPayload(payload, upstreamUrl) {
     }
   })();
 
+  if (isWisechVideoUrl(upstreamUrl) && visualPlan.imageRoleItems.length) {
+    return {
+      ...rest,
+      prompt,
+      duration,
+      resolution: typeof resolution === "string" && resolution.trim() ? resolution.toLowerCase() : "1080p",
+      size: dimensions.size,
+      image_with_roles: visualPlan.imageRoleItems,
+      metadata: {
+        ...baseMetadata,
+        ...durationMetadata,
+        aspect_ratio: ratio,
+        submitted_visual_mode: visualPlan.visualMode,
+        stage_frames_used_in_prompt: visualPlan.stageFramesUsedInPrompt,
+        unsupported_visual_inputs: visualPlan.unsupportedVisualInputs,
+      },
+    };
+  }
+
   if (isPluralVideosEndpoint) {
+    if (visualPlan.capability.firstFrameField === "images") {
+      return {
+        ...rest,
+        prompt,
+        duration,
+        ...(visualPlan.firstFrameUrl ? { images: [visualPlan.firstFrameUrl] } : {}),
+        aspect_ratio: ratio,
+        resolution: typeof resolution === "string" && resolution.trim() ? resolution.toLowerCase() : "1080p",
+        metadata: {
+          ...baseMetadata,
+          ...durationMetadata,
+        },
+      };
+    }
     return {
       ...rest,
       prompt,
@@ -1898,14 +2332,14 @@ function buildOpenAICompatibleVideoPayload(payload, upstreamUrl) {
         ...baseMetadata,
         ...durationMetadata,
       },
-      ...(firstFrameUrl
+      ...(visualPlan.referenceUrls.length
         ? {
-            image_with_roles: [
-              {
-                url: firstFrameUrl,
-                role: "first_frame",
-              },
-            ],
+            reference_images: visualPlan.referenceUrls,
+          }
+        : {}),
+      ...(visualPlan.imageRoleItems.length
+        ? {
+            image_with_roles: visualPlan.imageRoleItems,
           }
         : {}),
     };
@@ -1924,14 +2358,22 @@ function buildOpenAICompatibleVideoPayload(payload, upstreamUrl) {
       resolution: typeof resolution === "string" && resolution.trim() ? resolution.toLowerCase() : "1080p",
       generate_audio: Boolean(audio),
       prompt_extend: Boolean(prompt_extend),
-      ...(firstFrameUrl
+      ...(visualPlan.firstFrameUrl
         ? {
-            image_urls: [firstFrameUrl],
+            image_urls: visualPlan.lastFrameUrl ? [visualPlan.firstFrameUrl, visualPlan.lastFrameUrl] : [visualPlan.firstFrameUrl],
             image_with_roles: [
               {
-                url: firstFrameUrl,
+                url: visualPlan.firstFrameUrl,
                 role: "first_frame",
               },
+              ...(visualPlan.lastFrameUrl
+                ? [
+                    {
+                      url: visualPlan.lastFrameUrl,
+                      role: "last_frame",
+                    },
+                  ]
+                : []),
             ],
           }
         : {}),
@@ -1950,7 +2392,6 @@ function resolveImageEditUrl(upstreamUrl) {
 }
 
 function buildProxyPayload(kind, upstreamUrl, upstreamPayload) {
-  if (isShishiKejiUrl(upstreamUrl) && kind === "video") return stripInternalPayloadFields(upstreamPayload);
   if (isVolcengineUrl(upstreamUrl) && kind === "video") return buildVolcengineVideoPayload(upstreamPayload);
   if (isDashScopeUrl(upstreamUrl)) {
     return kind === "video" ? buildDashScopeVideoPayload(upstreamPayload) : buildDashScopeImagePayload(upstreamPayload);
@@ -1961,21 +2402,31 @@ function buildProxyPayload(kind, upstreamUrl, upstreamPayload) {
 }
 
 async function proxyJson(fallbackPath, payload, kind = "generic") {
+  const traceId = createTraceId();
   const { apiKey, upstreamUrl, upstreamPayload } = pickProxyConfig(payload, fallbackPath, kind);
   const resolvedUpstreamUrl = kind === "image" && !isDashScopeUrl(upstreamUrl) ? resolveImageEditUrl(upstreamUrl) : upstreamUrl;
 
   if (!apiKey) {
+    const diagnostic = buildUpstreamDiagnostic({
+      traceId,
+      stage: `${kind}.config`,
+      kind,
+      upstreamUrl: resolvedUpstreamUrl,
+      error: "Missing upstream API key",
+      requestPayload: upstreamPayload,
+    });
     return {
       status: 400,
       payload: {
         error: "服务密钥还没有配置好，请先让管理员确认后台配置。",
         upstreamUrl: resolvedUpstreamUrl,
+        diagnostic,
+        traceId,
       },
     };
   }
 
   const sendMultipartImageEdit = kind === "image" && !isDashScopeUrl(resolvedUpstreamUrl);
-  const sendShishiKejiVideo = kind === "video" && isShishiKejiUrl(resolvedUpstreamUrl);
   const retryDelay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
   async function sendProxyRequest(nextUpstreamPayload, retryReason = "") {
@@ -1983,21 +2434,51 @@ async function proxyJson(fallbackPath, payload, kind = "generic") {
     let body;
     try {
       normalizedUpstreamPayload =
-        kind === "video" && !sendShishiKejiVideo && !isDashScopeUrl(resolvedUpstreamUrl) && !isVolcengineUrl(resolvedUpstreamUrl)
+        kind === "video" && !isDashScopeUrl(resolvedUpstreamUrl) && !isVolcengineUrl(resolvedUpstreamUrl)
           ? await normalizeOpenAICompatibleVideoPayload(nextUpstreamPayload, resolvedUpstreamUrl, apiKey)
           : nextUpstreamPayload;
       const proxyPayload = buildProxyPayload(kind, resolvedUpstreamUrl, normalizedUpstreamPayload);
-      body = sendShishiKejiVideo
-        ? await buildShishiKejiVideoFormData(proxyPayload)
-        : sendMultipartImageEdit
+      writeUpstreamCapture({
+        traceId,
+        kind,
+        upstreamUrl: resolvedUpstreamUrl,
+        fallbackPath,
+        requestPayload: payload,
+        normalizedUpstreamPayload,
+        proxyPayload,
+        transport: sendMultipartImageEdit ? "multipart/form-data" : "application/json",
+      });
+      body = sendMultipartImageEdit
           ? await buildOpenAIImageEditFormData(proxyPayload)
           : JSON.stringify(proxyPayload);
     } catch (error) {
+      const diagnostic = buildUpstreamDiagnostic({
+        traceId,
+        stage: `${kind}.prepare_payload`,
+        kind,
+        upstreamUrl: resolvedUpstreamUrl,
+        error: error instanceof Error ? error.message : String(error),
+        requestPayload: normalizedUpstreamPayload,
+        retryReason,
+      });
+      console.error("[proxy] upstream payload preparation failed", diagnostic);
+      writeUpstreamCapture({
+        traceId,
+        kind,
+        upstreamUrl: resolvedUpstreamUrl,
+        fallbackPath,
+        requestPayload: payload,
+        normalizedUpstreamPayload,
+        proxyPayload: null,
+        transport: "prepare-failed",
+      });
       return {
         status: 400,
         payload: {
           error: error instanceof Error ? error.message : String(error),
           upstreamUrl: resolvedUpstreamUrl,
+          diagnostic,
+          traceId,
         },
       };
     }
@@ -2009,19 +2490,24 @@ async function proxyJson(fallbackPath, payload, kind = "generic") {
         method: "POST",
         signal: controller.signal,
         headers: {
-          ...(sendShishiKejiVideo ? { "X-License-Key": apiKey } : { Authorization: `Bearer ${apiKey}` }),
-          ...(sendMultipartImageEdit || sendShishiKejiVideo ? {} : { "Content-Type": "application/json" }),
+          Authorization: `Bearer ${apiKey}`,
+          ...(sendMultipartImageEdit ? {} : { "Content-Type": "application/json" }),
           ...(isDashScopeUrl(resolvedUpstreamUrl) && kind === "video" ? { "X-DashScope-Async": "enable" } : {}),
         },
         body,
       });
     } catch (error) {
       const isAbortError = error instanceof Error && error.name === "AbortError";
-      console.error("[proxy] upstream connection failed", {
+      const diagnostic = buildUpstreamDiagnostic({
+        traceId,
+        stage: `${kind}.upstream_fetch`,
         kind,
         upstreamUrl: resolvedUpstreamUrl,
-        message: error instanceof Error ? error.message : String(error),
+        error: error instanceof Error ? error.message : String(error),
+        requestPayload: normalizedUpstreamPayload,
+        retryReason,
       });
+      console.error("[proxy] upstream connection failed", diagnostic);
       return {
         status: 502,
         payload: {
@@ -2029,6 +2515,8 @@ async function proxyJson(fallbackPath, payload, kind = "generic") {
           code: isAbortError ? "UPSTREAM_REQUEST_TIMEOUT" : "UPSTREAM_CONNECTION_FAILED",
           upstreamUrl: resolvedUpstreamUrl,
           upstreamError: error instanceof Error ? error.message : String(error),
+          diagnostic,
+          traceId,
         },
       };
     } finally {
@@ -2037,6 +2525,17 @@ async function proxyJson(fallbackPath, payload, kind = "generic") {
     const text = await response.text();
     const data = parseUpstreamBody(text, response.status);
     const requestId = extractUpstreamRequestId(text || getUpstreamErrorText(data));
+    const diagnostic = buildUpstreamDiagnostic({
+      traceId,
+      stage: `${kind}.upstream_response`,
+      kind,
+      upstreamUrl: resolvedUpstreamUrl,
+      status: response.status,
+      rawText: text,
+      data,
+      requestPayload: normalizedUpstreamPayload,
+      retryReason,
+    });
     const imagePayloadError = kind === "image" && response.ok ? validateGeneratedImagePayload(data) : "";
     if (imagePayloadError) {
       return {
@@ -2045,10 +2544,13 @@ async function proxyJson(fallbackPath, payload, kind = "generic") {
           error: imagePayloadError,
           code: "UPSTREAM_NON_IMAGE_RESULT",
           upstreamUrl: resolvedUpstreamUrl,
+          diagnostic,
+          traceId,
         },
       };
     }
     if (isRetryableUpstreamServerError(data, response.status)) {
+      console.error("[proxy] retryable upstream server response failed", diagnostic);
       return {
         status: response.status,
         retryableUpstreamServerError: true,
@@ -2058,8 +2560,13 @@ async function proxyJson(fallbackPath, payload, kind = "generic") {
           upstreamUrl: resolvedUpstreamUrl,
           upstreamRequestId: requestId,
           retryReason,
+          diagnostic,
+          traceId,
         },
       };
+    }
+    if (!response.ok) {
+      console.error("[proxy] upstream response failed", diagnostic);
     }
     return {
       status: response.status,
@@ -2067,6 +2574,7 @@ async function proxyJson(fallbackPath, payload, kind = "generic") {
         retryReason ? { ...data, retryReason, promptSanitizedRetry: true } : data,
         response.status,
         resolvedUpstreamUrl,
+        diagnostic,
       ),
     };
   }
@@ -2120,27 +2628,6 @@ async function testProxy(fallbackPath, payload, kind = "generic") {
   const model = typeof upstreamPayload.model === "string" ? upstreamPayload.model.trim() : "";
   const videoProvider = typeof payload?.video_provider === "string" ? payload.video_provider.trim().toLowerCase() : "";
   const modelLimits = kind === "video" ? { provider: resolveVideoProviderFromUrl(configuredUrl, videoProvider), model, ...getVideoModelLimit(resolveVideoProviderFromUrl(configuredUrl, videoProvider), model) } : undefined;
-  if (kind === "video" && isShishiKejiUrl(configuredUrl)) {
-    const upstreamUrl = `${baseUrl}/api/agent-app/me`;
-    if (!apiKey) return { status: 400, payload: { error: "Video service API key is not configured.", upstreamUrl } };
-    const response = await fetch(upstreamUrl, { method: "GET", headers: { "X-License-Key": apiKey } });
-    const text = await response.text();
-    const data = parseUpstreamBody(text, response.status);
-    return {
-      status: response.status,
-      payload: response.ok
-        ? { ok: true, model, modelFound: Boolean(model), upstreamStatus: response.status, upstreamUrl, wallet: data.wallet, agent: data.agent, modelLimits }
-        : withUpstreamError(data, response.status, upstreamUrl),
-    };
-  }
-  if (kind === "video" && isToapisUrl(configuredUrl)) {
-    return {
-      status: apiKey ? 200 : 400,
-      payload: apiKey
-        ? { ok: true, model, modelFound: Boolean(model), upstreamUrl: configuredUrl, note: "ToAPI video models use /videos/generations and are not listed by /models.", modelLimits }
-        : { error: "Video service API key is not configured.", upstreamUrl: configuredUrl },
-    };
-  }
   if (isDashScopeUrl(configuredUrl) || (kind === "video" && isVolcengineUrl(configuredUrl))) {
     return {
       status: apiKey ? 200 : 400,
@@ -2243,60 +2730,6 @@ function parsePromptPairText(text) {
     }
   }
   return null;
-}
-
-async function videoUrlToBlob(videoUrl, fileName = "first-frame.png") {
-  if (typeof videoUrl !== "string" || !videoUrl.trim()) {
-    throw new Error("Invalid video media input.");
-  }
-  if (videoUrl.startsWith("data:image/")) {
-    const match = videoUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
-    if (!match) throw new Error("Invalid data:image input.");
-    const [, mimeType, base64] = match;
-    const extension = mimeType.includes("jpeg") ? "jpg" : mimeType.split("/")[1] || "png";
-    return {
-      blob: new Blob([Buffer.from(base64, "base64")], { type: mimeType }),
-      fileName: fileName.replace(/\.[^.]+$/, `.${extension}`),
-    };
-  }
-  if (/^https?:\/\//i.test(videoUrl)) {
-    const response = await fetch(videoUrl);
-    if (!response.ok) throw new Error("Failed to download first-frame media.");
-    const contentType = response.headers.get("content-type") || "image/png";
-    const extension = contentType.includes("jpeg") ? "jpg" : contentType.split("/")[1]?.split(";")[0] || "png";
-    return {
-      blob: new Blob([Buffer.from(await response.arrayBuffer())], { type: contentType }),
-      fileName: fileName.replace(/\.[^.]+$/, `.${extension}`),
-    };
-  }
-  throw new Error("Only data:image/ or http(s) first-frame inputs are supported.");
-}
-
-async function buildShishiKejiVideoFormData(payload) {
-  const form = new FormData();
-  const prompt = typeof payload.prompt === "string" ? payload.prompt : "";
-  if (prompt.length > SHISHI_MAX_PROMPT_CHARS) {
-    throw new Error(`Full video prompt is too long: ${prompt.length} chars; limit is ${SHISHI_MAX_PROMPT_CHARS}. Please shorten the action or scene description.`);
-  }
-  const model = typeof payload.model === "string" && payload.model.trim() ? payload.model.trim() : "2.0";
-  const duration = resolveSubmittedVideoDuration(payload, SHISHI_VIDEO_BASE_URL);
-  const ratio = typeof payload.aspect_ratio === "string" && payload.aspect_ratio.trim() ? payload.aspect_ratio.trim() : "9:16";
-  const resolution = typeof payload.resolution === "string" && payload.resolution.trim() ? payload.resolution.trim().toLowerCase() : "720p";
-  const firstFrameUrl = getVideoFirstFrameUrl(payload);
-
-  form.append("prompt", prompt);
-  form.append("model", model);
-  form.append("duration", String(duration));
-  form.append("ratio", ratio);
-  form.append("resolution", resolution);
-  form.append("client_task_id", `product-video-${Date.now()}-${Math.random().toString(16).slice(2)}`);
-
-  if (firstFrameUrl) {
-    const { blob, fileName } = await videoUrlToBlob(firstFrameUrl, "approved-first-frame.png");
-    form.append("files", blob, fileName);
-  }
-
-  return form;
 }
 
 function normalizePromptPairForProduct(promptPair, productType) {
@@ -2497,7 +2930,8 @@ function buildStoryIntentPayload(payload) {
         content: [
           "You are a product-safe short-video story director for image-to-video generation.",
           "Return parseable JSON only. Do not include Markdown.",
-          "Generate or revise only the story/action intent. Do not write subtitles, sign text, price, SKU, discount, CTA, channel targeting, product selling points, or post-production copy.",
+          "Generate or revise only the story/action intent. If the user provides a timeline script with subtitle/caption lines, preserve those lines as timing and post-production overlay context, but never ask image/video models to render readable text in the scene.",
+          "Do not invent sign text, price, SKU, discount, CTA, channel targeting, or product selling points.",
           "The video must be interesting enough for a short product clip, but all action must stay grounded, low-risk, and compatible with four-view product consistency.",
           "The story intent must come before storyboard generation. Do not describe final video provider settings.",
         ].join("\n"),
@@ -2518,14 +2952,14 @@ function buildStoryIntentPayload(payload) {
           "Return JSON schema:",
           JSON.stringify({
             storyTitle: "short title",
-            storyIntent: "one compact paragraph, no text overlays, no CTA",
+            storyIntent: "compact story or preserved user timeline script; caption lines are overlay context only",
             sceneAnchor: "specific filmable location and props, no readable signs",
             beats: [
               { id: "beat_1", beat: "setup", action: "small visible action", camera: "front", risk: "risk note" },
               { id: "beat_2", beat: "tiny reversal", action: "small visible action", camera: "front_three_quarter", risk: "risk note" },
               { id: "beat_3", beat: "recovery pose", action: "small visible action", camera: "front", risk: "risk note" },
             ],
-            riskNotes: ["no large turn", "no text/sign/subtitle", "no product-obscuring prop"],
+            riskNotes: ["no large turn", "captions are not rendered in-scene", "no product-obscuring prop"],
           }),
         ]
           .filter(Boolean)
@@ -2540,12 +2974,13 @@ function buildStoryIntentPayload(payload) {
 }
 
 function buildStoryboardGenerationPrompt(payload, contract) {
-  const storyIntent = normalizeStoryIntentPayload(payload.story_intent || payload.storyIntent || {}, payload);
-  const selectedBeats = storyIntent.beats.slice(0, payload.motion_mode === "strict" ? 3 : 5);
+  const storyIntent = sanitizeImageStoryIntent(normalizeStoryIntentPayload(payload.story_intent || payload.storyIntent || {}, payload));
+  const selectedBeats = storyIntent.beats.slice(0, 3);
   return [
     "STORYBOARD HARNESS IMAGE GENERATION.",
-    "Create one storyboard contact sheet or a single keyframe candidate for the confirmed story/action intent. The image is a cheap pre-video planning artifact used before the expensive video call.",
+    "Create exactly one storyboard version with exactly three clear panels: setup, tiny reversal, and recovery pose. This is a cheap pre-video planning artifact used before the expensive video call.",
     "Do not add subtitles, signs, labels, price tags, CTA text, logos, or readable text anywhere in the scene or on the product.",
+    "Review-safe scene rule: keep the background friendly, bright, toy-like, and family-safe. Background guests must be blurred backs or side silhouettes with no clear facial details or identity details.",
     "Preserve the same product from the four core views. Use the references as topology maps; do not collage all views into one surface.",
     `Product: ${storyIntent.stableProductName}`,
     `Story intent: ${storyIntent.storyIntent}`,
@@ -2553,11 +2988,33 @@ function buildStoryboardGenerationPrompt(payload, contract) {
     `Beats:\n${selectedBeats.map((beat, index) => `${index + 1}. ${beat.beat}; action=${beat.action}; camera=${beat.camera}`).join("\n")}`,
     `Motion mode: ${storyIntent.motionMode}`,
     formatProductLockContract(contract),
-    "Composition: full body visible, feet grounded, product scale human-wearable, camera changes small and physically valid. If making a contact sheet, show 3-5 clean panels of the same product in the same scene.",
+    "Composition: one clean three-panel storyboard board or three separate returned keyframes. Each panel must show the same product in the same scene family, full body visible, feet grounded, human-wearable scale, and only small physically valid camera changes.",
   ].join("\n\n");
 }
 
-function buildStoryboardImagePayload(payload) {
+function buildStoryboardFrameGenerationPrompt(payload, contract, beat, index) {
+  const storyIntent = sanitizeImageStoryIntent(normalizeStoryIntentPayload(payload.story_intent || payload.storyIntent || {}, payload));
+  const safeBeat = sanitizeImageStoryIntent({ ...storyIntent, beats: [beat] }).beats[0] || beat;
+  return [
+    "STORYBOARD HARNESS IMAGE GENERATION.",
+    "Create exactly one single-frame storyboard keyframe, not a contact sheet, not a collage, not a three-panel board.",
+    "This request is one frame from one storyboard version. Return only this keyframe as one complete image.",
+    "Do not add subtitles, signs, labels, price tags, CTA text, logos, or readable text anywhere in the scene or on the product.",
+    "Review-safe scene rule: keep the background friendly, bright, toy-like, and family-safe. Background guests must be blurred backs or side silhouettes with no clear facial details or identity details.",
+    "Preserve the same product from the four core views. Use the references as topology maps; do not collage all views into one surface.",
+    `Product: ${storyIntent.stableProductName}`,
+    `Story intent: ${storyIntent.storyIntent}`,
+    `Scene anchor: ${storyIntent.sceneAnchor}`,
+    `Frame ${index + 1} of 3: ${safeBeat.beat}`,
+    `Action in this frame: ${safeBeat.action}`,
+    `Camera for this frame: ${safeBeat.camera}`,
+    `Motion mode: ${storyIntent.motionMode}`,
+    formatProductLockContract(contract),
+    "Composition: full body visible, feet grounded, product scale human-wearable, same scene family as the other storyboard frames, no stacked panels, no before/after strip, no image grid.",
+  ].join("\n\n");
+}
+
+function buildStoryboardImagePayload(payload, promptOverride = "") {
   const productType = typeof payload.product_type === "string" && payload.product_type.trim() ? sanitizeProductText(payload.product_type) : "wearable inflatable product";
   const contract = buildProductLockContract(productType, payload.locked_nodes);
   const { image_urls, support_image_urls, detail_image_urls, story_intent, storyIntent, ...upstreamPayload } = payload;
@@ -2565,12 +3022,18 @@ function buildStoryboardImagePayload(payload) {
   const supportSource = Array.isArray(support_image_urls) ? support_image_urls : detail_image_urls;
   const readableSupportImages = Array.isArray(supportSource) ? supportSource.filter((item) => typeof item === "string" && item.trim()) : [];
   const modelLimits = getImageModelLimit(upstreamPayload.model);
-  const prompt = fitPromptToLimit([buildStoryboardGenerationPrompt({ ...payload, story_intent: story_intent || storyIntent }, contract)], modelLimits.maxPromptChars);
+  const prompt = fitPromptToLimit([promptOverride || buildStoryboardGenerationPrompt({ ...payload, story_intent: story_intent || storyIntent }, contract)], modelLimits.maxPromptChars);
   return {
     ...upstreamPayload,
     image_urls: [...readableImages, ...readableSupportImages],
-    prompt: sanitizeProductText(prompt),
+    prompt: sanitizeImageGenerationText(prompt),
   };
+}
+
+function buildStoryboardFrameImagePayload(payload, beat, index) {
+  const productType = typeof payload.product_type === "string" && payload.product_type.trim() ? sanitizeProductText(payload.product_type) : "wearable inflatable product";
+  const contract = buildProductLockContract(productType, payload.locked_nodes);
+  return buildStoryboardImagePayload(payload, buildStoryboardFrameGenerationPrompt(payload, contract, beat, index));
 }
 
 function buildPromptSuggestionPayload(payload) {
@@ -2764,17 +3227,21 @@ async function proxyStoryboards(payload) {
   if (!storyIntent || typeof storyIntent !== "object") {
     return createApiResponse(400, { error: "Please generate or confirm story intent before creating storyboards." });
   }
-  const result = await proxyJson("/images/edits", buildStoryboardImagePayload(payload), "image");
-  if (result.status < 200 || result.status >= 300) return result;
-  const imageUrls = extractImageUrls(result.payload);
-  if (!imageUrls.length) {
-    return createApiResponse(502, { error: "Storyboard image generation returned no usable image.", upstreamUrl: result.payload?.upstreamUrl });
-  }
   const normalizedIntent = normalizeStoryIntentPayload(storyIntent, payload);
-  const selectedBeats = normalizedIntent.beats.slice(0, payload.motion_mode === "strict" ? 3 : 5);
+  const selectedBeats = normalizedIntent.beats.slice(0, 3);
+  const frameResults = await Promise.all(selectedBeats.map((beat, index) => proxyJson("/images/edits", buildStoryboardFrameImagePayload(payload, beat, index), "image")));
+  const failedResult = frameResults.find((result) => result.status < 200 || result.status >= 300);
+  if (failedResult) return failedResult;
+  const imageUrls = frameResults.map((result) => extractImageUrls(result.payload)[0] || "");
+  if (imageUrls.some((url) => !url)) {
+    return createApiResponse(502, { error: "Storyboard image generation returned no usable image for one or more required frames.", imageUrls });
+  }
+  if (new Set(imageUrls).size !== selectedBeats.length) {
+    return createApiResponse(502, { error: "Storyboard image generation returned duplicate frame images. Please regenerate before creating video.", imageUrls });
+  }
   const storyboards = selectedBeats.map((beat, index) => ({
     id: `storyboard_${index + 1}`,
-    imageUrl: imageUrls[index] || imageUrls[0],
+    imageUrl: imageUrls[index],
     beat: beat.beat,
     action: beat.action,
     viewAngle: beat.camera || (index === 0 ? "front" : "front_three_quarter"),
@@ -2788,7 +3255,7 @@ async function proxyStoryboards(payload) {
     imageUrls,
     storyIntent: normalizedIntent,
     productLockContract: buildProductLockContract(payload.product_type, payload.locked_nodes),
-    upstreamUrl: result.payload?.upstreamUrl || "",
+    upstreamUrl: frameResults[0]?.payload?.upstreamUrl || "",
     model: payload.model || DEFAULT_IMAGE_MODEL,
   });
 }
@@ -2852,6 +3319,9 @@ function buildCameraPath(storyboards) {
 function buildFinalVideoPromptFromPackage(payload, preflight) {
   const storyIntent = normalizeStoryIntentPayload(payload.story_intent || payload.storyIntent || {}, payload);
   const storyboards = Array.isArray(payload.storyboards) ? payload.storyboards : [];
+  const modelLimit = getVideoModelLimit(payload.video_provider, payload.model);
+  const scriptContextLimit = Math.max(900, Math.min(2200, Math.floor(modelLimit.promptSoftLimit * 0.38)));
+  const scriptContext = truncateTextByChars(storyIntent.storyIntent, scriptContextLimit);
   const storyboardLines = storyboards
     .slice(0, 5)
     .map((storyboard, index) => `${index + 1}. ${sanitizeProductText(storyboard.beat || storyboard.action || "")}; camera=${sanitizeProductText(storyboard.viewAngle || "front")}`)
@@ -2862,7 +3332,8 @@ function buildFinalVideoPromptFromPackage(payload, preflight) {
       "FINAL VIDEO EXECUTION PACKAGE PROMPT.",
       "Use the selected storyboard keyframes as the action path for one expensive video generation. Do not invent a different story.",
       `Product: ${storyIntent.stableProductName}`,
-      `Story intent: ${storyIntent.storyIntent}`,
+      `User timeline/script context:\n${scriptContext}`,
+      "Caption/subtitle lines in the script are timing and post-production overlay context only. Do not render readable text in the generated scene.",
       `Scene anchor: ${storyIntent.sceneAnchor}`,
       `Selected storyboard path:\n${storyboardLines}`,
       `Camera path: ${preflight.cameraPath}`,
@@ -2872,7 +3343,7 @@ function buildFinalVideoPromptFromPackage(payload, preflight) {
       "No subtitles, signs, price tags, CTA, logos, stickers, or post-production sales text. No large turn, no jump, no run, no fall, no fast zoom, no product-obscuring props.",
       "Show 2-3 readable visual action beats from the storyboard path. The result must not collapse into a static micro-animation.",
     ],
-    getVideoModelLimit(payload.video_provider, payload.model).promptSoftLimit || SHISHI_PROMPT_SOFT_LIMIT,
+    modelLimit.promptSoftLimit,
   );
 }
 
@@ -2952,23 +3423,16 @@ function buildVolcengineTaskUrl(baseUrl, taskId) {
 }
 
 async function proxyVideoStatus(payload) {
+  const traceId = createTraceId();
   const body = payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {};
   const taskId = typeof body.task_id === "string" ? body.task_id.trim() : "";
   if (!taskId) {
     return { status: 400, payload: { error: "Missing video task id. Please generate again." } };
   }
 
-  const videoProvider = typeof body.video_provider === "string" ? body.video_provider.trim().toLowerCase() : "";
-  const providerConfig =
-    videoProvider === "wisech"
-      ? { baseUrl: WISECH_VIDEO_BASE_URL, apiKey: WISECH_VIDEO_API_KEY }
-      : videoProvider === "shishi"
-        ? { baseUrl: SHISHI_VIDEO_BASE_URL, apiKey: SHISHI_VIDEO_API_KEY }
-        : videoProvider === "toapis"
-          ? { baseUrl: VIDEO_BASE_URL || TOAPIS_BASE_URL, apiKey: VIDEO_API_KEY || TOAPIS_API_KEY }
-        : null;
-  const baseUrl = (providerConfig?.baseUrl || cleanEndpointText(body.base_url) || VIDEO_BASE_URL).replace(/\/+$/, "");
-  const apiKey = providerConfig?.apiKey || (typeof body.api_key === "string" && body.api_key.trim() ? body.api_key.trim() : VIDEO_API_KEY);
+  const providerConfig = { baseUrl: WISECH_VIDEO_BASE_URL, apiKey: WISECH_VIDEO_API_KEY };
+  const baseUrl = (providerConfig?.baseUrl || cleanEndpointText(body.base_url) || WISECH_VIDEO_BASE_URL).replace(/\/+$/, "");
+  const apiKey = providerConfig?.apiKey || (typeof body.api_key === "string" && body.api_key.trim() ? body.api_key.trim() : WISECH_VIDEO_API_KEY);
   if (!apiKey) {
     return { status: 400, payload: { error: "Video service API key is not configured." } };
   }
@@ -2978,8 +3442,6 @@ async function proxyVideoStatus(payload) {
     ? buildDashScopeTaskUrl(baseUrl, taskId)
     : isVolcengineUrl(baseUrl)
       ? buildVolcengineTaskUrl(baseUrl, taskId)
-      : isShishiKejiUrl(baseUrl)
-        ? `${baseUrl}/api/task/${encodeURIComponent(taskId)}?refresh_video_url=1`
       : /^https?:\/\//i.test(statusPath)
         ? statusPath.replace("{task_id}", encodeURIComponent(taskId))
         : `${baseUrl}${normalizePath(statusPath || `${OPENAI_VIDEO_GENERATIONS_PATH}/${taskId}`, "")}`;
@@ -2987,12 +3449,50 @@ async function proxyVideoStatus(payload) {
   const response = await fetch(upstreamUrl, {
     method: "GET",
     headers: {
-      ...(isShishiKejiUrl(upstreamUrl) ? { "X-License-Key": apiKey } : { Authorization: `Bearer ${apiKey}` }),
+      Authorization: `Bearer ${apiKey}`,
     },
+  }).catch((error) => {
+    const diagnostic = buildUpstreamDiagnostic({
+      traceId,
+      stage: "video.status_fetch",
+      kind: "video-status",
+      method: "GET",
+      upstreamUrl,
+      error: error instanceof Error ? error.message : String(error),
+      requestPayload: body,
+    });
+    console.error("[proxy] upstream status connection failed", diagnostic);
+    return { diagnostic, error };
   });
+  if (response.error) {
+    return {
+      status: 502,
+      payload: {
+        error: getUpstreamConnectionFailureMessage("video", false),
+        code: "UPSTREAM_STATUS_CONNECTION_FAILED",
+        upstreamUrl,
+        diagnostic: response.diagnostic,
+        traceId,
+      },
+    };
+  }
   const text = await response.text();
   const data = parseUpstreamBody(text, response.status);
-  return { status: response.status, payload: withUpstreamError(data, response.status, upstreamUrl) };
+  const diagnostic = buildUpstreamDiagnostic({
+    traceId,
+    stage: "video.status_response",
+    kind: "video-status",
+    method: "GET",
+    upstreamUrl,
+    status: response.status,
+    rawText: text,
+    data,
+    requestPayload: body,
+  });
+  if (!response.ok) {
+    console.error("[proxy] upstream status response failed", diagnostic);
+  }
+  return { status: response.status, payload: withUpstreamError(data, response.status, upstreamUrl, diagnostic) };
 }
 
 const apiRoutes = [
@@ -3002,28 +3502,16 @@ const apiRoutes = [
     handler: async () =>
       createApiResponse(200, {
         ok: true,
-        toapisBaseUrl: TOAPIS_BASE_URL,
-        hasApiKey: Boolean(TOAPIS_API_KEY),
         imageTextBaseUrl: IMAGE_TEXT_BASE_URL,
         hasImageTextApiKey: Boolean(IMAGE_TEXT_API_KEY),
-        videoBaseUrl: VIDEO_BASE_URL,
-        videoModel: VIDEO_MODEL,
-        hasVideoApiKey: Boolean(VIDEO_API_KEY),
+        videoBaseUrl: WISECH_VIDEO_BASE_URL,
+        videoModel: WISECH_VIDEO_MODEL,
+        hasVideoApiKey: Boolean(WISECH_VIDEO_API_KEY),
         videoProviders: {
-          shishi: {
-            baseUrl: SHISHI_VIDEO_BASE_URL,
-            model: SHISHI_VIDEO_MODEL,
-            hasApiKey: Boolean(SHISHI_VIDEO_API_KEY),
-          },
           wisech: {
             baseUrl: WISECH_VIDEO_BASE_URL,
             model: WISECH_VIDEO_MODEL,
             hasApiKey: Boolean(WISECH_VIDEO_API_KEY),
-          },
-          toapis: {
-            baseUrl: VIDEO_BASE_URL || TOAPIS_BASE_URL,
-            model: TOAPIS_VIDEO_MODEL,
-            hasApiKey: Boolean(VIDEO_API_KEY || TOAPIS_API_KEY),
           },
         },
       }),
@@ -3053,12 +3541,11 @@ const apiRoutes = [
       const executionPackage = body.video_execution_package || body.videoExecutionPackage;
       const executionPayload = {
         ...body,
-        action_prompt: executionPackage.finalVideoPrompt,
+        prompt: executionPackage.finalVideoPrompt,
         scene_prompt: executionPackage.storyIntent?.sceneAnchor || body.scene_prompt,
         motion_rule: `Use verified storyboard camera path: ${executionPackage.cameraPath || "front -> front_three_quarter -> front"}`,
       };
-      const baseConfig = pickProxyConfig(executionPayload, OPENAI_VIDEO_GENERATIONS_PATH, "video");
-      return proxyJson(OPENAI_VIDEO_GENERATIONS_PATH, buildVideoPayload(executionPayload, { compactShishiPrompt: isShishiKejiUrl(baseConfig.upstreamUrl) }), "video");
+      return proxyJson(OPENAI_VIDEO_GENERATIONS_PATH, buildVideoPayload(executionPayload), "video");
     },
   },
   {
@@ -3154,8 +3641,26 @@ const server = http.createServer(async (req, res) => {
     await handleApiRequest(req, res);
   } catch (error) {
     const statusCode = Number.isFinite(Number(error?.statusCode)) ? Number(error.statusCode) : 500;
+    const traceId = createTraceId();
+    const diagnostic = buildUpstreamDiagnostic({
+      traceId,
+      stage: "api.unhandled_route_error",
+      kind: "api",
+      method: req.method || "GET",
+      upstreamUrl: req.url || "",
+      status: statusCode,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    console.error("[api] unhandled route error", {
+      ...diagnostic,
+      stack: error instanceof Error && error.stack ? compactDiagnosticText(error.stack, 1200) : "",
+    });
     sendJson(res, statusCode, {
       error: toPublicErrorMessage(error instanceof Error ? error.message : ""),
+      diagnostic,
+      traceId,
+      upstreamStage: diagnostic.stage,
+      upstreamStatus: diagnostic.upstreamStatus,
     });
   }
 });

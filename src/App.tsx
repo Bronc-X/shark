@@ -4,11 +4,11 @@ import {
   ClipboardCheck,
   CloudUpload,
   Database,
-  Dices,
   FileImage,
   Film,
-  KeyRound,
   LoaderCircle,
+  Maximize2,
+  Pencil,
   Play,
   Send,
   ShieldCheck,
@@ -167,7 +167,7 @@ type LockNode = {
 type ApiSettings = {
   imagePath: string;
   imageModel: string;
-  videoProvider: "shishi" | "wisech" | "toapis";
+  videoProvider: "wisech";
   videoBaseUrl: string;
   videoPath: string;
   videoApiKey: string;
@@ -241,8 +241,9 @@ const FIRST_FRAME_REFERENCE_MAX_BYTES = 900_000;
 const FIRST_FRAME_REFERENCE_JPEG_QUALITY = 0.86;
 const DEFAULT_PROMPT_MODEL = "gpt-5.4-mini";
 const DEFAULT_IMAGE_MODEL = "gpt-image-2";
-const DEFAULT_VIDEO_BASE_URL = "https://api.shishikeji.com";
-const DEFAULT_VIDEO_MODEL = "2.0";
+const DEFAULT_VIDEO_BASE_URL = "https://ai.wisech.com/v1";
+const DEFAULT_VIDEO_MODEL = "yunshu-2-0-260128-720p";
+const MANUAL_TIMELINE_SCRIPT_MAX_CHARS = 5200;
 const SENSITIVE_PRODUCT_WORD_REPLACEMENTS: Array<[RegExp, string]> = [
   [new RegExp("\\u5976\\u5934", "g"), "粉色小圆点"],
   [new RegExp("\\u4e73\\u623f", "g"), "粉色下腹组件"],
@@ -272,16 +273,191 @@ function sanitizeLockNode(node: LockNode): LockNode {
   };
 }
 
+const STORY_BEAT_FALLBACKS = [
+  { beat: "setup", camera: "front" },
+  { beat: "tiny reversal", camera: "front_three_quarter" },
+  { beat: "recovery pose", camera: "front" },
+];
+
+const STORYBOARD_LABEL_TRANSLATIONS: Record<string, string> = {
+  setup: "开场建立",
+  "tiny reversal": "轻微反转",
+  "tiny recoil": "轻微后缩",
+  "recovery pose": "收束姿态",
+  front: "正面",
+  front_three_quarter: "正面三分之二",
+  three_quarter_front: "正面三分之二",
+  left: "左侧",
+  right: "右侧",
+  back: "背面",
+};
+
+const STORYBOARD_ACTION_FALLBACKS = [
+  "建立场景，产品完整入镜，保持关键结构清楚。",
+  "出现轻微反转，动作幅度更明显，但产品外形不漂移。",
+  "回到收束姿态，画面稳定，继续保持产品一致。",
+];
+
+function removeRemainingEnglishTokens(value: string) {
+  return value.replace(/[A-Za-z][A-Za-z0-9_-]*/g, "").replace(/\s{2,}/g, " ").trim();
+}
+
+function localizeStoryboardLabel(value: string) {
+  const text = sanitizeProductText(value);
+  if (!text) return "";
+  const key = text.toLowerCase().replace(/[\s-]+/g, "_");
+  const direct = STORYBOARD_LABEL_TRANSLATIONS[text.toLowerCase()] || STORYBOARD_LABEL_TRANSLATIONS[key];
+  if (direct) return direct;
+  const replaced = text
+    .replace(/\bsetup\b/gi, "开场建立")
+    .replace(/\btiny reversal\b/gi, "轻微反转")
+    .replace(/\btiny recoil\b/gi, "轻微后缩")
+    .replace(/\brecovery pose\b/gi, "收束姿态")
+    .replace(/\bfront[_ -]three[_ -]quarter\b/gi, "正面三分之二")
+    .replace(/\bthree[_ -]quarter[_ -]front\b/gi, "正面三分之二")
+    .replace(/\bfront\b/gi, "正面")
+    .replace(/\bleft\b/gi, "左侧")
+    .replace(/\bright\b/gi, "右侧")
+    .replace(/\bback\b/gi, "背面");
+  const clean = removeRemainingEnglishTokens(replaced);
+  return clean || "分镜阶段";
+}
+
+function localizeStoryboardAction(value: string, index = 0) {
+  const text = sanitizeProductText(value);
+  const fallback = STORYBOARD_ACTION_FALLBACKS[index] || STORYBOARD_ACTION_FALLBACKS[0];
+  if (!text) return fallback;
+  if (!/[\u4e00-\u9fff]/u.test(text)) return fallback;
+  const replaced = text
+    .replace(/\bsetup\b/gi, "开场建立")
+    .replace(/\btiny reversal\b/gi, "轻微反转")
+    .replace(/\btiny recoil\b/gi, "轻微后缩")
+    .replace(/\brecovery pose\b/gi, "收束姿态")
+    .replace(/\bfront[_ -]three[_ -]quarter\b/gi, "正面三分之二")
+    .replace(/\bthree[_ -]quarter[_ -]front\b/gi, "正面三分之二")
+    .replace(/\bfront\b/gi, "正面")
+    .replace(/\bleft\b/gi, "左侧")
+    .replace(/\bright\b/gi, "右侧")
+    .replace(/\bback\b/gi, "背面");
+  return removeRemainingEnglishTokens(replaced) || fallback;
+}
+
+function splitStoryIntentIntoBeats(text: string) {
+  return sanitizeProductText(text)
+    .split(/[\n。！？.!?；;]+/u)
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .slice(0, 3);
+}
+
+function truncateTextByChars(text: string, maxChars: number) {
+  const value = String(text || "").trim();
+  if (value.length <= maxChars) return value;
+  return `${value.slice(0, Math.max(0, maxChars - 16)).trim()}...`;
+}
+
+function compactManualTimelineText(value: string) {
+  return sanitizeProductText(value)
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join("\n");
+}
+
+function extractTimelineField(block: string, labels: string[]) {
+  const labelPattern = labels.join("|");
+  const match = block.match(new RegExp(`(?:^|\\n)\\s*(?:${labelPattern})\\s*[：:]\\s*([\\s\\S]*?)(?=\\n\\s*(?:画面|镜头|场景|字幕|文案|旁白)\\s*[：:]|$)`, "i"));
+  return match ? compactManualTimelineText(match[1]) : "";
+}
+
+function getTimelineCameraFallback(index: number) {
+  if (index === 0) return "front";
+  if (index === 1) return "front_three_quarter";
+  if (index === 2) return "front";
+  if (index === 3) return "slight_front_three_quarter";
+  return "front";
+}
+
+function parseManualTimelineBeats(script: string): StoryBeat[] {
+  const cleanScript = compactManualTimelineText(script);
+  const beats: StoryBeat[] = [];
+  const segmentPattern = /(?:^|\n)\s*(\d+(?:[.．]\d+)?)\s*(?:-|~|—|–|至|到)\s*(\d+(?:[.．]\d+)?)\s*秒\s*([\s\S]*?)(?=\n\s*\d+(?:[.．]\d+)?\s*(?:-|~|—|–|至|到)\s*\d+(?:[.．]\d+)?\s*秒|$)/g;
+  let match: RegExpExecArray | null;
+  while ((match = segmentPattern.exec(cleanScript)) && beats.length < 5) {
+    const [, start, end, block] = match;
+    const scene = extractTimelineField(block, ["画面", "镜头", "场景"]);
+    const caption = extractTimelineField(block, ["字幕", "文案", "旁白"]);
+    const action = [
+      scene || compactManualTimelineText(block),
+      caption ? `Caption/post overlay context: ${caption}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+    beats.push({
+      id: `beat_${beats.length + 1}`,
+      beat: `${start}-${end}秒`,
+      action: action || `${start}-${end}秒：按用户时间轴推进画面`,
+      camera: getTimelineCameraFallback(beats.length),
+      risk: caption ? "Caption is script context only; do not render readable text in generated frames." : "",
+    });
+  }
+  if (!beats.length) return buildEditableStoryBeats(cleanScript);
+  const fallbackBeats = buildEditableStoryBeats(cleanScript);
+  while (beats.length < 3) {
+    const fallback = fallbackBeats[beats.length] || fallbackBeats[0];
+    beats.push({
+      ...fallback,
+      id: `beat_${beats.length + 1}`,
+    });
+  }
+  return beats;
+}
+
+function buildEditableStoryBeats(text: string, fallbackBeats: StoryBeat[] = []): StoryBeat[] {
+  const parts = splitStoryIntentIntoBeats(text);
+  return STORY_BEAT_FALLBACKS.map((fallback, index) => {
+    const previous = fallbackBeats[index];
+    const action = parts[index] || previous?.action || previous?.beat || sanitizeProductText(text) || fallback.beat;
+    return {
+      id: previous?.id || `beat_${index + 1}`,
+      beat: previous?.beat || fallback.beat,
+      action,
+      camera: previous?.camera || fallback.camera,
+      risk: previous?.risk || "",
+    };
+  });
+}
+
+function buildManualTimelineStoryIntent(script: string, productType: string, motionMode: MotionMode): StoryIntent {
+  const cleanScript = truncateTextByChars(compactManualTimelineText(script), MANUAL_TIMELINE_SCRIPT_MAX_CHARS);
+  const beats = parseManualTimelineBeats(cleanScript);
+  const firstScene = beats[0]?.action?.split("\n")[0] || "按用户手写时间轴推进画面";
+  return {
+    storyTitle: "手写时间轴脚本",
+    storyIntent: [
+      "USER-SUPPLIED TIMELINE SCRIPT. Preserve the user's exact sequence, timing, character entrance order, comic beats, and caption intent as the source of truth.",
+      cleanScript,
+      "Caption/subtitle lines are script and post-production overlay context only; image and video generation must not render readable text inside the scene.",
+    ].join("\n\n"),
+    sceneAnchor: firstScene,
+    motionMode,
+    productType,
+    stableProductName: productType,
+    beats,
+    riskNotes: ["captions are overlay context only", "preserve product consistency from the four views", "do not render readable in-scene text"],
+    model: "manual-timeline-script",
+    upstreamUrl: "local://manual-timeline-script",
+  };
+}
+
 const VIDEO_PROVIDER_DURATION_CAPS: Record<ApiSettings["videoProvider"], { min: number; max: number; note: string }> = {
-  shishi: { min: 5, max: 15, note: "石狮通道会按所选秒数提交，实际成片仍以上游返回为准。" },
   wisech: { min: 4, max: 15, note: "Wisech / 云书 Seedance 2.0 按官方区间可提交 4-15 秒；实际成片仍以上游返回为准。" },
-  toapis: { min: 4, max: 15, note: "ToAPI video models use the backend key; the final clip length follows the upstream model response." },
 };
 
 const steps: Array<{ id: StepId; label: string; shortLabel: string; description: string; icon: LucideIcon }> = [
   { id: "upload", label: "上传产品四视图", shortLabel: "上传", description: "正面、左侧、右侧、背面四张核心图", icon: Upload },
-  { id: "storyboard", label: "生成分镜", shortLabel: "分镜", description: "先生成剧情意图，再生成可预检分镜", icon: ClipboardCheck },
-  { id: "video", label: "生成视频", shortLabel: "视频", description: "通过执行包预检后一次提交", icon: Film },
+  { id: "storyboard", label: "脚本分镜", shortLabel: "分镜", description: "粘贴脚本，确认首帧分镜", icon: ClipboardCheck },
+  { id: "video", label: "生成视频", shortLabel: "视频", description: "选择模型后直接提交", icon: Film },
 ];
 const visibleSteps = steps;
 
@@ -781,7 +957,7 @@ function createPresetSlots(productType: string): UploadSlot[] {
 const defaultApiSettings: ApiSettings = {
   imagePath: "",
   imageModel: DEFAULT_IMAGE_MODEL,
-  videoProvider: "shishi",
+  videoProvider: "wisech",
   videoBaseUrl: DEFAULT_VIDEO_BASE_URL,
   videoPath: "",
   videoApiKey: "",
@@ -790,28 +966,14 @@ const defaultApiSettings: ApiSettings = {
 };
 
 const VIDEO_MODEL_OPTIONS: Record<ApiSettings["videoProvider"], readonly { value: string; label: string }[]> = {
-  shishi: [
-    { value: "fast", label: "fast - \u00a50.29/\u79d2 (3.5 \u79ef\u5206/\u79d2)" },
-    { value: "2.0", label: "2.0 - \u00a50.50/\u79d2 (6 \u79ef\u5206/\u79d2)" },
-    { value: "transit9-fast", label: "\u7279\u4ef7 fast - \u00a50.22/\u79d2 (40 \u79ef\u5206/\u6761\u6309 15s \u6298)" },
-    { value: "transit9-2.0", label: "\u7279\u4ef7 2.0 - \u00a50.33/\u79d2 (60 \u79ef\u5206/\u6761\u6309 15s \u6298)" },
-  ],
   wisech: [
     { value: "yunshu-2-0-260128-1080p", label: "\u4e91\u4e66 Seedance 2.0 - 1080p - \u00a52.48/\u79d2 - yunshu-2-0-260128-1080p" },
     { value: "yunshu-2-0-260128-720p", label: "\u4e91\u4e66 Seedance 2.0 - 720p - \u00a50.99/\u79d2 - yunshu-2-0-260128-720p" },
   ],
-  toapis: [
-    { value: "kling-v3", label: "kling-v3 - \u00a50.84/\u79d2 (12 credits/\u79d2)" },
-    { value: "seedance-2-fast", label: "seedance-2-fast - \u00a51.44/\u79d2 (20.5714 credits/\u79d2)" },
-    { value: "doubao-seedance-1-5-pro", label: "doubao-seedance-1-5-pro - \u00a50.62/\u79d2 (8.8 credits/\u79d2)" },
-    { value: "grok-video-3", label: "grok-video-3 - \u00a50.14/\u79d2 (12 credits/\u6b21\u6309 6s \u6298)" },
-  ],
 } as const;
 
 const VIDEO_PROVIDER_OPTIONS = [
-  { value: "shishi", label: "石狮接口", baseUrl: "https://api.shishikeji.com", model: "2.0" },
-  { value: "wisech", label: "Wisech / 云书 Seedance", baseUrl: "https://ai.wisech.com/v1", model: "yunshu-2-0-260128-1080p" },
-  { value: "toapis", label: "ToAPI", baseUrl: "https://toapis.com/v1", model: "kling-v3" },
+  { value: "wisech", label: "Wisech / 云书 Seedance", baseUrl: "https://ai.wisech.com/v1", model: DEFAULT_VIDEO_MODEL },
 ] as const;
 
 function getVideoProviderOption(value: ApiSettings["videoProvider"]) {
@@ -819,16 +981,10 @@ function getVideoProviderOption(value: ApiSettings["videoProvider"]) {
 }
 
 function getVideoDurationCap(provider: ApiSettings["videoProvider"]) {
-  return VIDEO_PROVIDER_DURATION_CAPS[provider] || VIDEO_PROVIDER_DURATION_CAPS.shishi;
+  return VIDEO_PROVIDER_DURATION_CAPS[provider] || VIDEO_PROVIDER_DURATION_CAPS.wisech;
 }
 
 function getVideoModelDurationCap(provider: ApiSettings["videoProvider"], model: string) {
-  if (provider === "toapis" && /grok-video-3/i.test(model)) {
-    return { min: 6, max: 6, note: "ToAPI grok-video-3 is treated as a fixed 6-second model; the backend clamps requests before submission." };
-  }
-  if (provider === "toapis" && /1-5|1\.5/i.test(model)) {
-    return { min: 4, max: 12, note: "ToAPI Seedance 1.5 Pro requests are clamped to 4-12 seconds before submission." };
-  }
   if (provider === "wisech" && /1-5|1\.5/i.test(model)) {
     return { min: 4, max: 12, note: "Seedance 1.5 Pro 官方 duration 区间为 4-12 秒，或设置为 -1 由模型自选。" };
   }
@@ -839,7 +995,7 @@ function getVideoModelDurationCap(provider: ApiSettings["videoProvider"], model:
 }
 
 function getVideoModelOptions(provider: ApiSettings["videoProvider"]) {
-  return VIDEO_MODEL_OPTIONS[provider] || VIDEO_MODEL_OPTIONS.shishi;
+  return VIDEO_MODEL_OPTIONS[provider] || VIDEO_MODEL_OPTIONS.wisech;
 }
 
 function getDefaultVideoModel(provider: ApiSettings["videoProvider"]) {
@@ -847,7 +1003,6 @@ function getDefaultVideoModel(provider: ApiSettings["videoProvider"]) {
 }
 
 function getVideoModelResolution(provider: ApiSettings["videoProvider"], model: string) {
-  if (provider === "shishi") return "720p";
   if (provider === "wisech" && /720p/i.test(model)) return "720p";
   return "1080p";
 }
@@ -948,33 +1103,14 @@ function loadApiSettings(): ApiSettings {
     const merged = { ...defaultApiSettings, ...parsed };
     if (merged.imagePath === "/images/generations") merged.imagePath = "";
     if (merged.videoPath === "/videos/generations") merged.videoPath = "";
-    const normalizedVideoBaseUrl = typeof merged.videoBaseUrl === "string" ? merged.videoBaseUrl.replace(/\/+$/, "") : "";
-    if (parsed.videoProvider !== "wisech" && parsed.videoProvider !== "shishi" && parsed.videoProvider !== "toapis") {
-      merged.videoProvider =
-        normalizedVideoBaseUrl === "https://ai.wisech.com/v1"
-          ? "wisech"
-          : normalizedVideoBaseUrl === "https://toapis.com/v1"
-            ? "toapis"
-            : "shishi";
-    }
-    if (
-      !normalizedVideoBaseUrl ||
-      normalizedVideoBaseUrl === "https://ai.wisech.com/v1" ||
-      normalizedVideoBaseUrl === "https://dashscope.aliyuncs.com/api/v1" ||
-      normalizedVideoBaseUrl === "https://dashscope.aliyuncs.com/api/v1/services/aigc/video-generation/video-synthesis" ||
-      normalizedVideoBaseUrl === "https://api.shishikeji.com" ||
-      normalizedVideoBaseUrl === "https://toapis.com/v1"
-    ) {
-      merged.videoBaseUrl = defaultApiSettings.videoBaseUrl;
-    }
-    const provider = getVideoProviderOption(merged.videoProvider);
+    merged.videoProvider = "wisech";
+    const provider = getVideoProviderOption("wisech");
     merged.videoBaseUrl = provider.baseUrl;
     const videoModelText = typeof merged.videoModel === "string" ? merged.videoModel.trim() : "";
     if (
       !videoModelText ||
       videoModelText.startsWith("happyhorse-1.0") ||
       videoModelText === "fofo" ||
-      videoModelText === "doubao-seedance-1-5-pro-251215" ||
       videoModelText === "doubao-seedance-2-0-260128" ||
       videoModelText === "doubao-seedance-2-0-fast-260128" ||
       !isVideoModelAllowed(merged.videoProvider, videoModelText)
@@ -1295,6 +1431,22 @@ function getBase64ImageMime(base64: string) {
   return "";
 }
 
+function formatDiagnosticMessage(record: Record<string, unknown>) {
+  const diagnostic = record.diagnostic;
+  if (!diagnostic || typeof diagnostic !== "object") return "";
+  const item = diagnostic as Record<string, unknown>;
+  const parts = [
+    typeof item.traceId === "string" ? `trace=${item.traceId}` : "",
+    typeof item.stage === "string" ? `stage=${item.stage}` : "",
+    Number.isFinite(Number(item.upstreamStatus)) ? `status=${Number(item.upstreamStatus)}` : "",
+    typeof item.upstreamErrorCode === "string" && item.upstreamErrorCode ? `code=${item.upstreamErrorCode}` : "",
+    typeof item.upstreamRequestId === "string" && item.upstreamRequestId ? `request=${item.upstreamRequestId}` : "",
+    typeof item.upstreamMessage === "string" && item.upstreamMessage ? `msg=${item.upstreamMessage.slice(0, 240)}` : "",
+    typeof item.upstreamUrl === "string" && item.upstreamUrl ? `url=${item.upstreamUrl}` : "",
+  ].filter(Boolean);
+  return parts.length ? `\n诊断：${parts.join("；")}` : "";
+}
+
 function extractErrorMessage(data: unknown, status = 0) {
   const fallback =
     status === 404
@@ -1302,19 +1454,38 @@ function extractErrorMessage(data: unknown, status = 0) {
       : "这次请求没有成功，请稍后再试。";
   if (!data || typeof data !== "object") return fallback;
   const record = data as Record<string, unknown>;
+  const diagnosticMessage = formatDiagnosticMessage(record);
   const error = record.error;
-  if (typeof error === "string") return toUserMessage(error);
+  if (typeof error === "string") return `${toUserMessage(error)}${diagnosticMessage}`;
   if (error && typeof error === "object") {
     const errorRecord = error as Record<string, unknown>;
-    if (typeof errorRecord.message === "string") return toUserMessage(errorRecord.message);
-    if (typeof errorRecord.code === "string") return toUserMessage(errorRecord.code);
+    if (typeof errorRecord.message === "string") return `${toUserMessage(errorRecord.message)}${diagnosticMessage}`;
+    if (typeof errorRecord.code === "string") return `${toUserMessage(errorRecord.code)}${diagnosticMessage}`;
   }
-  if (typeof record.message === "string") return toUserMessage(record.message);
-  if (typeof record.code === "string") return toUserMessage(record.code);
+  if (typeof record.message === "string") return `${toUserMessage(record.message)}${diagnosticMessage}`;
+  if (typeof record.code === "string") return `${toUserMessage(record.code)}${diagnosticMessage}`;
   if (typeof record.raw === "string" && record.raw.includes("Error code 524")) {
     return "这次处理时间太久了，请稍后再试。";
   }
   return status === 404 ? fallback : "这次请求没有成功，请稍后再试；如果一直失败，请让管理员检查服务配置。";
+}
+
+async function readApiResponseBody(response: Response): Promise<unknown> {
+  const text = await response.text().catch(() => "");
+  if (!text) return {};
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { error: text.slice(0, 1200), raw: text.slice(0, 1200) };
+  }
+}
+
+function formatOperationError(error: unknown, action: string, endpoint: string) {
+  const raw = error instanceof Error ? error.message : String(error || "");
+  if (/Failed to fetch|NetworkError|fetch failed|ECONNREFUSED/i.test(raw)) {
+    return `${action}失败：浏览器没有连到本地 API（${endpoint}）。这一步还没到图片/视频上游，所以不会有上游 trace。请确认前端 http://127.0.0.1:5173 和 API http://127.0.0.1:8787 都在运行。原始错误：${raw}`;
+  }
+  return `${action}失败：${toUserMessage(raw)}`;
 }
 
 function extractSafePrompt(data: unknown) {
@@ -1338,10 +1509,40 @@ function extractPromptSummary(data: unknown) {
   return `完整视频提示词：${chars} 字符${limitText}${compacted ? "，已使用石狮压缩产品锁。" : "。"}`;
 }
 
+function extractVisualHarnessSummary(data: unknown) {
+  if (!data || typeof data !== "object") return "";
+  const record = data as Record<string, unknown>;
+  const summary = record.visualSummary;
+  if (!summary || typeof summary !== "object") return "";
+  const summaryRecord = summary as Record<string, unknown>;
+  const provider = typeof summaryRecord.provider === "string" ? summaryRecord.provider : "";
+  const model = typeof summaryRecord.model === "string" ? summaryRecord.model : "";
+  const submittedMode = typeof summaryRecord.submittedVisualMode === "string" ? summaryRecord.submittedVisualMode : "";
+  const stageFrames = Number(summaryRecord.stageFramesSubmittedVisually);
+  const promptFrames = Number(summaryRecord.stageFramesUsedInPrompt);
+  const references = Number(summaryRecord.referenceImagesSubmitted);
+  const fieldParts = [
+    typeof summaryRecord.firstFrameField === "string" && summaryRecord.firstFrameField ? `first=${summaryRecord.firstFrameField}` : "",
+    typeof summaryRecord.lastFrameField === "string" && summaryRecord.lastFrameField ? `last=${summaryRecord.lastFrameField}` : "",
+    typeof summaryRecord.referenceImageField === "string" && summaryRecord.referenceImageField ? `refs=${summaryRecord.referenceImageField}` : "",
+  ].filter(Boolean);
+  if (!submittedMode && !Number.isFinite(stageFrames)) return "";
+  return [
+    `Visual harness: ${provider}${model ? `/${model}` : ""}`,
+    submittedMode ? `mode=${submittedMode}` : "",
+    Number.isFinite(stageFrames) ? `visual stage frames=${stageFrames}` : "",
+    Number.isFinite(promptFrames) ? `prompt stage frames=${promptFrames}` : "",
+    Number.isFinite(references) ? `reference images=${references}` : "",
+    fieldParts.length ? `fields: ${fieldParts.join(", ")}` : "",
+  ]
+    .filter(Boolean)
+    .join("; ");
+}
+
 function toUserMessage(message: string) {
   const text = message.trim();
   if (!text) return "这次请求没有成功，请稍后再试。";
-  if (/server_error|retry your request|An error occurred while processing your request/i.test(text)) {
+  if (/server_error|retry your request|An error occurred while processing your request|do[_\s-]?request[_\s-]?failed/i.test(text)) {
     const requestId =
       text.match(/request ID\s+([0-9a-f-]{12,})/i)?.[1] ||
       text.match(/request[_\s-]?id["']?\s*[:=]\s*["']?([0-9a-f-]{12,})/i)?.[1] ||
@@ -1360,13 +1561,13 @@ function toUserMessage(message: string) {
   if (/model_not_found|No available channel|没有找到模型|模型不存在|模型不可用|model .*not/i.test(text)) {
     return "当前模型暂时不可用，请换一个模型，或让管理员确认模型名称。";
   }
-  if (/上游图片服务连接失败|上游视频服务连接失败|分镜生成服务暂时连不上|视频生成服务暂时连不上/i.test(text)) {
+  if (/上游图片服务连接失败|上游视频服务连接失败|分镜生成服务暂时连不上|视频生成服务暂时连不上|分镜生成服务这次连接中断|视频生成服务这次连接中断|上游服务这次连接中断|没有拿到上游返回/i.test(text)) {
     return text;
   }
   if (/timeout|timed out|Error code 524|超时/i.test(text)) {
     return "这次处理时间太久了，请稍后再试。";
   }
-  if (/Failed to fetch|NetworkError|fetch failed|ECONNREFUSED|服务暂时连不上/i.test(text)) {
+  if (/Failed to fetch|NetworkError|fetch failed|ECONNREFUSED/i.test(text)) {
     return "服务暂时连不上，请确认本地服务还在运行后再试。";
   }
   if (/非 JSON|non.?json|Not found|404|接口路径|路径/i.test(text)) {
@@ -1510,19 +1711,19 @@ export function App() {
   const [aspectRatio, setAspectRatio] = useState("9:16");
   const [motionMode, setMotionMode] = useState<MotionMode>("strict");
   const [storyDirection, setStoryDirection] = useState("");
-  const [storyRevision, setStoryRevision] = useState("");
+  const [isEditingStoryIntent, setIsEditingStoryIntent] = useState(false);
   const [storyIntent, setStoryIntent] = useState<StoryIntent | null>(null);
   const [storyboards, setStoryboards] = useState<StoryboardFrame[]>([]);
   const [selectedStoryboardIds, setSelectedStoryboardIds] = useState<string[]>([]);
   const [storyboardPreflight, setStoryboardPreflight] = useState<StoryboardPreflight | null>(null);
   const [videoExecutionPackage, setVideoExecutionPackage] = useState<VideoExecutionPackage | null>(null);
   const [storyboardError, setStoryboardError] = useState("");
+  const [storyboardPreview, setStoryboardPreview] = useState<StoryboardFrame | null>(null);
   const [videoError, setVideoError] = useState("");
   const [videoTaskId, setVideoTaskId] = useState("");
   const [videoStatus, setVideoStatus] = useState<VideoStatus>("idle");
   const [videoUrl, setVideoUrl] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [testing, setTesting] = useState<"image" | "video" | "">("");
   const [activeJob, setActiveJob] = useState<WorkflowJobKind | "">("");
   const [progressEvents, setProgressEvents] = useState<ProgressEvent[]>([]);
   const currentJobIdRef = useRef("");
@@ -1588,8 +1789,10 @@ export function App() {
   const storyIntentReady = Boolean(storyIntent?.storyIntent?.trim());
   const storyIntentCanGenerate = uploadReady && allLocksConfirmed;
   const storyboardReady = storyIntentCanGenerate && storyIntentReady;
-  const selectedStoryboardAnchor = selectedStoryboards[0]?.imageUrl || "";
-  const videoReady = uploadReady && Boolean(videoExecutionPackage?.ok) && Boolean(selectedStoryboardAnchor);
+  const selectedStoryboardImageUrls = selectedStoryboards.map((storyboard) => storyboard.imageUrl).filter(Boolean);
+  const storyboardImagesAreUnique = selectedStoryboardImageUrls.length >= 3 && new Set(selectedStoryboardImageUrls).size === selectedStoryboardImageUrls.length;
+  const videoFirstFrameAnchor = storyboardImagesAreUnique ? selectedStoryboardImageUrls[0] || "" : "";
+  const videoReady = uploadReady && Boolean(videoExecutionPackage?.ok) && Boolean(videoFirstFrameAnchor);
   const videoDurationCap = getVideoModelDurationCap(apiSettings.videoProvider, apiSettings.videoModel);
   const requestedVideoDuration = Number.isFinite(duration) ? duration : videoDurationCap.min;
   const actualVideoDuration = clampVideoDurationForModel(apiSettings.videoProvider, apiSettings.videoModel, requestedVideoDuration);
@@ -1609,7 +1812,7 @@ export function App() {
       duration: kind === "video" ? actualVideoDuration : undefined,
       requestedDuration: kind === "video" ? requestedVideoDuration : undefined,
       motionMode: kind === "video" ? motionMode : undefined,
-      firstFrameUrl: selectedStoryboardAnchor || undefined,
+      firstFrameUrl: videoFirstFrameAnchor || undefined,
       videoUrl: kind === "video" ? videoUrl || undefined : undefined,
       productViewUrls: slots.map((slot) => slot.localUrl).filter(Boolean),
       supportImageUrls,
@@ -1651,15 +1854,8 @@ export function App() {
     aspect_ratio: aspectRatio,
   };
 
-  const normalizedVideoBaseUrlForRequest = typeof apiSettings.videoBaseUrl === "string" ? apiSettings.videoBaseUrl.trim().replace(/\/+$/, "") : "";
-  const usesFixedVideoBackend =
-    apiSettings.videoProvider === "shishi" ||
-    apiSettings.videoProvider === "wisech" ||
-    apiSettings.videoProvider === "toapis" ||
-    !normalizedVideoBaseUrlForRequest ||
-    normalizedVideoBaseUrlForRequest === defaultApiSettings.videoBaseUrl;
-  const videoBaseUrlForRequest = usesFixedVideoBackend ? "" : apiSettings.videoBaseUrl;
-  const videoApiKeyForRequest = usesFixedVideoBackend ? "" : apiSettings.videoApiKey;
+  const videoBaseUrlForRequest = "";
+  const videoApiKeyForRequest = "";
   const videoResolution = getVideoModelResolution(apiSettings.videoProvider, apiSettings.videoModel);
   const slimVideoExecutionPackage = createSlimVideoExecutionPackage(videoExecutionPackage);
 
@@ -1676,9 +1872,10 @@ export function App() {
     locked_nodes: lockedNodePayload,
     story_intent: storyIntent,
     storyboards: selectedStoryboards,
+    storyboard_frame_urls: selectedStoryboardImageUrls,
     video_execution_package: videoExecutionPackage,
     motion_rule: videoExecutionPackage?.cameraPath ? `Use verified storyboard camera path: ${videoExecutionPackage.cameraPath}` : motionText,
-    image_url: selectedStoryboardAnchor || "PASTE_APPROVED_FIRST_FRAME_URL",
+    image_url: videoFirstFrameAnchor || "PASTE_APPROVED_FIRST_FRAME_URL",
     duration: actualVideoDuration,
     requested_duration: requestedVideoDuration,
     aspect_ratio: aspectRatio,
@@ -1693,15 +1890,15 @@ export function App() {
   };
   const videoSubmitPayload = {
     ...videoPayload,
-    image_urls: [],
-    support_image_urls: [],
-    detail_image_urls: [],
     storyboards: selectedStoryboards.map(redactStoryboardImageForSubmit),
     video_execution_package: slimVideoExecutionPackage,
   };
+  const emptyImageList: string[] = [];
   const videoSafetyPayload = {
     ...videoSubmitPayload,
-    image_url: "",
+    image_urls: emptyImageList,
+    support_image_urls: emptyImageList,
+    detail_image_urls: emptyImageList,
     storyboards: [],
     video_execution_package: slimVideoExecutionPackage
       ? {
@@ -1759,7 +1956,7 @@ export function App() {
 
   function invalidateGeneratedOutputs() {
     setStoryIntent(null);
-    setStoryRevision("");
+    setIsEditingStoryIntent(false);
     setStoryboards([]);
     setSelectedStoryboardIds([]);
     setStoryboardPreflight(null);
@@ -1771,7 +1968,7 @@ export function App() {
   function invalidateStoryboardOutputs(keepIntent = true) {
     if (!keepIntent) {
       setStoryIntent(null);
-      setStoryRevision("");
+      setIsEditingStoryIntent(false);
     }
     setStoryboards([]);
     setSelectedStoryboardIds([]);
@@ -1803,9 +2000,9 @@ export function App() {
 
   function updateApiSettings(patch: Partial<ApiSettings>) {
     setApiSettings((current) => {
-      const next = { ...current, ...patch, imagePath: "", videoPath: "" };
+      const next = { ...current, ...patch, imagePath: "", videoPath: "", videoProvider: "wisech" as const, videoBaseUrl: DEFAULT_VIDEO_BASE_URL, videoApiKey: "" };
       if (patch.videoProvider) {
-        const provider = getVideoProviderOption(patch.videoProvider);
+        const provider = getVideoProviderOption("wisech");
         next.videoBaseUrl = provider.baseUrl;
         next.videoApiKey = "";
         next.videoModel = provider.model;
@@ -1841,42 +2038,38 @@ export function App() {
     if (activeStep !== "upload") setActiveStep("storyboard");
   }
 
-  async function requestStoryIntent(revisionInstruction = "") {
-    setActiveJob("storyIntent");
-    resetProgress("storyIntent", revisionInstruction ? "剧情意图改写" : "剧情意图生成");
+  function confirmManualStoryScript() {
+    const manualScript = storyDirection.trim();
+    if (!manualScript) {
+      setStoryboardError("请先粘贴时间轴脚本。");
+      return;
+    }
+    const nextIntent = buildManualTimelineStoryIntent(manualScript, costumeType, motionMode);
+    invalidateStoryboardOutputs(true);
     setStoryboardError("");
     setVideoError("");
-    try {
-      addProgressEvent("step.started", "调用剧情模型", "根据产品锁点、动作模式和用户方向生成可拍的小剧情。");
-      const response = await fetch("/api/story-intent", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: apiSettings.promptModel,
-          product_type: costumeType,
-          user_direction: storyDirection,
-          revision_instruction: revisionInstruction,
-          current_intent: storyIntent,
-          motion_mode: motionMode,
-          locked_nodes: lockedNodePayload,
-        }),
-      });
-      const data: unknown = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(extractErrorMessage(data, response.status));
-      const nextIntent = data as StoryIntent;
-      if (!nextIntent.storyIntent || !Array.isArray(nextIntent.beats)) throw new Error("Story model did not return a usable intent.");
-      invalidateStoryboardOutputs(true);
-      setStoryIntent(nextIntent);
-      setStoryRevision("");
-      addProgressEvent("artifact.created", "剧情意图已生成", nextIntent.storyTitle || "Story intent ready", "done");
-      addProgressEvent("job.completed", "剧情意图完成", "可以继续生成候选分镜。", "done");
-    } catch (error) {
-      const message = error instanceof Error ? toUserMessage(error.message) : "剧情意图没有生成成功，请稍后再试。";
-      addProgressEvent("step.failed", "剧情意图失败", message, "failed");
-      setStoryboardError(message);
-    } finally {
-      setActiveJob("");
-    }
+    setStoryIntent(nextIntent);
+    setIsEditingStoryIntent(false);
+    resetProgress("storyIntent", "手写时间轴确认");
+    addProgressEvent("artifact.created", "手写时间轴已确认", "分镜和视频执行包会优先沿用这份真实脚本。", "done");
+    addProgressEvent("job.completed", "剧情意图完成", "可以继续生成一版三镜头分镜。", "done");
+  }
+
+  function updateStoryIntentText(value: string) {
+    setStoryIntent((current) => {
+      if (!current) return current;
+      const nextText = sanitizeProductText(value);
+      return {
+        ...current,
+        storyIntent: nextText,
+        beats: buildEditableStoryBeats(nextText, current.beats),
+      };
+    });
+    setStoryboards([]);
+    setSelectedStoryboardIds([]);
+    setStoryboardPreflight(null);
+    setVideoExecutionPackage(null);
+    invalidateVideoOutputs();
   }
 
   async function requestStoryboards() {
@@ -1900,20 +2093,21 @@ export function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(requestPayload),
       });
-      const data: unknown = await response.json().catch(() => ({}));
+      const data: unknown = await readApiResponseBody(response);
       if (!response.ok) throw new Error(extractErrorMessage(data, response.status));
       const record = data && typeof data === "object" ? (data as Record<string, unknown>) : {};
       const nextStoryboards = Array.isArray(record.storyboards) ? (record.storyboards as StoryboardFrame[]) : [];
       if (nextStoryboards.length < 3) throw new Error("分镜模型没有返回足够的候选分镜。");
+      setIsEditingStoryIntent(false);
       setStoryboards(nextStoryboards);
-      setSelectedStoryboardIds(nextStoryboards.slice(0, motionMode === "strict" ? 3 : 5).map((storyboard) => storyboard.id));
+      setSelectedStoryboardIds(nextStoryboards.slice(0, 3).map((storyboard) => storyboard.id));
       setStoryboardPreflight(null);
       setVideoExecutionPackage(null);
       invalidateVideoOutputs();
       addProgressEvent("artifact.created", "候选分镜已返回", `${nextStoryboards.length} 张分镜候选已生成。`, "done");
       addProgressEvent("job.completed", "分镜生成完成", "下一步会在提交视频前做执行包预检。", "done");
     } catch (error) {
-      const message = error instanceof Error ? toUserMessage(error.message) : "分镜没有生成成功，请稍后再试。";
+      const message = formatOperationError(error, "生成首帧分镜", "POST /api/storyboards");
       addProgressEvent("step.failed", "分镜生成失败", message, "failed");
       setStoryboardError(message);
     } finally {
@@ -1924,6 +2118,10 @@ export function App() {
   async function compileVideoPackage() {
     if (!storyIntent || selectedStoryboards.length < 3) {
       setStoryboardError("请先生成并选择至少 3 张分镜，再编译视频执行包。");
+      return;
+    }
+    if (!storyboardImagesAreUnique) {
+      setStoryboardError("当前分镜图重复，或疑似把三张分镜拼在同一张图里。请重新生成三张独立分镜后再进入视频生成。");
       return;
     }
     setActiveJob("storyboard");
@@ -2039,7 +2237,7 @@ export function App() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             task_id: resolvedItem.taskId,
-            video_provider: resolvedItem.model?.toLowerCase().includes("yunshu") ? "wisech" : "shishi",
+            video_provider: "wisech",
           }),
         });
         const data: unknown = await response.json().catch(() => ({}));
@@ -2068,7 +2266,7 @@ export function App() {
 
   async function callBackend(kind: "video") {
     if (kind !== "video") return;
-    if (!videoExecutionPackage?.ok || !selectedStoryboardAnchor) {
+    if (!videoExecutionPackage?.ok || !videoFirstFrameAnchor) {
       setVideoError("请先在分镜页通过预检并生成视频执行包。");
       return;
     }
@@ -2096,6 +2294,8 @@ export function App() {
       }
       const promptSummary = extractPromptSummary(safetyData);
       if (promptSummary) addProgressEvent("tool.completed", "提示词长度", promptSummary, "done");
+      const visualHarnessSummary = extractVisualHarnessSummary(safetyData);
+      if (visualHarnessSummary) addProgressEvent("tool.completed", "Visual harness", visualHarnessSummary, "done");
       addProgressEvent("tool.started", "提交上游", "正在一次性提交视频生成服务。");
       const response = await fetch("/api/video", {
         method: "POST",
@@ -2123,7 +2323,7 @@ export function App() {
       const historyDetail = createHistoryDetail("video", nextHistoryStatus, {
         taskId: newTaskId || undefined,
         detailUrl: immediateVideoUrl,
-        firstFrameUrl: selectedStoryboardAnchor || undefined,
+        firstFrameUrl: videoFirstFrameAnchor || undefined,
         videoUrl: immediateVideoUrl || undefined,
       });
       setHistoryItems((current) => upsertHistoryItem(current, createHistoryItem(newTaskId || `LOCAL-${Date.now()}`, "video", nextHistoryStatus, historyDetail)));
@@ -2207,32 +2407,6 @@ export function App() {
     };
   }, [apiSettings.videoProvider, videoApiKeyForRequest, videoBaseUrlForRequest, videoStatus, videoTaskId]);
 
-  async function testApi(kind: "image" | "video") {
-    setTesting(kind);
-    setStoryboardError("");
-    setVideoError("");
-    try {
-      const response = await fetch(kind === "image" ? "/api/test-image" : "/api/test-video", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(kind === "image" ? storyboardPayload : videoPayload),
-      });
-      const data: unknown = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(extractErrorMessage(data, response.status));
-      }
-      const message = kind === "image" ? "分镜服务连接正常。" : "视频服务连接正常。";
-      if (kind === "image") setStoryboardError(message);
-      if (kind === "video") setVideoError(message);
-    } catch (error) {
-      const message = error instanceof Error ? toUserMessage(error.message) : "服务测试没有通过，请稍后再试。";
-      if (kind === "image") setStoryboardError(message);
-      if (kind === "video") setVideoError(message);
-    } finally {
-      setTesting("");
-    }
-  }
-
   return (
     <div className="min-h-[100dvh] overflow-hidden bg-[#eef4f4] text-[#0d1d20]">
       <div className="pointer-events-none fixed inset-0 -z-10 bg-[radial-gradient(circle_at_8%_10%,rgba(0,126,145,0.18),transparent_32%),radial-gradient(circle_at_92%_6%,rgba(15,109,243,0.12),transparent_34%),linear-gradient(120deg,#f7fbfb_0%,#edf4f4_48%,#f4f1f3_100%)]" />
@@ -2244,7 +2418,7 @@ export function App() {
             </div>
             <div className="min-w-0">
               <strong className="block truncate text-[26px] font-black tracking-[0] text-[#07363d]">Product Lock Video Studio</strong>
-              <span className="block truncate text-[14px] font-bold text-[#607276]">四视图锁定  -  剧情分镜  -  视频生成</span>
+              <span className="block truncate text-[14px] font-bold text-[#607276]">四视图锁定  -  脚本分镜  -  视频生成</span>
             </div>
           </div>
         </div>
@@ -2332,32 +2506,23 @@ export function App() {
                 <StoryboardStep
                   storyDirection={storyDirection}
                   setStoryDirection={updateStoryDirection}
-                  storyRevision={storyRevision}
-                  setStoryRevision={setStoryRevision}
+                  isEditingStoryIntent={isEditingStoryIntent}
+                  setIsEditingStoryIntent={setIsEditingStoryIntent}
                   storyIntent={storyIntent}
+                  updateStoryIntentText={updateStoryIntentText}
                   storyboards={storyboards}
                   selectedStoryboardIds={selectedStoryboardIds}
                   preflight={storyboardPreflight}
                   videoPackage={videoExecutionPackage}
-                  apiSettings={apiSettings}
-                  updateApiSettings={updateApiSettings}
                   aspectRatio={aspectRatio}
                   setAspectRatio={updateAspectRatio}
-                  motionMode={motionMode}
-                  setMotionMode={setMotionMode}
-                  productViews={slots}
                   error={storyboardError}
                   canGenerate={storyIntentCanGenerate}
-                  isSubmitting={isSubmitting}
-                  progressEvents={progressEvents}
                   activeJob={activeJob}
-                  onGenerateIntent={() => requestStoryIntent()}
-                  onReviseIntent={() => requestStoryIntent(storyRevision)}
+                  onConfirmManualScript={confirmManualStoryScript}
                   onGenerateStoryboards={requestStoryboards}
                   onCompilePackage={compileVideoPackage}
-                  onToggleStoryboard={toggleStoryboardSelection}
-                  onTestImage={() => testApi("image")}
-                  isTestingImage={testing === "image"}
+                  onOpenStoryboard={setStoryboardPreview}
                 />
               )}
               {activeStep === "video" && (
@@ -2367,28 +2532,48 @@ export function App() {
                   duration={actualVideoDuration}
                   requestedDuration={requestedVideoDuration}
                   setDuration={updateVideoDuration}
-                  motionMode={motionMode}
-                  setMotionMode={setMotionMode}
                   canGenerate={videoReady}
                   isSubmitting={isSubmitting}
-                  isTesting={testing === "video"}
                   error={videoError}
                   aspectRatio={aspectRatio}
-                  firstFrameUrl={selectedStoryboardAnchor}
+                  firstFrameUrl={videoFirstFrameAnchor}
                   status={videoStatus}
                   statusText={videoStatusText}
                   taskId={videoTaskId}
                   videoUrl={videoUrl}
                   videoPrompt={videoExecutionPackage?.finalVideoPrompt || ""}
-                  progressEvents={progressEvents}
                   onGenerate={() => callBackend("video")}
-                  onTest={() => testApi("video")}
                 />
               )}
             </motion.div>
           </AnimatePresence>
         </main>
       </div>
+      {storyboardPreview && <StoryboardPreviewModal storyboard={storyboardPreview} onClose={() => setStoryboardPreview(null)} />}
+    </div>
+  );
+}
+
+function StoryboardPreviewModal(props: { storyboard: StoryboardFrame; onClose: () => void }) {
+  const viewLabel = localizeStoryboardLabel(props.storyboard.viewAngle);
+  const beatLabel = localizeStoryboardLabel(props.storyboard.beat);
+  const actionLabel = localizeStoryboardAction(props.storyboard.action);
+  return (
+    <div className="storyboard-preview-modal" role="dialog" aria-modal="true" aria-label="分镜大图预览">
+      <button className="storyboard-preview-scrim" type="button" aria-label="关闭分镜大图预览" onClick={props.onClose} />
+      <figure className="storyboard-preview-panel">
+        <div className="storyboard-preview-head">
+          <div>
+            <span>{viewLabel}</span>
+            <strong>{beatLabel}</strong>
+          </div>
+          <button className="icon-action" type="button" aria-label="关闭" onClick={props.onClose}>
+            <X size={18} />
+          </button>
+        </div>
+        <img src={props.storyboard.imageUrl} alt={beatLabel} />
+        <figcaption>{actionLabel}</figcaption>
+      </figure>
     </div>
   );
 }
@@ -2471,7 +2656,7 @@ function UploadStep(props: {
   return (
     <section className="stage-panel">
       <StageHeader eyebrow="第 1 步" title="上传产品四视图" />
-      <div className="lock-note">核心四视图上传后才进入剧情和分镜。正面、左侧、右侧、背面用于锁定尺寸、比例、外形和拓扑；选择本地预设产品时，已保存的辅助角度会在后台自动作为一致性证据进入模型。</div>
+      <div className="lock-note">核心四视图上传后才进入脚本和分镜。正面、左侧、右侧、背面用于锁定尺寸、比例、外形和拓扑；选择本地预设产品时，已保存的辅助角度会在后台自动作为一致性证据进入模型。</div>
       <div className="field-grid">
         <label>
           产品类型
@@ -2535,115 +2720,124 @@ function UploadStep(props: {
 function StoryboardStep(props: {
   storyDirection: string;
   setStoryDirection: (value: string) => void;
-  storyRevision: string;
-  setStoryRevision: (value: string) => void;
+  isEditingStoryIntent: boolean;
+  setIsEditingStoryIntent: (value: boolean) => void;
   storyIntent: StoryIntent | null;
+  updateStoryIntentText: (value: string) => void;
   storyboards: StoryboardFrame[];
   selectedStoryboardIds: string[];
   preflight: StoryboardPreflight | null;
   videoPackage: VideoExecutionPackage | null;
-  apiSettings: ApiSettings;
-  updateApiSettings: (patch: Partial<ApiSettings>) => void;
   aspectRatio: string;
   setAspectRatio: (value: string) => void;
-  motionMode: MotionMode;
-  setMotionMode: (value: MotionMode) => void;
-  productViews: UploadSlot[];
   error: string;
   canGenerate: boolean;
-  isSubmitting: boolean;
-  progressEvents: ProgressEvent[];
   activeJob: WorkflowJobKind | "";
-  onGenerateIntent: () => void;
-  onReviseIntent: () => void;
+  onConfirmManualScript: () => void;
   onGenerateStoryboards: () => void;
   onCompilePackage: () => void;
-  onToggleStoryboard: (id: string) => void;
-  onTestImage: () => void;
-  isTestingImage: boolean;
+  onOpenStoryboard: (storyboard: StoryboardFrame) => void;
 }) {
+  const storyCanConfirm = Boolean(props.storyIntent?.storyIntent?.trim()) && props.activeJob !== "storyboard";
+  const selectedStoryboardFrameUrls = props.storyboards.filter((storyboard) => props.selectedStoryboardIds.includes(storyboard.id)).map((storyboard) => storyboard.imageUrl).filter(Boolean);
+  const selectedFramesAreUnique = selectedStoryboardFrameUrls.length >= 3 && new Set(selectedStoryboardFrameUrls).size === selectedStoryboardFrameUrls.length;
+  const canCompileStoryboards = selectedFramesAreUnique && props.activeJob !== "storyboard";
   return (
     <section className="stage-panel">
-      <StageHeader eyebrow="第 2 步" title="剧情意图与候选分镜" />
-      <div className="lock-note">视频提交前先收敛剧情、动作路径、入选分镜和产品锁点；执行包预检未通过时不会提交视频模型。</div>
+      <StageHeader eyebrow="第 2 步" title="脚本与首帧分镜" />
+      <div className="lock-note">粘贴时间轴脚本；字幕只进入后期 overlay，视频模型只接收画面、动作和产品锁点。</div>
       <div className="two-col">
         <div className="stack">
           <div className="scenario-card prompt-card prompt-pair-card">
             <div className="prompt-label-row">
-              <span>剧情 / 动作意图</span>
-              <button className="dice-action" type="button" title="调用模型生成剧情意图" aria-label="调用模型生成剧情意图" disabled={props.activeJob === "storyIntent"} onClick={props.onGenerateIntent}>
-                {props.activeJob === "storyIntent" ? <LoaderCircle className="spin" size={16} /> : <Dices size={17} />}
-              </button>
+              <span>时间轴脚本</span>
             </div>
-            <div className="prompt-pair-grid">
-              <label>
-                <span>方向</span>
-                <textarea value={props.storyDirection} onChange={(event) => props.setStoryDirection(event.target.value)} placeholder="可留空，也可以写一句方向" />
+            {!props.storyIntent && (
+              <label className="story-direction-field">
+                <span>画面 / 字幕</span>
+                <textarea
+                  value={props.storyDirection}
+                  onChange={(event) => props.setStoryDirection(event.target.value)}
+                  placeholder={"0-3秒\n画面：朋友们在派对上聊天。\n字幕：Everyone's costume this Halloween...\n\n3-6秒\n画面：门缓缓打开，产品主角出现在门口。\n字幕：Then THIS guy showed up..."}
+                />
+                <div className="manual-story-actions">
+                  <button className="secondary-action compact-action manual-story-action" type="button" disabled={!props.storyDirection.trim() || props.activeJob === "storyIntent"} onClick={props.onConfirmManualScript}>
+                    <Check size={15} />
+                    确认脚本
+                  </button>
+                </div>
               </label>
-              <label>
-                <span>修改意见</span>
-                <textarea value={props.storyRevision} onChange={(event) => props.setStoryRevision(event.target.value)} placeholder="生成后可让模型改写" />
-              </label>
-            </div>
-            <div className="review-flow-actions">
-              <button className="primary-action compact-action" type="button" disabled={!props.canGenerate || props.activeJob === "storyIntent"} onClick={props.onGenerateIntent}>
-                {props.activeJob === "storyIntent" ? <LoaderCircle className="spin" size={15} /> : <Wand2 size={15} />}
-                生成剧情意图
-              </button>
-              <button className="secondary-action compact-action" type="button" disabled={!props.storyIntent || !props.storyRevision.trim() || props.activeJob === "storyIntent"} onClick={props.onReviseIntent}>
-                {props.activeJob === "storyIntent" ? <LoaderCircle className="spin" size={15} /> : <Sparkles size={15} />}
-                用模型修改
-              </button>
-            </div>
+            )}
             {props.storyIntent && (
               <div className="story-intent-card">
                 <strong>{props.storyIntent.storyTitle}</strong>
-                <p>{props.storyIntent.storyIntent}</p>
+                {props.isEditingStoryIntent ? (
+                  <textarea className="story-intent-editor" value={props.storyIntent.storyIntent} onChange={(event) => props.updateStoryIntentText(event.target.value)} aria-label="编辑剧情意图原文" />
+                ) : (
+                  <p>{props.storyIntent.storyIntent}</p>
+                )}
                 <small>{props.storyIntent.sceneAnchor}</small>
                 <div className="story-beat-list">
                   {props.storyIntent.beats.map((beat) => (
-                    <span key={beat.id}>{beat.beat}</span>
+                    <span key={beat.id}>{localizeStoryboardLabel(beat.beat)}</span>
                   ))}
+                </div>
+                <div className="review-flow-actions">
+                  <button className="secondary-action compact-action" type="button" onClick={() => props.setIsEditingStoryIntent(!props.isEditingStoryIntent)}>
+                    {props.isEditingStoryIntent ? <Check size={15} /> : <Pencil size={15} />}
+                    {props.isEditingStoryIntent ? "完成编辑" : "修改"}
+                  </button>
+                  <button className="primary-action compact-action" type="button" disabled={!storyCanConfirm} onClick={props.onGenerateStoryboards}>
+                    {props.activeJob === "storyboard" ? <LoaderCircle className="spin" size={15} /> : <Send size={15} />}
+                    生成首帧分镜
+                  </button>
                 </div>
               </div>
             )}
           </div>
-          <div className="storyboard-reference-grid">
-            {props.productViews.map((slot) => (
-              <div className="review-pane" key={slot.id}>
-                <div className="review-pane-head">
-                  <strong>{slot.label}</strong>
-                  <span>{slot.badge}</span>
-                </div>
-                {slot.localUrl ? (
-                  <img className="review-image" src={slot.localUrl} alt={slot.label} />
-                ) : (
-                  <div className="frame-placeholder compact">
-                    <FileImage size={34} />
-                    <strong>等待{slot.label}</strong>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
           <div className="storyboard-grid">
             {props.storyboards.length === 0 ? (
-              <div className="frame-placeholder storyboard-empty">
-                <Wand2 size={38} />
-                <strong>等待分镜</strong>
+              <div className={cn("frame-placeholder storyboard-empty", props.activeJob === "storyboard" && "working")}>
+                {props.activeJob === "storyboard" ? <LoaderCircle className="spin" size={38} /> : <Wand2 size={38} />}
+                <strong>{props.activeJob === "storyboard" ? "正在生成首帧分镜" : "等待一版首帧分镜"}</strong>
               </div>
             ) : (
-              props.storyboards.map((storyboard) => {
-                const selected = props.selectedStoryboardIds.includes(storyboard.id);
-                return (
-                  <button className={cn("storyboard-card", selected && "selected")} type="button" key={storyboard.id} onClick={() => props.onToggleStoryboard(storyboard.id)}>
-                    <img src={storyboard.imageUrl} alt={storyboard.beat} />
-                    <span>{storyboard.viewAngle}</span>
-                    <strong>{storyboard.beat}</strong>
-                    <small>{storyboard.action}</small>
+              <article className="storyboard-set-card">
+                <div className="storyboard-shot-list">
+                  {props.storyboards.slice(0, 3).map((storyboard, index) => {
+                    const selected = props.selectedStoryboardIds.includes(storyboard.id);
+                    const viewLabel = localizeStoryboardLabel(storyboard.viewAngle);
+                    const beatLabel = localizeStoryboardLabel(storyboard.beat);
+                    const actionLabel = localizeStoryboardAction(storyboard.action, index);
+                    return (
+                      <article className={cn("storyboard-frame-card", selected && "selected")} key={storyboard.id}>
+                        <button className="storyboard-frame-image-button" type="button" onClick={() => props.onOpenStoryboard(storyboard)} aria-label={`\u67e5\u770b\u7b2c ${index + 1} \u5f20\u5206\u955c\u5927\u56fe`}>
+                          <img src={storyboard.imageUrl} alt={`\u7b2c ${index + 1} \u5f20\u5206\u955c\uff1a${beatLabel}`} />
+                          <span>
+                            <Maximize2 size={14} />
+                            {"\u67e5\u770b\u5927\u56fe"}
+                          </span>
+                        </button>
+                        <div className="storyboard-shot">
+                          <span>{String(index + 1).padStart(2, "0")}</span>
+                          <div>
+                            <small>{viewLabel}</small>
+                            <strong>{beatLabel}</strong>
+                            <p>{actionLabel}</p>
+                          </div>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+                <div className="storyboard-next-actions">
+                  <button className="primary-action full-width" type="button" disabled={!canCompileStoryboards} onClick={props.onCompilePackage}>
+                    {props.activeJob === "storyboard" ? <LoaderCircle className="spin" size={16} /> : <ShieldCheck size={16} />}
+                    确认这版首帧分镜，进入视频生成
                   </button>
-                );
-              })
+                  {props.selectedStoryboardIds.length >= 3 && !selectedFramesAreUnique && <small className="field-hint">这版分镜图重复或像拼接图，请重新生成三张独立分镜。</small>}
+                </div>
+              </article>
             )}
           </div>
           {(props.preflight || props.videoPackage) && (
@@ -2655,25 +2849,10 @@ function StoryboardStep(props: {
               ))}
             </div>
           )}
+          {props.error && <div className={cn("field-error", getStatusMessageTone(props.error))}>{props.error}</div>}
         </div>
         <div className="parameter-panel">
-          <h3>分镜参数</h3>
-          <label>
-            提示词模型
-            <input value={props.apiSettings.promptModel} onChange={(event) => props.updateApiSettings({ promptModel: event.target.value })} placeholder={DEFAULT_PROMPT_MODEL} />
-          </label>
-          <label>
-            分镜模型
-            <input value={props.apiSettings.imageModel} onChange={(event) => props.updateApiSettings({ imageModel: event.target.value })} placeholder={DEFAULT_IMAGE_MODEL} />
-          </label>
-          <button className="secondary-action full-width" type="button" onClick={props.onTestImage} disabled={props.isTestingImage}>
-            {props.isTestingImage ? <LoaderCircle className="spin" size={16} /> : <Sparkles size={16} />}
-            测试分镜接口
-          </button>
-          <div className="api-fixed-note">
-            <strong>图片 / 文字接口</strong>
-            <span>后台固定配置</span>
-          </div>
+          <h3>成片画面</h3>
           <label>
             清晰度
             <div className="resolution-value">1080p</div>
@@ -2689,29 +2868,8 @@ function StoryboardStep(props: {
               ))}
             </div>
           </label>
-          <div className="segmented">
-            {[
-              ["strict", "高一致性"],
-              ["balanced", "平衡"],
-              ["creative", "创意"],
-            ].map(([value, label]) => (
-              <button key={value} className={props.motionMode === value ? "active" : ""} onClick={() => props.setMotionMode(value as MotionMode)}>
-                {label}
-              </button>
-            ))}
-          </div>
-          <button className="primary-action" disabled={!props.storyIntent || props.activeJob === "storyboard"} onClick={props.onGenerateStoryboards}>
-            {props.activeJob === "storyboard" ? <LoaderCircle className="spin" size={16} /> : <Send size={16} />}
-            生成候选分镜
-          </button>
-          <button className="secondary-action full-width" disabled={props.selectedStoryboardIds.length < 3 || props.activeJob === "storyboard"} onClick={props.onCompilePackage}>
-            {props.activeJob === "storyboard" ? <LoaderCircle className="spin" size={16} /> : <ShieldCheck size={16} />}
-            预检并编译执行包
-          </button>
-          {props.error && <div className={cn("field-error", getStatusMessageTone(props.error))}>{props.error}</div>}
           {!props.canGenerate && <div className="field-hint">请先确认四张核心视图已加载。</div>}
-          {props.canGenerate && !props.storyIntent && <div className="field-hint">先生成或确认剧情意图，再生成候选分镜。</div>}
-          <ProgressPanel events={props.progressEvents} emptyText="生成剧情、分镜或执行包时会显示真实步骤。" />
+          {props.canGenerate && !props.storyIntent && <div className="field-hint">粘贴时间轴脚本后确认，系统会把字幕留给后期叠加。</div>}
         </div>
       </div>
     </section>
@@ -2724,11 +2882,8 @@ function VideoStep(props: {
   duration: number;
   requestedDuration: number;
   setDuration: (value: number) => void;
-  motionMode: MotionMode;
-  setMotionMode: (value: MotionMode) => void;
   canGenerate: boolean;
   isSubmitting: boolean;
-  isTesting: boolean;
   error: string;
   aspectRatio: string;
   firstFrameUrl: string;
@@ -2737,9 +2892,7 @@ function VideoStep(props: {
   taskId: string;
   videoUrl: string;
   videoPrompt: string;
-  progressEvents: ProgressEvent[];
   onGenerate: () => void;
-  onTest: () => void;
 }) {
   const isWorking = props.isSubmitting || props.status === "submitted" || props.status === "polling";
   const durationCap = getVideoModelDurationCap(props.apiSettings.videoProvider, props.apiSettings.videoModel);
@@ -2774,21 +2927,22 @@ function VideoStep(props: {
               </div>
             )}
           </div>
+          <div className="video-main-actions">
+            <button className="primary-action" disabled={!props.canGenerate || isWorking} onClick={props.onGenerate}>
+              {isWorking ? <LoaderCircle className="spin" size={16} /> : <Sparkles size={16} />}
+              {isWorking ? "生成中" : "生成视频"}
+            </button>
+            {props.error && <div className={cn("field-error", getStatusMessageTone(props.error))}>{props.error}</div>}
+          </div>
         </div>
         <div className="parameter-panel">
           <h3>视频参数</h3>
           <label>
-            视频站点
-            <select value={props.apiSettings.videoProvider} onChange={(event) => props.updateApiSettings({ videoProvider: event.target.value as ApiSettings["videoProvider"] })}>
-              {VIDEO_PROVIDER_OPTIONS.map((provider) => (
-                <option key={provider.value} value={provider.value}>
-                  {provider.label}
-                </option>
-              ))}
-            </select>
+            站点
+            <div className="resolution-value">Wisech / 云书 Seedance</div>
           </label>
           <label>
-            视频模型
+            模型
             <select value={props.apiSettings.videoModel} onChange={(event) => props.updateApiSettings({ videoModel: event.target.value })}>
               {modelOptions.map((model) => (
                 <option key={model.value} value={model.value}>
@@ -2796,34 +2950,6 @@ function VideoStep(props: {
                 </option>
               ))}
             </select>
-          </label>
-          <button className="secondary-action full-width" type="button" onClick={props.onTest} disabled={props.isTesting}>
-            {props.isTesting ? <LoaderCircle className="spin" size={16} /> : <Sparkles size={16} />}
-            测试接口
-          </button>
-          <label>
-            视频接口
-            <input
-              value={props.apiSettings.videoBaseUrl}
-              readOnly
-              placeholder={DEFAULT_VIDEO_BASE_URL}
-              autoComplete="off"
-              name="video-api-url"
-            />
-          </label>
-          <label>
-            视频 API Key
-            <div className="key-input">
-              <KeyRound size={16} />
-              <input
-                value={props.apiSettings.videoApiKey}
-                type="password"
-                readOnly
-                placeholder="后台按所选站点自动配置"
-                autoComplete="new-password"
-                name="video-api-token"
-              />
-            </div>
           </label>
           <label>
             时长
@@ -2839,65 +2965,15 @@ function VideoStep(props: {
               {props.requestedDuration !== props.duration ? ` 原来选择的 ${props.requestedDuration} 秒已按当前站点改为 ${props.duration} 秒。` : ""}
             </small>
           </label>
-          <div className="segmented">
-            {[
-              ["strict", "高一致性"],
-              ["balanced", "平衡"],
-              ["creative", "创意"],
-            ].map(([value, label]) => (
-              <button
-                key={value}
-                className={props.motionMode === value ? "active" : ""}
-                onClick={() => props.setMotionMode(value as MotionMode)}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-          <label className="video-prompt-editor">
-            视频提示词
-            <textarea
-              value={props.videoPrompt}
-              readOnly
-              placeholder="执行包通过预检后自动生成，不在视频提交前手工改写。"
-            />
-          </label>
-          <button className="primary-action" disabled={!props.canGenerate || isWorking} onClick={props.onGenerate}>
-            {isWorking ? <LoaderCircle className="spin" size={16} /> : <Sparkles size={16} />}
-            {isWorking ? "生成中" : "生成视频"}
-          </button>
-          {props.error && <div className={cn("field-error", getStatusMessageTone(props.error))}>{props.error}</div>}
-          <ProgressPanel events={props.progressEvents} emptyText="视频生成开始后会显示安全预检、提交、轮询和产物返回。" />
+          {props.videoPrompt && (
+            <div className="video-package-summary">
+              <strong>视频执行包已准备</strong>
+              <small>按已确认的首帧分镜、四视图产品锁点和当前模型能力提交。</small>
+            </div>
+          )}
         </div>
       </div>
     </section>
-  );
-}
-
-function ProgressPanel(props: { events: ProgressEvent[]; emptyText: string }) {
-  return (
-    <div className="progress-panel">
-      <div className="progress-panel-head">
-        <strong>真实进度</strong>
-        <span>{props.events.length ? `${props.events.length} 条事件` : "等待任务"}</span>
-      </div>
-      <div className="progress-event-list">
-        {props.events.length === 0 ? (
-          <p>{props.emptyText}</p>
-        ) : (
-          props.events.map((event) => (
-            <article className={cn("progress-event", event.status)} key={event.id}>
-              <i />
-              <div>
-                <span>{event.type}</span>
-                <strong>{event.title}</strong>
-                <small>{event.detail}</small>
-              </div>
-            </article>
-          ))
-        )}
-      </div>
-    </div>
   );
 }
 
