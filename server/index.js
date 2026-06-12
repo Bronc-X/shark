@@ -2813,6 +2813,30 @@ function getAudioFileExtension(contentType) {
   return "mp3";
 }
 
+function normalizeVoiceoverClips(payload) {
+  if (Array.isArray(payload?.voiceoverClips)) {
+    return payload.voiceoverClips
+      .map((clip, index) => {
+        const start = Number(clip?.start);
+        const end = Number(clip?.end);
+        const audioBase64 = typeof clip?.audioBase64 === "string" ? clip.audioBase64.trim() : "";
+        const audioContentType = typeof clip?.audioContentType === "string" ? clip.audioContentType : "audio/mpeg";
+        if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start || !audioBase64) return null;
+        return { index, start, end, audioBase64, audioContentType };
+      })
+      .filter(Boolean);
+  }
+  const legacyAudioBase64 = typeof payload?.voiceoverAudioBase64 === "string" ? payload.voiceoverAudioBase64.trim() : "";
+  if (!legacyAudioBase64) return [];
+  return [{
+    index: 0,
+    start: 0,
+    end: Number.MAX_SAFE_INTEGER,
+    audioBase64: legacyAudioBase64,
+    audioContentType: typeof payload?.voiceoverAudioContentType === "string" ? payload.voiceoverAudioContentType : "audio/mpeg",
+  }];
+}
+
 function formatSrtTimestamp(seconds) {
   const totalMs = Math.max(0, Math.round(Number(seconds || 0) * 1000));
   const ms = totalMs % 1000;
@@ -2918,8 +2942,8 @@ async function renderPostVideo(payload) {
   }
   const includeSubtitles = payload?.includeSubtitles !== false;
   const includeVoiceover = payload?.includeVoiceover !== false;
-  const voiceoverAudioBase64 = typeof payload?.voiceoverAudioBase64 === "string" ? payload.voiceoverAudioBase64.trim() : "";
-  if (includeVoiceover && !voiceoverAudioBase64) return { status: 400, payload: { error: "Voiceover audio is missing. Generate subtitle and voiceover first." } };
+  const voiceoverClips = normalizeVoiceoverClips(payload);
+  if (includeVoiceover && !voiceoverClips.length) return { status: 400, payload: { error: "Voiceover audio is missing. Generate subtitle and voiceover first." } };
   const srtContent = buildSrtContent(payload?.segments);
   if (includeSubtitles && !srtContent.trim()) return { status: 400, payload: { error: "Subtitle timeline is empty." } };
 
@@ -2928,7 +2952,7 @@ async function renderPostVideo(payload) {
   mkdirSync(workDir, { recursive: true });
   const inputVideoPath = `${workDir}\\source.mp4`;
   const subtitlePath = `${workDir}\\subtitles.srt`;
-  const audioPath = `${workDir}\\voiceover.${getAudioFileExtension(payload?.voiceoverAudioContentType)}`;
+  const audioPaths = [];
   const downloadsDir = getLocalDownloadsDir();
   if (!downloadsDir) return { status: 500, payload: { error: "Downloads folder could not be resolved." } };
   mkdirSync(downloadsDir, { recursive: true });
@@ -2939,52 +2963,48 @@ async function renderPostVideo(payload) {
     await writeRenderSourceVideo(payload, inputVideoPath);
     if (includeSubtitles) writeFileSync(subtitlePath, srtContent, "utf8");
     if (includeVoiceover) {
-      const audioBytes = decodeBase64Payload(voiceoverAudioBase64);
-      if (!audioBytes.length) throw new Error("Voiceover audio data is empty.");
-      writeFileSync(audioPath, audioBytes);
+      for (const clip of voiceoverClips) {
+        const audioBytes = decodeBase64Payload(clip.audioBase64);
+        if (!audioBytes.length) throw new Error("Voiceover audio data is empty.");
+        const audioPath = `${workDir}\\voiceover-${clip.index}.${getAudioFileExtension(clip.audioContentType)}`;
+        writeFileSync(audioPath, audioBytes);
+        audioPaths.push({ ...clip, path: audioPath });
+      }
     }
 
     const subtitleFilter = includeSubtitles ? `subtitles='${escapeFfmpegFilterPath(subtitlePath)}'` : "";
     const sourceHasAudio = await hasAudioStream(inputVideoPath);
     const baseVideoArgs = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p"];
     let args;
-    if (includeVoiceover && sourceHasAudio) {
+    if (includeVoiceover) {
+      const audioInputs = audioPaths.flatMap((clip) => ["-i", clip.path]);
+      const delayedLabels = audioPaths
+        .map((clip, clipIndex) => {
+          const inputIndex = clipIndex + 1;
+          const delayMs = Math.max(0, Math.round(Number(clip.start || 0) * 1000));
+          return `[${inputIndex}:a]adelay=${delayMs}|${delayMs}:all=1[vo${clipIndex}]`;
+        });
+      const mixInputs = [
+        ...(sourceHasAudio ? ["[0:a]"] : []),
+        ...audioPaths.map((_, clipIndex) => `[vo${clipIndex}]`),
+      ].join("");
+      const mixFilter = `${mixInputs}amix=inputs=${audioPaths.length + (sourceHasAudio ? 1 : 0)}:duration=longest:dropout_transition=0[a]`;
+      const filterComplex = [
+        ...(includeSubtitles ? [`[0:v]${subtitleFilter}[v]`] : []),
+        ...delayedLabels,
+        mixFilter,
+      ].join(";");
       args = [
         "-y",
         "-i",
         inputVideoPath,
-        "-i",
-        audioPath,
+        ...audioInputs,
         "-filter_complex",
-        includeSubtitles
-          ? `[0:v]${subtitleFilter}[v];[0:a][1:a]amix=inputs=2:duration=first:dropout_transition=2[a]`
-          : `[0:a][1:a]amix=inputs=2:duration=first:dropout_transition=2[a]`,
+        filterComplex,
         "-map",
         includeSubtitles ? "[v]" : "0:v",
         "-map",
         "[a]",
-        ...baseVideoArgs,
-        "-c:a",
-        "aac",
-        "-b:a",
-        "192k",
-        "-shortest",
-        "-movflags",
-        "+faststart",
-        outputPath,
-      ];
-    } else if (includeVoiceover) {
-      args = [
-        "-y",
-        "-i",
-        inputVideoPath,
-        "-i",
-        audioPath,
-        ...(includeSubtitles ? ["-vf", subtitleFilter] : []),
-        "-map",
-        "0:v",
-        "-map",
-        "1:a",
         ...baseVideoArgs,
         "-c:a",
         "aac",

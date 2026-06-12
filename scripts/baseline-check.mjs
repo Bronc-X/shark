@@ -180,6 +180,7 @@ const checks = [
       appSource.includes('data-testid={`voice-${value}`}') &&
       appSource.includes('data-testid="generate-post-assets"') &&
       appSource.includes('data-testid="download-final-mp4"') &&
+      appSource.includes('data-testid="reopen-post-editor"') &&
       appSource.includes('data-testid="add-caption-segment"') &&
       appSource.includes('data-testid="auto-layout-segments"') &&
       appSource.includes('data-testid={`caption-start-${index}`}') &&
@@ -192,8 +193,14 @@ const checks = [
       appSource.includes("collectLabeledBlock(cleanLines, [\"字幕\", \"subtitle\", \"caption\"])") &&
       appSource.includes('fetch("/api/voiceover"') &&
       appSource.includes("renderPostVideoToDownloads") &&
+      appSource.includes("type VoiceoverClip") &&
+      appSource.includes("setVoiceoverClips") &&
+      appSource.includes("onFinalVideoReady") &&
+      appSource.includes("setIsFinalized(true)") &&
       serverSource.includes('path: "/api/voiceover"') &&
       serverSource.includes('path: "/api/render-post-video"') &&
+      serverSource.includes("normalizeVoiceoverClips") &&
+      serverSource.includes("adelay=") &&
       serverSource.includes("includeSubtitles") &&
       serverSource.includes("includeVoiceover") &&
       serverSource.includes("resolveWorkingBinary") &&
@@ -247,6 +254,41 @@ const checks = [
       styleSource.includes(".auto-layout-segments") &&
       styleSource.includes(".history-inline-panel") &&
       packageSource.includes('"test:baseline"'),
+  },
+  {
+    name: "loaded history post-production uses local rendered video and clamps timeline to video duration",
+    pass:
+      appSource.includes("getLocalVideoAssetUrl(restoredFinalPath) || item.videoUrl") &&
+      appSource.includes("const restoredFinalPath = item.renderedVideoPath || \"\"") &&
+      appSource.includes("finalVideoPath") &&
+      appSource.includes("duration={props.duration}") &&
+      appSource.includes("createEditablePostSegmentsFromScript(props.sourceScript, durationLimit)") &&
+      appSource.includes("function normalizePostSegmentsForDuration") &&
+      appSource.includes("const timelineSegments = timelineEditableSegments") &&
+      appSource.includes("props.onFinalVideoReady(filePath)") &&
+      appSource.includes("max={durationLimit}"),
+  },
+  {
+    name: "left history panel stays compact and shows product progress timeline only",
+    pass:
+      appSource.includes("function formatHistoryProductName") &&
+      appSource.includes('className="history-item compact-history-item"') &&
+      appSource.includes("<strong>{formatHistoryProductName(item)}</strong>") &&
+      appSource.includes("<ProjectProgressMini currentStep={getHistoryProgressStep(item)} />") &&
+      appSource.includes("onClick={() => props.onMore()}") &&
+      styleSource.includes(".compact-history-item") &&
+      styleSource.includes(".compact-history-summary") &&
+      styleSource.includes("font-size: 13px") &&
+      styleSource.includes("font-size: 10px"),
+  },
+  {
+    name: "setup screen keeps four product views compact so script remains primary",
+    pass:
+      styleSource.includes(".setup-screen .setup-asset-grid") &&
+      styleSource.includes("grid-template-columns: repeat(4, minmax(120px, 1fr))") &&
+      styleSource.includes("max-height: 168px") &&
+      styleSource.includes(".first-frame-script-card textarea") &&
+      styleSource.includes("min-height: 320px"),
   },
 ];
 

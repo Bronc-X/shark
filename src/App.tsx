@@ -4,25 +4,34 @@ import {
   Download,
   FileImage,
   Film,
+  FolderOpen,
+  History as HistoryIcon,
   LoaderCircle,
+  PackageOpen,
   Plus,
   Pause,
   Play,
+  Save,
   Send,
+  Settings,
   ShieldCheck,
   Sparkles,
   Trash2,
+  Upload,
   Volume2,
   Wand2,
   X,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select } from "@/components/ui/select";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
@@ -31,6 +40,7 @@ import type { DragEvent } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 type StepId = "setup" | "upload" | "storyboard" | "video";
+type WorkspaceView = "home" | "history" | "settings" | "productViews";
 type MotionMode = "strict" | "balanced" | "creative";
 type VideoStatus = "idle" | "submitted" | "polling" | "succeeded" | "failed";
 type WorkflowJobKind = "storyIntent" | "storyboard" | "video";
@@ -252,12 +262,34 @@ type ProductPreset = {
   lockNodes: readonly LockNode[];
 };
 
+type AssetPackage = {
+  version: 1;
+  exportedAt: string;
+  apiSettings: ApiSettings;
+  workspaceState: PersistedWorkspaceState;
+  productPresets: Array<{
+    productType: string;
+    views: readonly ProductPresetView[];
+    supportViews: readonly ProductPresetSupportView[];
+  }>;
+  historyItems: HistoryItem[];
+};
+
 type TimedScriptSegment = {
   start: number;
   end: number;
   body: string;
   subtitle: string;
   voiceover: string;
+};
+
+type VoiceoverClip = {
+  segmentIndex: number;
+  start: number;
+  end: number;
+  audioBase64: string;
+  audioContentType: string;
+  audioUrl: string;
 };
 
 const STORAGE_KEY = "videoai.apiSettings";
@@ -316,11 +348,14 @@ const VIDEO_PROVIDER_DURATION_CAPS: Record<ApiSettings["videoProvider"], { min: 
   toapis: { min: 4, max: 15, note: "ToAPI video models use the backend key; the final clip length follows the upstream model response." },
 };
 
-const steps: Array<{ id: StepId; label: string; shortLabel: string; icon: LucideIcon }> = [
-  { id: "setup", label: "素材与首帧", shortLabel: "素材与首帧", icon: FileImage },
-  { id: "video", label: "生成视频", shortLabel: "视频 / 后期", icon: Film },
+type ProjectProgressId = "views" | "firstFrame" | "video" | "post";
+
+const projectProgressSteps: Array<{ id: ProjectProgressId; label: string }> = [
+  { id: "views", label: "开始任务" },
+  { id: "firstFrame", label: "生成首帧" },
+  { id: "video", label: "生成视频" },
+  { id: "post", label: "完成" },
 ];
-const visibleSteps = steps;
 
 const initialSlots: UploadSlot[] = [
   { id: "front", label: "正面图", badge: "FRONT", hint: "正面轮廓、主要图案、核心组件、脚部比例", accept: "image/*", fileName: "", localUrl: "" },
@@ -1109,8 +1144,19 @@ function createEmptyPostSegments(duration = 0) {
 
 function createEditablePostSegmentsFromScript(script: string, duration = 0) {
   const parsed = parseTimedScriptSegments(script);
-  if (parsed.length) return parsed;
+  if (parsed.length) return normalizePostSegmentsForDuration(parsed, duration);
   return createEmptyPostSegments(duration);
+}
+
+function normalizePostSegmentsForDuration(segments: TimedScriptSegment[], duration = 0) {
+  const maxDuration = Number.isFinite(duration) && duration > 0 ? clampWholeSeconds(duration, VIDEO_DURATION_INPUT_MAX) : VIDEO_DURATION_INPUT_MAX;
+  return segments
+    .map((segment) => ({
+      ...segment,
+      start: Math.min(maxDuration, Math.max(0, clampWholeSeconds(segment.start, 0))),
+      end: Math.min(maxDuration, Math.max(0, clampWholeSeconds(segment.end, maxDuration))),
+    }))
+    .filter((segment) => segment.end > segment.start);
 }
 
 function formatSrtTime(seconds: number) {
@@ -1136,6 +1182,10 @@ function clampWholeSeconds(value: number, fallback = VIDEO_DURATION_INPUT_MIN) {
 
 function getSegmentDuration(segment: TimedScriptSegment) {
   return Math.max(1, clampWholeSeconds(segment.end - segment.start, DEFAULT_SUBTITLE_BLOCK_SECONDS));
+}
+
+function getPostProductionDurationLimit(duration = 0) {
+  return Number.isFinite(duration) && duration > 0 ? clampWholeSeconds(duration, VIDEO_DURATION_INPUT_MAX) : VIDEO_DURATION_INPUT_MAX;
 }
 
 function buildPostSubtitleDraft(script: string) {
@@ -1257,15 +1307,19 @@ async function saveVideoAssetToDownloads(videoUrl: string) {
 async function renderPostVideoToDownloads(
   videoUrl: string,
   segments: TimedScriptSegment[],
-  voiceoverAudioBase64: string,
-  voiceoverAudioContentType: string,
+  voiceoverClips: VoiceoverClip[],
   includeSubtitles: boolean,
   includeVoiceover: boolean,
 ) {
   const body: Record<string, unknown> = {
     segments,
-    voiceoverAudioBase64,
-    voiceoverAudioContentType,
+    voiceoverClips: voiceoverClips.map(({ segmentIndex, start, end, audioBase64, audioContentType }) => ({
+      segmentIndex,
+      start,
+      end,
+      audioBase64,
+      audioContentType,
+    })),
     includeSubtitles,
     includeVoiceover,
   };
@@ -1381,6 +1435,7 @@ type PersistedWorkspaceState = {
   videoStatus?: VideoStatus;
   videoUrl?: string;
   currentVideoHistoryItemId?: string;
+  finalVideoPath?: string;
 };
 
 function isStepId(value: unknown): value is StepId {
@@ -1434,6 +1489,23 @@ function clearWorkspaceState() {
   }
 }
 
+function downloadJsonAssetPackage(packageData: AssetPackage) {
+  const blob = new Blob([JSON.stringify(packageData, null, 2)], { type: "application/json" });
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `tiktok-inflatable-assets-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.URL.revokeObjectURL(url);
+}
+
+function isAssetPackage(value: unknown): value is AssetPackage {
+  const candidate = value as Partial<AssetPackage>;
+  return Boolean(candidate && candidate.version === 1 && candidate.apiSettings && Array.isArray(candidate.productPresets));
+}
+
 function isHistoryItem(value: unknown): value is HistoryItem {
   if (!value || typeof value !== "object") return false;
   const record = value as Record<string, unknown>;
@@ -1457,6 +1529,53 @@ function formatHistoryTime(date: Date) {
     second: "2-digit",
     hour12: false,
   });
+}
+
+function formatHistoryProjectTitle(item: HistoryItem) {
+  const productName = item.productType || item.title || "未命名产品";
+  return `${item.time} + ${productName}`;
+}
+
+function formatHistoryProductName(item: HistoryItem) {
+  return item.productType || item.sceneTitle || "未命名充气服";
+}
+
+function getProductHistoryStatus(item?: HistoryItem) {
+  if (!item) return "开始任务";
+  if (item.type === "首帧" && item.status === "失败") return "首帧失败";
+  if (item.type === "视频" && item.status === "失败") return "视频失败";
+  if (item.renderedVideoPath) return "完成";
+  if (item.videoUrl || item.detailUrl || (item.type === "视频" && item.status === "成功")) return "生成视频";
+  if (item.type === "视频" || item.status === "处理中") return "生成首帧";
+  if (item.firstFrameUrl || item.type === "首帧") return "生成首帧";
+  return "开始任务";
+}
+
+function getHistoryProgressStep(item?: HistoryItem): ProjectProgressId {
+  const status = getProductHistoryStatus(item);
+  if (status === "完成") return "post";
+  if (status === "生成视频" || status === "视频失败") return "video";
+  if (status === "生成首帧" || status === "首帧失败") return "firstFrame";
+  return "views";
+}
+
+function getHistoryStatusTone(item?: HistoryItem) {
+  if (!item) return "";
+  if (item.status === "失败") return "fail";
+  if (getHistoryProgressStep(item) === "post") return "ok";
+  return "";
+}
+
+function getProjectProgressPercent(step: ProjectProgressId) {
+  const stepIndex = projectProgressSteps.findIndex((item) => item.id === step);
+  if (stepIndex <= 0) return 0;
+  return Math.round((stepIndex / (projectProgressSteps.length - 1)) * 100);
+}
+
+function getLatestHistoryForProduct(items: HistoryItem[], productType: string) {
+  return items
+    .filter((item) => item.productType === productType)
+    .sort((first, second) => getHistorySortValue(second) - getHistorySortValue(first))[0];
 }
 
 function loadHistoryItems(): HistoryItem[] {
@@ -2050,12 +2169,15 @@ function createManualStoryIntent(script: string, productType: string, motionMode
 export function App() {
   const [initialWorkspaceState] = useState(() => loadWorkspaceState());
   const initialCostumeType = initialWorkspaceState.costumeType || SHARK_INFLATABLE_TYPE;
+  const [workspaceView, setWorkspaceView] = useState<WorkspaceView>("home");
   const [activeStep, setActiveStep] = useState<StepId>(() => initialWorkspaceState.activeStep || "setup");
   const [slots, setSlots] = useState(() => createPresetSlots(initialCostumeType));
   const [supportImageUrls, setSupportImageUrls] = useState<string[]>([]);
   const [lockNodes, setLockNodes] = useState(() => getProductLockNodes(initialCostumeType));
   const [costumeType, setCostumeType] = useState(initialCostumeType);
   const [apiSettings, setApiSettings] = useState<ApiSettings>(() => loadApiSettings());
+  const [assetPackageStatus, setAssetPackageStatus] = useState("");
+  const [editingProductViewsFor, setEditingProductViewsFor] = useState("");
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyItems, setHistoryItems] = useState<HistoryItem[]>(() => loadHistoryItems());
   const [pendingHistoryItem, setPendingHistoryItem] = useState<HistoryItem | null>(null);
@@ -2075,6 +2197,7 @@ export function App() {
   const [videoTaskId, setVideoTaskId] = useState(initialWorkspaceState.videoTaskId || "");
   const [videoStatus, setVideoStatus] = useState<VideoStatus>(initialWorkspaceState.videoStatus || "idle");
   const [videoUrl, setVideoUrl] = useState(initialWorkspaceState.videoUrl || "");
+  const [finalVideoPath, setFinalVideoPath] = useState(initialWorkspaceState.finalVideoPath || "");
   const [currentVideoHistoryItemId, setCurrentVideoHistoryItemId] = useState(initialWorkspaceState.currentVideoHistoryItemId || "");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [activeJob, setActiveJob] = useState<WorkflowJobKind | "">("");
@@ -2104,6 +2227,7 @@ export function App() {
       videoTaskId,
       videoStatus,
       videoUrl,
+      finalVideoPath,
       currentVideoHistoryItemId,
     });
   }, [
@@ -2123,6 +2247,7 @@ export function App() {
     videoTaskId,
     videoStatus,
     videoUrl,
+    finalVideoPath,
     currentVideoHistoryItemId,
   ]);
 
@@ -2134,6 +2259,14 @@ export function App() {
   function saveRenderedVideoHistory(filePath: string, fileName: string) {
     if (!filePath) return;
     const title = fileName ? `字幕旁白完整视频：${fileName}` : "字幕旁白完整视频";
+    const finalUrl = getLocalVideoAssetUrl(filePath);
+    setFinalVideoPath(filePath);
+    setVideoUrl(finalUrl);
+    setVideoStatus("succeeded");
+    if (currentVideoHistoryItemId) {
+      patchHistoryItem(currentVideoHistoryItemId, { renderedVideoPath: filePath, renderedVideoFileName: fileName });
+      return;
+    }
     const historyItem = createHistoryItem(
       `POST-${Date.now()}`,
       "video",
@@ -2148,6 +2281,7 @@ export function App() {
       }),
     );
     setHistoryItems((current) => upsertHistoryItem(current, historyItem));
+    setCurrentVideoHistoryItemId(historyItem.id);
   }
 
   useEffect(() => {
@@ -2241,6 +2375,14 @@ export function App() {
   const videoDurationCap = getVideoModelDurationCap(apiSettings.videoProvider, apiSettings.videoModel);
   const requestedVideoDuration = clampVideoDurationInput(duration);
   const actualVideoDuration = clampVideoDurationForModel(apiSettings.videoProvider, apiSettings.videoModel, requestedVideoDuration);
+  const currentVideoHistoryItem = historyItems.find((item) => item.id === currentVideoHistoryItemId || item.taskId === currentVideoHistoryItemId);
+  const currentProgressStep: ProjectProgressId = currentVideoHistoryItem?.renderedVideoPath
+    ? "post"
+    : videoUrl || videoStatus === "succeeded"
+      ? "video"
+      : selectedStoryboardAnchor
+          ? "firstFrame"
+          : "views";
 
   function createHistoryDetail(
     kind: "firstFrame" | "video",
@@ -2266,14 +2408,6 @@ export function App() {
       status,
     };
   }
-
-  const completedSteps: Record<StepId, boolean> = {
-    setup: uploadReady && Boolean(videoExecutionPackage?.ok),
-    upload: uploadReady,
-    storyboard: Boolean(videoExecutionPackage?.ok),
-    video: videoStatus === "succeeded" || Boolean(videoUrl),
-  };
-  const workflowProgress = Math.round((visibleSteps.filter((step) => completedSteps[step.id]).length / visibleSteps.length) * 100);
 
   const motionText =
     "Controlled visible comedy beats: keep the approved first-frame as the anchor, allow the turn/body motion required by the script, and preserve the four-view topology without product redesign.";
@@ -2433,10 +2567,14 @@ export function App() {
     setVideoTaskId("");
     setVideoStatus("idle");
     setVideoUrl("");
+    setFinalVideoPath("");
   }
 
   function resetWorkspaceFlow() {
     clearWorkspaceState();
+    setWorkspaceView("home");
+    setAssetPackageStatus("");
+    setEditingProductViewsFor("");
     setActiveStep("setup");
     setCostumeType(SHARK_INFLATABLE_TYPE);
     setSlots(createPresetSlots(SHARK_INFLATABLE_TYPE));
@@ -2456,10 +2594,77 @@ export function App() {
     setVideoTaskId("");
     setVideoStatus("idle");
     setVideoUrl("");
+    setFinalVideoPath("");
     setCurrentVideoHistoryItemId("");
     setIsSubmitting(false);
     setActiveJob("");
     setProgressEvents([]);
+  }
+
+  function buildAssetPackage(): AssetPackage {
+    return {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      apiSettings,
+      workspaceState: {
+        activeStep,
+        costumeType,
+        duration,
+        aspectRatio,
+        motionMode,
+        storyDirection,
+        storyIntent,
+        storyboards,
+        selectedStoryboardIds,
+        storyboardPreflight,
+        videoExecutionPackage,
+        storyboardError,
+        videoError,
+        videoTaskId,
+        videoStatus,
+        videoUrl,
+        finalVideoPath,
+        currentVideoHistoryItemId,
+      },
+      productPresets: productPresets.map((preset) => ({
+        productType: preset.productType,
+        views: preset.views,
+        supportViews: preset.supportViews || [],
+      })),
+      historyItems: historyItems.map(sanitizeHistoryItemForStorage),
+    };
+  }
+
+  function exportAssetPackage() {
+    downloadJsonAssetPackage(buildAssetPackage());
+    setAssetPackageStatus("资产包已导出到浏览器下载。");
+  }
+
+  function saveAssetPackageSnapshot() {
+    saveApiSettings(apiSettings);
+    saveWorkspaceState(buildAssetPackage().workspaceState);
+    saveHistoryItems(historyItems);
+    setAssetPackageStatus("资产包快照已保存到本机浏览器。");
+  }
+
+  async function importAssetPackage(file?: File) {
+    if (!file) return;
+    try {
+      const parsed = JSON.parse(await file.text()) as unknown;
+      if (!isAssetPackage(parsed)) throw new Error("资产包格式不正确。");
+      const safeSettings = { ...defaultApiSettings, ...parsed.apiSettings, videoProvider: KLING_VIDEO_PROVIDER };
+      updateApiSettings(safeSettings);
+      const importedHistory = Array.isArray(parsed.historyItems) ? parsed.historyItems.filter(isHistoryItem).slice(0, MAX_HISTORY_ITEMS) : [];
+      if (importedHistory.length) setHistoryItems((current) => mergeHistoryItems(current, importedHistory));
+      if (parsed.workspaceState?.costumeType && getProductPreset(parsed.workspaceState.costumeType)) {
+        setCostumeType(parsed.workspaceState.costumeType);
+        setSlots(createPresetSlots(parsed.workspaceState.costumeType));
+        setLockNodes(getProductLockNodes(parsed.workspaceState.costumeType));
+      }
+      setAssetPackageStatus(`已导入资产包：${importedHistory.length} 条历史记录，可用配置已恢复。`);
+    } catch (error) {
+      setAssetPackageStatus(error instanceof Error ? error.message : "资产包导入失败。");
+    }
   }
 
   async function updateSlotFile(id: string, file?: File) {
@@ -2497,6 +2702,30 @@ export function App() {
     setLockNodes(getProductLockNodes(value));
     setStoryDirection("");
     setActiveStep("setup");
+    setEditingProductViewsFor("");
+  }
+
+  function editProductViews(productType: string) {
+    invalidateGeneratedOutputs();
+    setCostumeType(productType);
+    setSlots(createPresetSlots(productType));
+    setSupportImageUrls([]);
+    setLockNodes(getProductLockNodes(productType));
+    setStoryDirection("");
+    setActiveStep("setup");
+    setWorkspaceView("productViews");
+    setEditingProductViewsFor(productType);
+  }
+
+  function clearSlotImage(id: string) {
+    invalidateGeneratedOutputs();
+    setSlots((current) =>
+      current.map((slot) =>
+        slot.id === id
+          ? { ...slot, fileName: "", localUrl: "", dataUrl: "", file: undefined, source: undefined }
+          : slot,
+      ),
+    );
   }
 
   function updateStoryDirection(value: string) {
@@ -2677,13 +2906,16 @@ export function App() {
 
   function applyHistoryItemToCurrentFlow(item: HistoryItem) {
     const restoredScript = item.sourceScript || item.scenePrompt || item.videoPrompt || "";
+    const restoredFinalPath = item.renderedVideoPath || "";
     const restoredVideoUrl =
-      item.videoUrl || getLocalVideoAssetUrl(item.renderedVideoPath) || (item.type === "视频" ? item.detailUrl : "") || "";
+      getLocalVideoAssetUrl(restoredFinalPath) || item.videoUrl || (item.type === "视频" ? item.detailUrl : "") || "";
     if (restoredScript) setStoryDirection(restoredScript);
     if (item.aspectRatio) setAspectRatio(item.aspectRatio);
     if (item.duration) setDuration(item.requestedDuration || item.duration);
     if (item.motionMode) setMotionMode(item.motionMode);
     if (item.taskId) setVideoTaskId(item.taskId);
+    setFinalVideoPath(restoredFinalPath);
+    setCurrentVideoHistoryItemId(item.id);
     if (item.firstFrameUrl) {
       const restoredStoryboard: StoryboardFrame = {
         id: `history-storyboard-${item.id}`,
@@ -2742,9 +2974,11 @@ export function App() {
     if (resolvedItem.productType && resolvedItem.productType !== costumeType) {
       setPendingHistoryItem(resolvedItem);
       setCostumeType(resolvedItem.productType);
+      setWorkspaceView("home");
       return;
     }
     applyHistoryItemToCurrentFlow(resolvedItem);
+    setWorkspaceView("home");
   }
 
   async function callBackend(kind: "video") {
@@ -2894,15 +3128,34 @@ export function App() {
   return (
     <div className="shadcn-ai-shell" data-testid="app-shell">
       <header className="shadcn-topbar">
-        <div className="brand-mark">
-          <Film size={21} />
+        <div className="brand-lockup">
+          <div className="brand-mark">
+            <span className="brand-mark-core">
+              <PackageOpen size={20} />
+            </span>
+          </div>
+          <div className="brand-copy">
+            <strong>TikTok 充气产品生成 studio</strong>
+          </div>
         </div>
-        <div className="brand-copy">
-          <strong>Product Lock Video Studio</strong>
-        </div>
+        <nav className="top-workspace-nav" aria-label="工作区导航">
+          <Button variant={workspaceView === "home" ? "default" : "ghost"} size="sm" type="button" onClick={resetWorkspaceFlow} data-testid="top-nav-new">
+            <Plus size={16} />
+            新建项目
+          </Button>
+          <Button variant={workspaceView === "history" ? "default" : "ghost"} size="sm" type="button" onClick={() => setWorkspaceView("history")} data-testid="top-nav-history">
+            <HistoryIcon size={16} />
+            历史项目
+          </Button>
+          <Button variant={workspaceView === "settings" ? "default" : "ghost"} size="sm" type="button" onClick={() => setWorkspaceView("settings")} data-testid="top-nav-settings">
+            <Settings size={16} />
+            设置
+          </Button>
+        </nav>
       </header>
 
       <div className="shadcn-shell-grid">
+        {workspaceView === "home" && (
         <motion.aside
           className="shadcn-left-rail"
           data-testid="workflow-sidebar"
@@ -2910,50 +3163,23 @@ export function App() {
           animate={{ opacity: 1, x: 0 }}
           transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
         >
-          <Card className="run-card">
+          <Card className="run-card progress-card">
             <CardHeader>
               <div className="run-card-kicker">
-                <FileImage size={18} />
+                <span>当前项目</span>
               </div>
               <CardTitle>{costumeType}</CardTitle>
             </CardHeader>
             <CardContent>
-              <Progress value={workflowProgress} />
+              <ProjectProgressRail currentStep={currentProgressStep} />
             </CardContent>
           </Card>
-
-          <nav className="step-nav" aria-label="workflow steps">
-            {visibleSteps.map((step, index) => {
-              const isActive = activeStep === step.id;
-              const isDone = completedSteps[step.id];
-              const Icon = step.icon;
-              return (
-                <button
-                  className={cn("step-nav-item", isActive && "active", isDone && "done")}
-                  type="button"
-                  key={step.id}
-                  onClick={() => selectStep(step.id)}
-                  data-testid={`step-${step.id}`}
-                >
-                  <span className="step-icon"><Icon size={19} /></span>
-                  <span className="step-copy">
-                    <strong>{step.shortLabel}</strong>
-                  </span>
-                  <em>{isDone ? "OK" : String(index + 1).padStart(2, "0")}</em>
-                </button>
-              );
-            })}
-          </nav>
-
-          <Button variant="outline" className="new-flow-button" type="button" onClick={resetWorkspaceFlow}>
-            <Sparkles size={16} />
-            新建任务
-          </Button>
 
           <ScrollArea className="history-scroll">
             <HistoryInlinePanel
               items={historyItems}
               error={historyError}
+              onMore={() => setWorkspaceView("history")}
               onClear={() => {
                 setHistoryError("");
                 clearSavedHistoryItems();
@@ -2964,23 +3190,57 @@ export function App() {
             />
           </ScrollArea>
         </motion.aside>
+        )}
 
         <main className="shadcn-center-canvas">
           <AnimatePresence mode="wait">
             <motion.div
-              key={activeStep}
+              key={`${workspaceView}-${activeStep}`}
               initial={{ opacity: 0, y: 18, filter: "blur(8px)" }}
               animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
               exit={{ opacity: 0, y: -12, filter: "blur(8px)" }}
               transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
             >
-              {activeStep !== "video" && (
+              {workspaceView === "settings" ? (
+                <SettingsWorkspace
+                  apiSettings={apiSettings}
+                  updateApiSettings={updateApiSettings}
+                  productPresets={productPresets}
+                  status={assetPackageStatus}
+                  onSave={saveAssetPackageSnapshot}
+                  onExport={exportAssetPackage}
+                  onImport={importAssetPackage}
+                  onEditProduct={editProductViews}
+                />
+              ) : workspaceView === "history" ? (
+                <HistoryWorkspace
+                  items={historyItems}
+                  error={historyError}
+                  onClear={() => {
+                    setHistoryError("");
+                    clearSavedHistoryItems();
+                    setHistoryItems([]);
+                  }}
+                  onRemove={(id) => setHistoryItems((current) => current.filter((item) => item.id !== id))}
+                  onOpenItem={openHistoryItem}
+                />
+              ) : workspaceView === "productViews" ? (
+                <ProductViewsEditor
+                  slots={slots}
+                  costumeType={costumeType}
+                  onFile={updateSlotFile}
+                  onClearFile={clearSlotImage}
+                  onBack={() => setWorkspaceView("settings")}
+                />
+              ) : activeStep !== "video" && (
                 <SetupStep
                   slots={slots}
                   costumeType={costumeType}
                   supportViewCount={currentSupportViewCount}
+                  editingProductViews={editingProductViewsFor === costumeType}
                   setCostumeType={updateProductType}
                   onFile={updateSlotFile}
+                  onClearFile={clearSlotImage}
                   storyDirection={storyDirection}
                   setStoryDirection={updateStoryDirection}
                   storyIntent={storyIntent}
@@ -2988,11 +3248,8 @@ export function App() {
                   selectedStoryboardIds={selectedStoryboardIds}
                   preflight={storyboardPreflight}
                   videoPackage={videoExecutionPackage}
-                  apiSettings={apiSettings}
-                  error={storyboardError}
                   canGenerate={storyIntentCanGenerate}
                   isSubmitting={isSubmitting}
-                  progressEvents={progressEvents}
                   activeJob={activeJob}
                   onGenerateStoryboards={requestStoryboards}
                   onCompilePackage={compileVideoPackage}
@@ -3000,9 +3257,10 @@ export function App() {
                   onStoryboardImageError={markStoryboardImageFailed}
                 />
               )}
-              {activeStep === "video" && (
+              {workspaceView === "home" && activeStep === "video" && (
                 <VideoStep
                   aspectRatio={aspectRatio}
+                  duration={actualVideoDuration || requestedVideoDuration}
                   firstFrameUrl={selectedStoryboardAnchor}
                   status={videoStatus}
                   statusText={videoStatusText}
@@ -3012,12 +3270,18 @@ export function App() {
                   historyItemId={currentVideoHistoryItemId}
                   onPatchHistoryItem={patchHistoryItem}
                   onSaveRenderedVideoHistory={saveRenderedVideoHistory}
+                  onFinalVideoReady={(filePath) => {
+                    setFinalVideoPath(filePath);
+                    setVideoUrl(getLocalVideoAssetUrl(filePath));
+                    setVideoStatus("succeeded");
+                  }}
                 />
               )}
             </motion.div>
           </AnimatePresence>
         </main>
 
+        {workspaceView === "home" && (
         <aside className="shadcn-right-inspector">
           {activeStep === "video" ? (
             <VideoParameterPanel
@@ -3038,22 +3302,16 @@ export function App() {
               onGenerate={() => callBackend("video")}
             />
           ) : (
-            <div className="inspector-content compact-inspector">
-              <Card>
-                <CardHeader>
-                  <CardTitle>当前任务</CardTitle>
-                </CardHeader>
-                <CardContent className="inspector-stack">
-                  <div><span>产品</span><strong>{costumeType}</strong></div>
-                  <div><span>产品视图</span><strong>{requiredUrls.length}/4</strong></div>
-                  <div><span>首帧</span><strong>{selectedStoryboardAnchor ? "已确认" : "未确认"}</strong></div>
-                  <div><span>视频通道</span><strong>Kling</strong></div>
-                </CardContent>
-              </Card>
-              <ProgressPanel events={progressEvents} emptyText="生成首帧时显示真实进度。" />
-            </div>
+            <SetupStatusPanel
+              apiSettings={apiSettings}
+              error={storyboardError}
+              canGenerate={storyIntentCanGenerate}
+              hasFirstFrame={Boolean(selectedStoryboardAnchor)}
+              progressEvents={progressEvents}
+            />
           )}
         </aside>
+        )}
       </div>
     </div>
   );
@@ -3062,24 +3320,19 @@ export function App() {
 function HistoryInlinePanel(props: {
   items: HistoryItem[];
   error: string;
+  onMore: () => void;
   onClear: () => void;
   onRemove: (id: string) => void;
   onOpenItem: (item: HistoryItem) => Promise<void>;
 }) {
-  const [expandedId, setExpandedId] = useState("");
-
-  useEffect(() => {
-    if (expandedId && !props.items.some((item) => item.id === expandedId)) {
-      setExpandedId("");
-    }
-  }, [expandedId, props.items]);
+  const visibleItems = props.items.slice(0, 5);
 
   return (
     <section className="history-inline-panel" aria-label="历史记录" data-testid="history-panel">
       <div className="history-inline-head">
         <div>
           <span>历史记录</span>
-          <strong>{props.items.length} 条</strong>
+          <strong>最近 {Math.min(props.items.length, 5)} 条</strong>
         </div>
         <button className="icon-action subtle" type="button" onClick={props.onClear} disabled={props.items.length === 0} aria-label="清空历史记录">
           <Trash2 size={17} />
@@ -3090,25 +3343,20 @@ function HistoryInlinePanel(props: {
         {props.items.length === 0 ? (
           <div className="history-empty">暂无记录</div>
         ) : (
-          props.items.map((item) => (
-            <article className={cn("history-item", expandedId === item.id && "expanded")} key={item.id}>
+          visibleItems.map((item) => (
+            <article className="history-item compact-history-item" key={item.id}>
               <button
                 className="history-item-main"
                 type="button"
-                onClick={() => setExpandedId((current) => (current === item.id ? "" : item.id))}
-                aria-expanded={expandedId === item.id}
+                onClick={() => props.onMore()}
+                aria-label="打开历史项目"
               >
-                <div>
-                  <span className="history-type">{item.type}</span>
-                  <strong>{item.title}</strong>
-                  <small>{item.time}</small>
+                <div className="compact-history-summary">
+                  <strong>{formatHistoryProductName(item)}</strong>
+                  <span className={cn("history-status", getHistoryStatusTone(item))}>{getProductHistoryStatus(item)}</span>
                 </div>
-                <div className="history-side">
-                  <span className={cn("history-status", item.status === "成功" && "ok", item.status === "失败" && "fail")}>{item.status}</span>
-                  <ChevronDown size={17} />
-                </div>
+                <ProjectProgressMini currentStep={getHistoryProgressStep(item)} />
               </button>
-              {expandedId === item.id && <HistoryDetail item={item} onOpenItem={() => props.onOpenItem(item)} />}
               <button className="icon-action subtle history-remove" type="button" aria-label="删除记录" onClick={(event) => {
                 event.stopPropagation();
                 props.onRemove(item.id);
@@ -3119,6 +3367,290 @@ function HistoryInlinePanel(props: {
           ))
         )}
       </div>
+      {props.items.length > 5 && (
+        <Button variant="outline" className="history-more-button" type="button" onClick={props.onMore}>
+          更多
+        </Button>
+      )}
+    </section>
+  );
+}
+
+function ProjectProgressRail(props: { currentStep: ProjectProgressId }) {
+  return (
+    <ol className="project-progress-rail" data-testid="project-progress-rail">
+      {projectProgressSteps.map((step) => {
+        const isCurrent = step.id === props.currentStep;
+        return (
+          <li className={cn("project-progress-item", isCurrent && "current")} key={step.id} data-testid={`progress-${step.id}`}>
+            <span className="project-progress-dot" aria-hidden="true" />
+            <span className="project-progress-label">{step.label}</span>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+function ProjectProgressMini(props: { currentStep: ProjectProgressId }) {
+  return (
+    <ol className="project-progress-mini" aria-label="历史项目进度" style={{ "--progress-percent": `${getProjectProgressPercent(props.currentStep)}%` } as React.CSSProperties}>
+      {projectProgressSteps.map((step) => (
+        <li className={cn("project-progress-mini-item", step.id === props.currentStep && "current")} key={step.id}>
+          <span aria-hidden="true" />
+          <em>{step.label}</em>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+function HistoryWorkspace(props: {
+  items: HistoryItem[];
+  error: string;
+  onClear: () => void;
+  onRemove: (id: string) => void;
+  onOpenItem: (item: HistoryItem) => Promise<void>;
+}) {
+  const [expandedId, setExpandedId] = useState("");
+  const sortedItems = [...props.items].sort((first, second) => getHistorySortValue(second) - getHistorySortValue(first));
+
+  useEffect(() => {
+    if (expandedId && !props.items.some((item) => item.id === expandedId)) setExpandedId("");
+  }, [expandedId, props.items]);
+
+  return (
+    <section className="stage-panel history-workspace" data-testid="history-workspace">
+      <StageHeader eyebrow="History" title="历史项目" />
+      <Card className="history-workspace-list-card">
+        <CardHeader>
+          <div className="history-workspace-head">
+            <CardTitle>项目列表</CardTitle>
+            <Button type="button" variant="outline" size="sm" onClick={props.onClear} disabled={!props.items.length}>
+              <Trash2 size={15} />
+              清空
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {props.error && <div className="history-error">{props.error}</div>}
+          <div className="history-project-list">
+            {sortedItems.length === 0 ? (
+              <div className="history-empty">暂无历史项目</div>
+            ) : (
+              sortedItems.map((item) => (
+                <article className={cn("history-project-item", expandedId === item.id && "expanded")} key={item.id}>
+                  <button
+                    className="history-project-main"
+                    type="button"
+                    onClick={() => setExpandedId((current) => (current === item.id ? "" : item.id))}
+                    aria-expanded={expandedId === item.id}
+                  >
+                    <div>
+                      <span
+                        className={cn("history-status", getHistoryStatusTone(item))}
+                        style={{ "--progress-percent": `${getProjectProgressPercent(getHistoryProgressStep(item))}%` } as React.CSSProperties}
+                      >
+                        {getProductHistoryStatus(item)}
+                      </span>
+                      <strong>{item.productType || item.title || "未命名产品"}</strong>
+                      <small>{item.sceneTitle || item.title}</small>
+                      <ProjectProgressMini currentStep={getHistoryProgressStep(item)} />
+                    </div>
+                    <div className="history-project-side">
+                      <time>{item.time}</time>
+                      <ChevronDown size={17} />
+                    </div>
+                  </button>
+                  <button className="icon-action subtle history-expand" type="button" aria-label="展开记录详情" onClick={() => setExpandedId((current) => (current === item.id ? "" : item.id))}>
+                    <ChevronDown size={16} />
+                  </button>
+                  {expandedId === item.id && <HistoryDetail item={item} onOpenItem={() => props.onOpenItem(item)} />}
+                  <button className="icon-action subtle history-remove" type="button" aria-label="删除记录" onClick={(event) => {
+                    event.stopPropagation();
+                    props.onRemove(item.id);
+                  }}>
+                    <Trash2 size={16} />
+                  </button>
+                </article>
+              ))
+            )}
+          </div>
+        </CardContent>
+      </Card>
+    </section>
+  );
+}
+
+function SettingsWorkspace(props: {
+  apiSettings: ApiSettings;
+  updateApiSettings: (patch: Partial<ApiSettings>) => void;
+  productPresets: readonly ProductPreset[];
+  status: string;
+  onSave: () => void;
+  onExport: () => void;
+  onImport: (file?: File) => void;
+  onEditProduct: (productType: string) => void;
+}) {
+  return (
+    <section className="stage-panel settings-screen" data-testid="settings-screen">
+      <StageHeader eyebrow="Settings" title="项目设置" />
+      <div className="settings-grid single">
+        <Card className="settings-card">
+          <CardHeader>
+            <CardTitle>API 配置</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <FieldGroup className="settings-fields">
+              <Field>
+                <FieldLabel>Kling API Base URL</FieldLabel>
+                <Input value={props.apiSettings.videoBaseUrl} onChange={(event) => props.updateApiSettings({ videoBaseUrl: event.target.value })} data-testid="settings-video-base-url" />
+                <FieldDescription>当前视频通道固定为 Kling，默认使用官方 Omni 地址。</FieldDescription>
+              </Field>
+              <Field>
+                <FieldLabel>视频模型</FieldLabel>
+                <Select value={props.apiSettings.videoModel} onChange={(event) => props.updateApiSettings({ videoModel: event.target.value })} data-testid="settings-video-model">
+                  {getVideoModelOptions(KLING_VIDEO_PROVIDER).map((model) => (
+                    <option value={model.value} key={model.value}>{model.label}</option>
+                  ))}
+                </Select>
+              </Field>
+              <Field>
+                <FieldLabel>首帧模型</FieldLabel>
+                <Input value={props.apiSettings.imageModel} onChange={(event) => props.updateApiSettings({ imageModel: event.target.value })} data-testid="settings-image-model" />
+              </Field>
+              <Field>
+                <FieldLabel>脚本理解模型</FieldLabel>
+                <Input value={props.apiSettings.promptModel} onChange={(event) => props.updateApiSettings({ promptModel: event.target.value })} data-testid="settings-prompt-model" />
+              </Field>
+            </FieldGroup>
+            <div className="asset-package-actions compact">
+              <Button type="button" variant="outline" onClick={props.onSave} data-testid="save-asset-package">
+                <Save size={16} />
+                保存
+              </Button>
+              <Button type="button" variant="outline" onClick={props.onExport} data-testid="export-asset-package">
+                <Download size={16} />
+                导出
+              </Button>
+              <label className="asset-import-button">
+                <input type="file" accept="application/json,.json" onChange={(event) => props.onImport(event.target.files?.[0])} data-testid="import-asset-package" />
+                <Upload size={16} />
+                导入
+              </label>
+            </div>
+            {props.status && <div className="field-hint">{props.status}</div>}
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card className="settings-card product-views-card">
+        <CardHeader>
+          <CardTitle>5 个产品的 4 视图</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <Table className="product-view-table">
+            <TableHeader>
+              <TableRow>
+                <TableHead>产品</TableHead>
+                <TableHead>FRONT</TableHead>
+                <TableHead>LEFT</TableHead>
+                <TableHead>RIGHT</TableHead>
+                <TableHead>BACK</TableHead>
+                <TableHead>操作</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {props.productPresets.map((preset) => (
+                <TableRow key={preset.productType}>
+                  <TableCell>
+                    <strong>{preset.productType}</strong>
+                    <small>{preset.supportViews?.length ? `辅助图 ${preset.supportViews.length} 张` : "标准四视图"}</small>
+                  </TableCell>
+                  {initialSlots.map((slot) => {
+                    const view = preset.views.find((item) => item.slotId === slot.id);
+                    return (
+                      <TableCell key={slot.id}>
+                        {view ? (
+                          <a className="product-view-thumb" href={view.localUrl} target="_blank" rel="noreferrer">
+                            <img src={view.localUrl} alt={`${preset.productType} ${slot.badge}`} />
+                            <span>{view.fileName}</span>
+                          </a>
+                        ) : (
+                          <span className="history-status fail">缺失</span>
+                        )}
+                      </TableCell>
+                    );
+                  })}
+                  <TableCell>
+                    <Button type="button" variant="outline" size="sm" onClick={() => props.onEditProduct(preset.productType)}>
+                      <FolderOpen size={15} />
+                      编辑
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+    </section>
+  );
+}
+
+function ProductViewsEditor(props: {
+  slots: UploadSlot[];
+  costumeType: string;
+  onFile: (id: string, file?: File) => void;
+  onClearFile: (id: string) => void;
+  onBack: () => void;
+}) {
+  function handleDrop(id: string, event: DragEvent<HTMLElement>) {
+    event.preventDefault();
+    props.onFile(id, event.dataTransfer.files?.[0]);
+  }
+
+  return (
+    <section className="stage-panel product-views-editor" data-testid="product-views-editor">
+      <div className="product-views-editor-head">
+        <StageHeader eyebrow="Product Views" title={`${props.costumeType} 四视图`} />
+        <Button variant="outline" type="button" onClick={props.onBack}>
+          返回设置
+        </Button>
+      </div>
+      <div className="asset-grid product-views-edit-grid">
+        {props.slots.map((slot) => (
+          <article className="asset-card product-view-edit-card" key={slot.id}>
+            <label className="asset-preview">
+              <input type="file" accept={slot.accept} onChange={(event) => props.onFile(slot.id, event.target.files?.[0])} />
+              <div className="drop-zone" onDragOver={(event) => event.preventDefault()} onDrop={(event) => handleDrop(slot.id, event)}>
+                {slot.localUrl ? (
+                  <img src={slot.localUrl} alt={slot.label} />
+                ) : (
+                  <div className="missing-asset">
+                    <CloudUpload size={28} />
+                    <span>{slot.label}</span>
+                  </div>
+                )}
+                <em>{slot.badge}</em>
+                <span className="asset-replace-hint">
+                  <Upload size={14} />
+                  上传文件
+                </span>
+              </div>
+            </label>
+            <strong>{slot.label}</strong>
+            <small>{slot.fileName || slot.hint}</small>
+            <div className="asset-edit-actions">
+              <span>点击图片替换</span>
+              <Button variant="outline" size="sm" type="button" onClick={() => props.onClearFile(slot.id)}>
+                <X size={14} />
+                清除
+              </Button>
+            </div>
+          </article>
+        ))}
+      </div>
     </section>
   );
 }
@@ -3127,8 +3659,10 @@ function SetupStep(props: {
   slots: UploadSlot[];
   costumeType: string;
   supportViewCount: number;
+  editingProductViews: boolean;
   setCostumeType: (value: string) => void;
   onFile: (id: string, file?: File) => void;
+  onClearFile: (id: string) => void;
   storyDirection: string;
   setStoryDirection: (value: string) => void;
   storyIntent: StoryIntent | null;
@@ -3136,11 +3670,8 @@ function SetupStep(props: {
   selectedStoryboardIds: string[];
   preflight: StoryboardPreflight | null;
   videoPackage: VideoExecutionPackage | null;
-  apiSettings: ApiSettings;
-  error: string;
   canGenerate: boolean;
   isSubmitting: boolean;
-  progressEvents: ProgressEvent[];
   activeJob: WorkflowJobKind | "";
   onGenerateStoryboards: () => void;
   onCompilePackage: () => void;
@@ -3158,7 +3689,7 @@ function SetupStep(props: {
     <section className="stage-panel setup-screen" data-testid="setup-screen">
       <StageHeader title="素材与首帧" />
       <div className="lock-note">上传或确认四视图，直接贴脚本生成首帧。首帧确认后，下一步会把同一段脚本、首帧和四视图一起提交视频模型。</div>
-      <div className="two-col">
+      <div className="setup-main-flow">
         <div className="stack">
           <div className="scenario-card setup-product-card" data-testid="upload-screen">
             <label className="shadcn-field setup-product-select">
@@ -3190,10 +3721,25 @@ function SetupStep(props: {
                         </div>
                       )}
                       <em>{slot.badge}</em>
+                      {props.editingProductViews && (
+                        <span className="asset-replace-hint">
+                          <Upload size={14} />
+                          上传文件
+                        </span>
+                      )}
                     </div>
                   </label>
                   <strong>{slot.label}</strong>
                   <small>{slot.fileName || slot.hint}</small>
+                  {props.editingProductViews && (
+                    <div className="asset-edit-actions">
+                      <span>点击图片可替换</span>
+                      <Button variant="outline" size="sm" type="button" onClick={() => props.onClearFile(slot.id)}>
+                        <X size={14} />
+                        清除
+                      </Button>
+                    </div>
+                  )}
                 </article>
               ))}
             </div>
@@ -3260,24 +3806,36 @@ function SetupStep(props: {
             </div>
           )}
         </div>
-        <div className="parameter-panel setup-status-panel">
-          <h3>状态</h3>
-          <div className="api-fixed-note">
-            <strong>模型</strong>
-            <span>{props.apiSettings.imageModel}</span>
-          </div>
-          {props.error && <div className={cn("field-error", getStatusMessageTone(props.error))}>{props.error}</div>}
-          {!props.canGenerate && <div className="field-hint">请先确认四张核心视图已加载。</div>}
-          {props.canGenerate && !hasFirstFrame && <div className="field-hint">中间粘贴脚本后生成首帧。</div>}
-          <ProgressPanel events={props.progressEvents} emptyText="生成首帧或确认执行包时会显示真实步骤。" />
-        </div>
       </div>
     </section>
   );
 }
 
+function SetupStatusPanel(props: {
+  apiSettings: ApiSettings;
+  error: string;
+  canGenerate: boolean;
+  hasFirstFrame: boolean;
+  progressEvents: ProgressEvent[];
+}) {
+  return (
+    <div className="parameter-panel setup-status-panel">
+      <h3>状态</h3>
+      <div className="api-fixed-note">
+        <strong>模型</strong>
+        <span>{props.apiSettings.imageModel}</span>
+      </div>
+      {props.error && <div className={cn("field-error", getStatusMessageTone(props.error))}>{props.error}</div>}
+      {!props.canGenerate && <div className="field-hint">请先确认四张核心视图已加载。</div>}
+      {props.canGenerate && !props.hasFirstFrame && <div className="field-hint">中间粘贴脚本后生成首帧。</div>}
+      <ProgressPanel events={props.progressEvents} emptyText="生成首帧或确认执行包时会显示真实步骤。" />
+    </div>
+  );
+}
+
 function VideoStep(props: {
   aspectRatio: string;
+  duration: number;
   firstFrameUrl: string;
   status: VideoStatus;
   statusText: string;
@@ -3287,6 +3845,7 @@ function VideoStep(props: {
   historyItemId: string;
   onPatchHistoryItem: (id: string, patch: Partial<HistoryItem>) => void;
   onSaveRenderedVideoHistory: (filePath: string, fileName: string) => void;
+  onFinalVideoReady: (filePath: string) => void;
 }) {
   const isWorking = props.status === "submitted" || props.status === "polling";
   return (
@@ -3320,10 +3879,12 @@ function VideoStep(props: {
         </div>
         <PostProductionPanel
           sourceScript={props.sourceScript}
+          duration={props.duration}
           videoUrl={props.videoUrl}
           historyItemId={props.historyItemId}
           onPatchHistoryItem={props.onPatchHistoryItem}
           onSaveRenderedVideoHistory={props.onSaveRenderedVideoHistory}
+          onFinalVideoReady={props.onFinalVideoReady}
         />
       </div>
     </section>
@@ -3417,22 +3978,23 @@ function VideoParameterPanel(props: {
 
 function PostProductionPanel(props: {
   sourceScript: string;
+  duration: number;
   videoUrl: string;
   historyItemId: string;
   onPatchHistoryItem: (id: string, patch: Partial<HistoryItem>) => void;
   onSaveRenderedVideoHistory: (filePath: string, fileName: string) => void;
+  onFinalVideoReady: (filePath: string) => void;
 }) {
   const [generatedSegments, setGeneratedSegments] = useState<TimedScriptSegment[]>([]);
   const [editableSegments, setEditableSegments] = useState<TimedScriptSegment[]>([]);
-  const [voiceoverAudioUrl, setVoiceoverAudioUrl] = useState("");
-  const [voiceoverAudioBase64, setVoiceoverAudioBase64] = useState("");
-  const [voiceoverAudioContentType, setVoiceoverAudioContentType] = useState("audio/mpeg");
+  const [voiceoverClips, setVoiceoverClips] = useState<VoiceoverClip[]>([]);
   const [voiceGender, setVoiceGender] = useState<"female" | "male">("female");
   const [subtitlesEnabled, setSubtitlesEnabled] = useState(true);
   const [voiceoverEnabled, setVoiceoverEnabled] = useState(true);
   const [assetStatus, setAssetStatus] = useState("");
   const [downloadStatus, setDownloadStatus] = useState<DownloadStatus | null>(null);
   const [revealStatus, setRevealStatus] = useState<RevealStatus | null>(null);
+  const [isFinalized, setIsFinalized] = useState(false);
   const [isGeneratingAssets, setIsGeneratingAssets] = useState(false);
   const [isDownloadingVideo, setIsDownloadingVideo] = useState(false);
   const [isPreviewPlaying, setIsPreviewPlaying] = useState(false);
@@ -3440,9 +4002,12 @@ function PostProductionPanel(props: {
   const [previewDuration, setPreviewDuration] = useState(0);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const voiceoverAudioRef = useRef<HTMLAudioElement | null>(null);
+  const activeVoiceoverClipRef = useRef<VoiceoverClip | null>(null);
   const parsedSourceSegments = useMemo(() => parseTimedScriptSegments(props.sourceScript), [props.sourceScript]);
-  const sourceSegments = useMemo(() => createEditablePostSegmentsFromScript(props.sourceScript, 0), [props.sourceScript]);
-  const voiceoverText = useMemo(() => editableSegments.map((segment) => segment.voiceover.trim()).filter(Boolean).join("\n"), [editableSegments]);
+  const durationLimit = useMemo(() => getPostProductionDurationLimit(props.duration), [props.duration]);
+  const sourceSegments = useMemo(() => createEditablePostSegmentsFromScript(props.sourceScript, durationLimit), [props.sourceScript, durationLimit]);
+  const timelineEditableSegments = useMemo(() => normalizePostSegmentsForDuration(editableSegments, durationLimit), [editableSegments, durationLimit]);
+  const voiceoverText = useMemo(() => timelineEditableSegments.map((segment) => segment.voiceover.trim()).filter(Boolean).join("\n"), [timelineEditableSegments]);
   const activeSubtitle = useMemo(
     () => (subtitlesEnabled ? generatedSegments.find((segment) => previewTime >= segment.start && previewTime < segment.end)?.subtitle || "" : ""),
     [generatedSegments, previewTime, subtitlesEnabled],
@@ -3454,25 +4019,25 @@ function PostProductionPanel(props: {
   ];
 
   useEffect(() => {
+    if (isFinalized) return;
     setEditableSegments(sourceSegments);
     setGeneratedSegments([]);
     setPreviewTime(0);
-    setPreviewDuration(0);
+    setPreviewDuration(props.duration || 0);
     setIsPreviewPlaying(false);
     setAssetStatus("");
     setDownloadStatus(null);
     setRevealStatus(null);
-    setVoiceoverAudioBase64("");
-    setVoiceoverAudioContentType("audio/mpeg");
-    setVoiceoverAudioUrl((current) => {
-      if (current) window.URL.revokeObjectURL(current);
-      return "";
+    setVoiceoverClips((current) => {
+      current.forEach((clip) => window.URL.revokeObjectURL(clip.audioUrl));
+      return [];
     });
-  }, [sourceSegments, props.videoUrl]);
+    activeVoiceoverClipRef.current = null;
+  }, [sourceSegments, props.videoUrl, props.duration, isFinalized]);
 
   useEffect(() => () => {
-    if (voiceoverAudioUrl) window.URL.revokeObjectURL(voiceoverAudioUrl);
-  }, [voiceoverAudioUrl]);
+    voiceoverClips.forEach((clip) => window.URL.revokeObjectURL(clip.audioUrl));
+  }, [voiceoverClips]);
 
   function updateEditableSegment(index: number, field: "subtitle" | "voiceover", value: string) {
     setEditableSegments((current) =>
@@ -3486,8 +4051,8 @@ function PostProductionPanel(props: {
       const duration = getSegmentDuration(next[index]);
       const start = clampWholeSeconds(next[index - 1].end);
       next[index].start = start;
-      next[index].end = Math.min(VIDEO_DURATION_INPUT_MAX, start + duration);
-      if (next[index].end <= next[index].start) next[index].end = Math.min(VIDEO_DURATION_INPUT_MAX, next[index].start + DEFAULT_SUBTITLE_BLOCK_SECONDS);
+      next[index].end = Math.min(durationLimit, start + duration);
+      if (next[index].end <= next[index].start) next[index].end = Math.min(durationLimit, next[index].start + DEFAULT_SUBTITLE_BLOCK_SECONDS);
     }
     return next.filter((segment) => segment.end > segment.start);
   }
@@ -3498,7 +4063,7 @@ function PostProductionPanel(props: {
       const firstStart = clampWholeSeconds(current[0].start);
       const firstDuration = getSegmentDuration(current[0]);
       const normalized = current.map((segment, index) => {
-        if (index === 0) return { ...segment, start: firstStart, end: Math.min(VIDEO_DURATION_INPUT_MAX, firstStart + firstDuration) };
+        if (index === 0) return { ...segment, start: firstStart, end: Math.min(durationLimit, firstStart + firstDuration) };
         return { ...segment };
       });
       return cascadeEditableSegments(normalized, 0);
@@ -3514,10 +4079,10 @@ function PostProductionPanel(props: {
       const numeric = clampWholeSeconds(value, segment[field]);
       if (field === "start") {
         segment.start = numeric;
-        if (segment.end <= segment.start) segment.end = Math.min(VIDEO_DURATION_INPUT_MAX, segment.start + DEFAULT_SUBTITLE_BLOCK_SECONDS);
+        if (segment.end <= segment.start) segment.end = Math.min(durationLimit, segment.start + DEFAULT_SUBTITLE_BLOCK_SECONDS);
       } else {
-        segment.end = numeric;
-        if (segment.end <= segment.start) segment.end = Math.min(VIDEO_DURATION_INPUT_MAX, segment.start + DEFAULT_SUBTITLE_BLOCK_SECONDS);
+        segment.end = Math.min(durationLimit, numeric);
+        if (segment.end <= segment.start) segment.end = Math.min(durationLimit, segment.start + DEFAULT_SUBTITLE_BLOCK_SECONDS);
       }
       return cascadeEditableSegments(next, index);
     });
@@ -3528,7 +4093,8 @@ function PostProductionPanel(props: {
     setEditableSegments((current) => {
       const last = current[current.length - 1];
       const nextStart = last ? clampWholeSeconds(last.end) : 0;
-      const nextEnd = Math.min(VIDEO_DURATION_INPUT_MAX, nextStart + DEFAULT_SUBTITLE_BLOCK_SECONDS);
+      const nextEnd = Math.min(durationLimit, nextStart + DEFAULT_SUBTITLE_BLOCK_SECONDS);
+      if (nextEnd <= nextStart) return current;
       const nextSegment = createEmptyPostSegment(nextStart, Math.max(1, nextEnd - nextStart));
       return [...current, nextSegment];
     });
@@ -3554,9 +4120,23 @@ function PostProductionPanel(props: {
 
   async function syncVoiceoverWithVideo(video: HTMLVideoElement) {
     const audio = voiceoverAudioRef.current;
-    if (!voiceoverEnabled || !audio || !voiceoverAudioUrl) return;
-    if (Math.abs(audio.currentTime - video.currentTime) > 0.25) {
-      audio.currentTime = Math.min(Math.max(video.currentTime, 0), Number.isFinite(audio.duration) ? audio.duration : video.currentTime);
+    if (!voiceoverEnabled || !audio || !voiceoverClips.length) return;
+    const activeClip = voiceoverClips.find((clip) => video.currentTime >= clip.start && video.currentTime < clip.end) || null;
+    if (!activeClip) {
+      activeVoiceoverClipRef.current = null;
+      audio.pause();
+      audio.removeAttribute("src");
+      audio.load();
+      return;
+    }
+    if (activeVoiceoverClipRef.current !== activeClip) {
+      activeVoiceoverClipRef.current = activeClip;
+      audio.src = activeClip.audioUrl;
+      audio.load();
+    }
+    const localTime = Math.max(0, video.currentTime - activeClip.start);
+    if (Math.abs(audio.currentTime - localTime) > 0.25) {
+      audio.currentTime = Math.min(localTime, Number.isFinite(audio.duration) ? audio.duration : localTime);
     }
     if (video.paused || video.ended) {
       audio.pause();
@@ -3587,11 +4167,12 @@ function PostProductionPanel(props: {
   }
 
   async function generatePostAssets() {
+    const timelineSegments = timelineEditableSegments;
     if (!props.videoUrl) {
       setAssetStatus("请先生成或从历史记录载入视频。");
       return;
     }
-    if (!editableSegments.length) {
+    if (!timelineSegments.length) {
       setAssetStatus("请先添加至少一条字幕或旁白时间段。");
       return;
     }
@@ -3605,36 +4186,70 @@ function PostProductionPanel(props: {
       return;
     }
     setIsGeneratingAssets(true);
-    setAssetStatus(voiceoverEnabled ? "正在生成字幕和旁白..." : "正在生成字幕...");
+    setIsFinalized(false);
+    setDownloadStatus(null);
+    setRevealStatus(null);
+    setAssetStatus(voiceoverEnabled ? "正在生成字幕和旁白，并合成最终视频..." : "正在生成字幕，并合成最终视频...");
     try {
+      let nextClips: VoiceoverClip[] = [];
       if (voiceoverEnabled) {
-        const response = await fetch("/api/voiceover", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text, voiceGender }),
+        for (const [segmentIndex, segment] of timelineSegments.entries()) {
+          const segmentText = segment.voiceover.trim();
+          if (!segmentText) continue;
+          const response = await fetch("/api/voiceover", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text: segmentText, voiceGender, start: segment.start, end: segment.end, segmentIndex }),
+          });
+          const data: unknown = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(extractErrorMessage(data, response.status));
+          const record = data && typeof data === "object" ? (data as Record<string, unknown>) : {};
+          const audioBase64 = typeof record.audioBase64 === "string" ? record.audioBase64 : "";
+          if (!audioBase64) throw new Error("旁白服务没有返回可播放的音频。");
+          const audioContentType = typeof record.audioContentType === "string" ? record.audioContentType : "audio/mpeg";
+          nextClips.push({
+            segmentIndex,
+            start: segment.start,
+            end: segment.end,
+            audioBase64,
+            audioContentType,
+            audioUrl: createAudioObjectUrlFromBase64(audioBase64, audioContentType),
+          });
+        }
+        setVoiceoverClips((current) => {
+          current.forEach((clip) => window.URL.revokeObjectURL(clip.audioUrl));
+          return nextClips;
         });
-        const data: unknown = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(extractErrorMessage(data, response.status));
-        const record = data && typeof data === "object" ? (data as Record<string, unknown>) : {};
-        const audioBase64 = typeof record.audioBase64 === "string" ? record.audioBase64 : "";
-        if (!audioBase64) throw new Error("旁白服务没有返回可播放的音频。");
-        const contentType = typeof record.audioContentType === "string" ? record.audioContentType : "audio/mpeg";
-        if (voiceoverAudioUrl) window.URL.revokeObjectURL(voiceoverAudioUrl);
-        setVoiceoverAudioBase64(audioBase64);
-        setVoiceoverAudioContentType(contentType);
-        setVoiceoverAudioUrl(createAudioObjectUrlFromBase64(audioBase64, contentType));
+        activeVoiceoverClipRef.current = null;
       } else {
-        if (voiceoverAudioUrl) window.URL.revokeObjectURL(voiceoverAudioUrl);
-        setVoiceoverAudioUrl("");
-        setVoiceoverAudioBase64("");
+        setVoiceoverClips((current) => {
+          current.forEach((clip) => window.URL.revokeObjectURL(clip.audioUrl));
+          return [];
+        });
+        activeVoiceoverClipRef.current = null;
       }
-      setGeneratedSegments(editableSegments);
+      setGeneratedSegments(timelineSegments);
       setPreviewTime(0);
-      setAssetStatus(voiceoverEnabled ? "字幕和旁白已生成，播放视频可预览对齐效果。" : "字幕已生成，播放视频可预览对齐效果。");
+      const { filePath, fileName } = await renderPostVideoToDownloads(
+        props.videoUrl,
+        timelineSegments,
+        nextClips,
+        subtitlesEnabled,
+        voiceoverEnabled,
+      );
+      props.onPatchHistoryItem(props.historyItemId, { renderedVideoPath: filePath, renderedVideoFileName: fileName });
+      props.onSaveRenderedVideoHistory(filePath, fileName);
+      props.onFinalVideoReady(filePath);
+      setDownloadStatus(createDownloadStatus(filePath, fileName));
+      setIsFinalized(true);
+      setAssetStatus("已完成：字幕和旁白已经合成到最终视频。");
     } catch (error) {
       setGeneratedSegments([]);
-      setVoiceoverAudioUrl("");
-      setVoiceoverAudioBase64("");
+      setVoiceoverClips((current) => {
+        current.forEach((clip) => window.URL.revokeObjectURL(clip.audioUrl));
+        return [];
+      });
+      activeVoiceoverClipRef.current = null;
       setAssetStatus(error instanceof Error ? error.message : "字幕和旁白生成失败。");
     } finally {
       setIsGeneratingAssets(false);
@@ -3646,7 +4261,7 @@ function PostProductionPanel(props: {
       setAssetStatus("请先生成或从历史记录载入视频。");
       return;
     }
-    if (!generatedSegments.length || (voiceoverEnabled && !voiceoverAudioBase64)) {
+    if (!generatedSegments.length || (voiceoverEnabled && !voiceoverClips.length)) {
       setAssetStatus("请先点击一键生成字幕和旁白，再保存完整 MP4。");
       return;
     }
@@ -3657,8 +4272,7 @@ function PostProductionPanel(props: {
       const { filePath, fileName } = await renderPostVideoToDownloads(
         props.videoUrl,
         generatedSegments,
-        voiceoverAudioBase64,
-        voiceoverAudioContentType,
+        voiceoverClips,
         subtitlesEnabled,
         voiceoverEnabled,
       );
@@ -3672,6 +4286,11 @@ function PostProductionPanel(props: {
     } finally {
       setIsDownloadingVideo(false);
     }
+  }
+
+  function reopenPostEditor() {
+    setIsFinalized(false);
+    setAssetStatus("已回到编辑状态，修改后可再次一键生成最终视频。");
   }
 
   async function revealDownloadedVideo() {
@@ -3733,7 +4352,7 @@ function PostProductionPanel(props: {
                     data-testid={`caption-start-${index}`}
                     type="number"
                     min={VIDEO_DURATION_INPUT_MIN}
-                    max={VIDEO_DURATION_INPUT_MAX}
+                    max={durationLimit}
                     step="1"
                     value={segment.start}
                     onChange={(event) => updateEditableSegmentTime(index, "start", Number(event.target.value))}
@@ -3745,7 +4364,7 @@ function PostProductionPanel(props: {
                     data-testid={`caption-end-${index}`}
                     type="number"
                     min={VIDEO_DURATION_INPUT_MIN}
-                    max={VIDEO_DURATION_INPUT_MAX}
+                    max={durationLimit}
                     step="1"
                     value={segment.end}
                     onChange={(event) => updateEditableSegmentTime(index, "end", Number(event.target.value))}
@@ -3782,6 +4401,11 @@ function PostProductionPanel(props: {
           {isGeneratingAssets ? <LoaderCircle className="spin" size={16} /> : <Volume2 size={16} />}
           {isGeneratingAssets ? "生成中" : "一键生成字幕和旁白"}
         </Button>
+        {isFinalized && (
+          <Button variant="outline" className="secondary-action compact-action" type="button" onClick={reopenPostEditor} data-testid="reopen-post-editor">
+            重新编辑
+          </Button>
+        )}
       </div>
       {assetStatus && <small className="post-production-status">{assetStatus}</small>}
       {downloadStatus?.filePath && (
@@ -3848,13 +4472,13 @@ function PostProductionPanel(props: {
         ) : (
           <div className="post-asset-empty">生成视频后，这里会显示字幕和旁白预览。</div>
         )}
-        {voiceoverEnabled && voiceoverAudioUrl && (
+        {voiceoverEnabled && voiceoverClips.length > 0 && (
           <div className="voiceover-preview">
-            <span>旁白音轨</span>
-            <audio ref={voiceoverAudioRef} controls controlsList="nodownload" src={voiceoverAudioUrl} />
+            <span>旁白按时间段播放</span>
+            <audio ref={voiceoverAudioRef} controls controlsList="nodownload" />
           </div>
         )}
-        {props.videoUrl && (
+        {props.videoUrl && !isFinalized && (
           <Button variant="outline" className="secondary-action compact-action download-video-action" type="button" disabled={isDownloadingVideo} onClick={downloadPreviewVideo} data-testid="download-final-mp4">
             {isDownloadingVideo ? <LoaderCircle className="spin" size={15} /> : <Download size={15} />}
             {isDownloadingVideo ? "保存中" : "保存下载"}
@@ -4077,11 +4701,6 @@ function HistoryDetail(props: { item: HistoryItem; onOpenItem: () => void }) {
         <Button className="primary-action compact-action" type="button" onClick={props.onOpenItem}>
           载入到字幕/旁白流程
         </Button>
-        {assetUrl && (
-          <a className="secondary-action compact-action" href={assetUrl} target="_blank" rel="noreferrer">
-            单独打开资产
-          </a>
-        )}
         {(assetUrl || props.item.renderedVideoPath) && isVideoAsset && (
           <Button variant="outline" className="secondary-action compact-action" type="button" disabled={isSavingVideo} onClick={saveHistoryVideo}>
             {isSavingVideo ? "保存中" : "保存下载"}

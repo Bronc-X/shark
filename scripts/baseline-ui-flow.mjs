@@ -194,7 +194,8 @@ async function main() {
       const body = parseRequest(route);
       apiCalls.push({ route: "voiceover", body });
       await expect(body.text && body.voiceGender === "male", "voiceover request must carry edited text and selected gender");
-      await fulfillJson(route, { audioBase64, audioContentType: "audio/mpeg", fileName: "baseline-voiceover.mp3" });
+      await expect(Number.isFinite(body.start) && Number.isFinite(body.end), "voiceover request must carry the segment timeline");
+      await fulfillJson(route, { audioBase64, audioContentType: "audio/mpeg", fileName: `baseline-voiceover-${body.segmentIndex}.mp3` });
     });
 
     await page.route("**/api/render-post-video", async (route) => {
@@ -205,6 +206,8 @@ async function main() {
       await expect(body.segments[1]?.start === 4 && body.segments[1]?.end === 7, "render request must cascade the next segment after edited time");
       await expect(body.includeSubtitles === true, "render request must preserve subtitle toggle");
       await expect(body.includeVoiceover === true, "render request must preserve voiceover toggle");
+      await expect(Array.isArray(body.voiceoverClips) && body.voiceoverClips.length > 0, "render request must include per-segment voiceover clips");
+      await expect(body.voiceoverClips[0]?.start === body.segments[0]?.start, "first voiceover clip must align to the first segment start");
       await fulfillJson(route, { ok: true, filePath: "C:\\Users\\Administrator\\Downloads\\baseline-output.mp4", fileName: "baseline-output.mp4" });
     });
 
@@ -316,6 +319,11 @@ Would You Wear This?`;
     await expect(generatingFit.objectFit === "cover", "approved first frame must fill the generating video container");
     await expect(generatingFit.widthDiff <= 1 && generatingFit.heightDiff <= 1, "approved first frame image element should match the generating container size");
     await page.waitForFunction(() => document.querySelector("video")?.getAttribute("src")?.includes("baseline-output.mp4"), undefined, { timeout: 20_000 });
+    const rawVideoProgress = await page.evaluate(() => {
+      const current = Array.from(document.querySelectorAll(".project-progress-item")).find((item) => item.classList.contains("current"));
+      return current?.textContent?.trim() || "";
+    });
+    await expect(rawVideoProgress === "生成视频", "returned raw video should move progress to generated video");
 
     await expectVisible(page, "post-production-panel", "subtitle and voiceover editor must appear on the video screen");
     await expect(await page.getByTestId("subtitle-toggle").isChecked(), "subtitle toggle should default on");
@@ -337,23 +345,28 @@ Would You Wear This?`;
     await expect((await page.locator(".caption-voice-row").count()) === segmentCountBeforeAdd, "subtitle editor should allow removing a segment");
     await page.getByTestId("voice-male").click();
     await (await expectEnabled(page, "generate-post-assets", "post-production assets button must be enabled for timed script and returned video")).click();
-    await page.waitForFunction(() => document.body.textContent?.includes("已生成") || document.querySelector("audio"), undefined, { timeout: 20_000 });
-    await expect(await page.getByTestId("download-final-mp4").isVisible(), "rendered MP4 download control must remain visible after post assets are generated");
-    await expect((await page.getByTestId("download-final-mp4").textContent())?.includes("保存下载"), "download control should be labeled as save download");
-    const downloadPromise = page.waitForEvent("download", { timeout: 20_000 });
-    await page.getByTestId("download-final-mp4").click();
-    const download = await downloadPromise;
-    await expect(download.suggestedFilename().endsWith(".mp4"), "browser download should produce an MP4 filename");
-    await expect(download.url().includes("/api/local-video"), "browser download should read the saved MP4 through the local video route");
-    await expectVisible(page, "download-location", "download should show the saved local file path");
+    await expectVisible(page, "download-location", "one-click post-production should render and save the final MP4");
+    await expectVisible(page, "reopen-post-editor", "completed post-production should expose a re-edit control");
     await expect((await page.getByTestId("download-location").textContent())?.includes("C:\\Users\\Administrator\\Downloads\\baseline-output.mp4"), "download location must include the exact local saved path");
+    await expect((await page.locator("video").first().getAttribute("src"))?.includes("/api/local-video"), "completed post-production should keep the final local MP4 in the preview");
     await page.getByTestId("reveal-final-mp4").click();
     await page.waitForFunction(() => document.body.textContent?.includes("已打开本机文件所在位置"), undefined, { timeout: 10_000 });
     await page.reload({ waitUntil: "networkidle" });
     await expectVisible(page, "video-screen", "refresh should keep the user on the video/post-production screen");
-    await expect((await page.getByTestId("step-video").getAttribute("class"))?.includes("active"), "video step should remain active after refresh");
+    await expectVisible(page, "project-progress-rail", "left rail should show the project progress timeline");
+    const progressState = await page.evaluate(() =>
+      Array.from(document.querySelectorAll(".project-progress-item")).map((item) => ({
+        label: item.textContent?.trim(),
+        current: item.classList.contains("current"),
+        color: getComputedStyle(item).color,
+      })),
+    );
+    await expect(progressState.map((item) => item.label).join("|") === "开始任务|生成首帧|生成视频|完成", "project progress should use the four product states");
+    await expect(progressState.filter((item) => item.current).length === 1, "project progress should highlight exactly one current state");
+    await expect(progressState.find((item) => item.current)?.label === "完成", "saved subtitle/voiceover MP4 should move progress to done");
+    await expect(progressState.find((item) => item.current)?.color === "rgb(4, 120, 87)", "current progress state should be green");
     await expectVisible(page, "post-production-panel", "post-production editor should remain visible after refresh");
-    await expect((await page.locator("video").first().getAttribute("src"))?.includes("baseline-output.mp4"), "refreshed video screen should keep the generated video URL");
+    await expect((await page.locator("video").first().getAttribute("src"))?.includes("/api/local-video"), "refreshed video screen should keep the final local rendered MP4");
 
     const orderedRoutes = apiCalls.map((call) => call.route);
     const firstFrameIndex = orderedRoutes.indexOf("first-frame");
@@ -365,6 +378,7 @@ Would You Wear This?`;
     await expect(safetyIndex > packageIndex, "video safety must happen after package compilation");
     await expect(videoIndex > safetyIndex, "video submit must happen after safety preflight");
     await expect(orderedRoutes.includes("voiceover"), "voiceover API must be reachable from the editor");
+    await expect(orderedRoutes.filter((route) => route === "voiceover").length >= 2, "voiceover API should generate audio per timed segment");
     await expect(orderedRoutes.includes("render-post-video"), "download control should render the full subtitle/voiceover MP4");
     await expect(orderedRoutes.includes("reveal-local-video"), "download card should reveal the saved local MP4 in Explorer");
 
