@@ -1,6 +1,6 @@
 import http from "node:http";
 import { createHmac } from "node:crypto";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import ffmpegPath from "ffmpeg-static";
@@ -30,6 +30,15 @@ function loadLocalEnv() {
 }
 
 loadLocalEnv();
+
+function resolveWorkingBinary(candidates) {
+  for (const candidate of candidates) {
+    if (!candidate || !existsSync(candidate)) continue;
+    const result = spawnSync(candidate, ["-version"], { encoding: "utf8", windowsHide: true, timeout: 5000 });
+    if (!result.error && result.status === 0) return candidate;
+  }
+  return "";
+}
 
 const PORT = Number(process.env.PORT || 6000);
 const TOAPIS_BASE_URL = (process.env.TOAPIS_BASE_URL || "https://toapis.com/v1").replace(/\/+$/, "");
@@ -78,8 +87,14 @@ const LOCAL_HISTORY_FILE = process.env.VIDEO_PLATFORM_HISTORY_FILE || `${process
 const LOCAL_HISTORY_LIMIT = 30;
 const LOCAL_POST_RENDER_DIR = process.env.VIDEO_PLATFORM_RENDER_DIR || `${process.cwd()}\\.codex-run\\post-render`;
 const LOCAL_HISTORY_ASSET_DIR = process.env.VIDEO_PLATFORM_HISTORY_ASSET_DIR || `${process.cwd()}\\.codex-run\\history-assets`;
-const FFMPEG_BINARY = process.env.FFMPEG_PATH || ffmpegPath || "";
-const FFPROBE_BINARY = process.env.FFPROBE_PATH || ffprobeStatic?.path || "";
+const FFMPEG_BINARY = resolveWorkingBinary([
+  process.env.FFMPEG_PATH,
+  ffmpegPath,
+  `${process.env.APPDATA || ""}\\Python\\Python310\\site-packages\\imageio_ffmpeg\\binaries\\ffmpeg-win-x86_64-v7.1.exe`,
+  `${process.env.USERPROFILE || ""}\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\python\\Lib\\site-packages\\imageio_ffmpeg\\binaries\\ffmpeg-win-x86_64-v7.1.exe`,
+  `${process.env.LOCALAPPDATA || ""}\\ms-playwright\\ffmpeg-1011\\ffmpeg-win64.exe`,
+]);
+const FFPROBE_BINARY = resolveWorkingBinary([process.env.FFPROBE_PATH, ffprobeStatic?.path]);
 const OPENAI_VIDEO_GENERATIONS_PATH = "/video/generations";
 const TOAPIS_VIDEO_GENERATIONS_PATH = "/videos/generations";
 const TOAPIS_IMAGE_UPLOAD_PATH = "/uploads/images";
@@ -443,6 +458,57 @@ function createApiResponse(status, payload) {
   return { status, payload };
 }
 
+const HISTORY_ASSET_REF_PREFIX = "videoai-history-asset:";
+const HISTORY_ASSET_FIELDS = ["detailUrl", "firstFrameUrl", "videoUrl"];
+
+function isHistoryAssetRef(value) {
+  return typeof value === "string" && value.startsWith(HISTORY_ASSET_REF_PREFIX);
+}
+
+function getHistoryImageExtension(mimeType) {
+  const normalized = typeof mimeType === "string" ? mimeType.toLowerCase() : "";
+  if (normalized.includes("jpeg") || normalized.includes("jpg")) return "jpg";
+  if (normalized.includes("webp")) return "webp";
+  if (normalized.includes("gif")) return "gif";
+  return "png";
+}
+
+function persistHistoryDataImage(itemId, field, value) {
+  if (typeof value !== "string" || !value.startsWith("data:image/")) return value;
+  const match = value.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
+  if (!match) return "";
+  const [, mimeType, base64] = match;
+  const bytes = Buffer.from(base64, "base64");
+  if (!bytes.length) return "";
+  const extension = getHistoryImageExtension(mimeType);
+  const cleanId = String(itemId || `asset-${Date.now()}`).replace(/[^a-zA-Z0-9_-]/g, "_");
+  const cleanField = String(field || "asset").replace(/[^a-zA-Z0-9_-]/g, "_");
+  const fileName = `videoai-history-asset_${cleanId}_${cleanField}.${extension}`;
+  mkdirSync(LOCAL_HISTORY_ASSET_DIR, { recursive: true });
+  writeFileSync(resolve(LOCAL_HISTORY_ASSET_DIR, fileName), bytes);
+  return `/api/history-asset/${fileName}`;
+}
+
+function sanitizeLocalHistoryItem(item) {
+  if (!item || typeof item !== "object" || Array.isArray(item)) return item;
+  if (String(item.id || "").startsWith("CODEx-HISTORY")) return null;
+  const next = { ...item };
+  for (const field of HISTORY_ASSET_FIELDS) {
+    if (isHistoryAssetRef(next[field])) {
+      next[field] = undefined;
+    } else if (typeof next[field] === "string" && next[field].startsWith("data:image/")) {
+      next[field] = persistHistoryDataImage(next.id, field, next[field]);
+    }
+  }
+  if (Array.isArray(next.productViewUrls)) {
+    next.productViewUrls = next.productViewUrls.filter((url) => typeof url === "string" && !url.startsWith("data:") && !isHistoryAssetRef(url));
+  }
+  if (Array.isArray(next.supportImageUrls)) {
+    next.supportImageUrls = next.supportImageUrls.filter((url) => typeof url === "string" && !url.startsWith("data:") && !isHistoryAssetRef(url));
+  }
+  return next;
+}
+
 function readLocalHistoryItems() {
   try {
     if (!existsSync(LOCAL_HISTORY_FILE)) return [];
@@ -454,7 +520,7 @@ function readLocalHistoryItems() {
 }
 
 function writeLocalHistoryItems(items) {
-  const safeItems = Array.isArray(items) ? items.slice(0, LOCAL_HISTORY_LIMIT) : [];
+  const safeItems = Array.isArray(items) ? items.slice(0, LOCAL_HISTORY_LIMIT).map(sanitizeLocalHistoryItem).filter(Boolean) : [];
   const directory = LOCAL_HISTORY_FILE.replace(/[\\/][^\\/]+$/, "");
   if (directory) mkdirSync(directory, { recursive: true });
   writeFileSync(LOCAL_HISTORY_FILE, JSON.stringify(safeItems, null, 2), "utf8");
@@ -958,16 +1024,24 @@ function formatProductLockContract(contract, maxLocks = 12) {
 
 function buildInflatableHardwareMaterialLocks(productType) {
   const family = getProductFamily(productType);
+  const backViewAuthority = [
+    "BACK_VIEW AUTHORITY HARD LOCK: image_urls[3] is the sole authority for every rear-facing surface. Any frame that reveals the back must copy BACK_VIEW topology, not side-view or front-view details.",
+    "When the subject turns, rear-owned components must keep the exact BACK_VIEW position, size, direction, scale, color, spacing, and seam relationship. Never move side/front details onto the back, and never move rear details onto the front or side just to keep them visible.",
+  ];
   const hardwareMaps = {
     cow: [
       "COW AIR-HARDWARE MAP: the orange circular blower valve / air inlet / air outlet / pump port belongs on the rear-right/back-side surface at the reference height, with orange ring, circular grille or cap, and local seam relationship preserved. It may appear only from rear or physically valid side-edge angles; never place it on the front lower-belly pad, white belly, snout, face, or black patch as decoration.",
       "COW REAR DETAIL MAP: rear centerline zipper teeth, vertical seam, centered white tail with black tip, and rear-right orange valve must stay separated and correctly ordered on the back surface.",
     ],
     shark: [
+      "SHARK BACK_VIEW AUTHORITY: on rear-facing frames, the back must stay a plain muted cyan-blue rear surface with the central vertical back seam, top seam/stripe, centered rear tail fin, both side arm fins at the edges, black shoe soles at the bottom, and only the side-edge orange valve if physically visible. The rear tail fin position, root, size, direction, and outline must match BACK_VIEW exactly.",
+      "SHARK BACK_VIEW NEGATIVE: never place the side black eye, the five black gill stripes, the front white belly panel, the transparent face window, or the front zipper on the back. Do not relocate the orange side valve onto the rear tail fin or center back.",
       "SHARK AIR-HARDWARE MAP: the orange circular blower valve / air inlet / air outlet / pump port belongs on the valve-side waist side panel at the same height and direction as the side view, with orange ring and circular mesh/grille or cap preserved. In a front camera it may show only as a thin side-edge detail if physically visible; never move it onto the white belly panel, transparent face window, front zipper, rear tail fin, or gill stripes.",
       "SHARK MATERIAL MAP: preserve muted cyan-blue crinkled nylon/PVC fabric, visible seam tension, white belly stitching edge, zipper teeth, soft slack around fin roots and foot covers, and the slightly underinflated flatter body. Do not smooth the body into glossy plastic, bright blue toy rubber, or a clean CGI shell.",
     ],
     mouse: [
+      "MOUSE BACK_VIEW AUTHORITY: on rear-facing frames, the green circular blower valve, center back zipper/seam, cream/yellow tail root, plain gray rear field, separated legs, and foot covers must match BACK_VIEW exactly. The valve position, size, direction, green color, ring, grille/cap detail, and distance from the tail root must not change.",
+      "MOUSE BACK_VIEW NEGATIVE: never move the green valve above the tail, onto the tail root, onto the cream belly, onto the face/snout/ears/arms, or onto a side decoration. The tail and valve are separate physical parts and must remain separated and correctly ordered.",
       "MOUSE AIR-HARDWARE MAP: the green circular blower valve / air inlet / air outlet / pump port belongs on the rear/back-side surface from the back view, with green ring and circular grille or cap preserved. It must not be moved to the cream front belly, face, snout, ears, arms, or tail.",
       "MOUSE REAR DETAIL MAP: back centerline zipper teeth, vertical rear seam, green valve, and cream/yellow tail root must remain rear-owned details and should only appear from rear or physically valid side-edge angles.",
     ],
@@ -986,6 +1060,7 @@ function buildInflatableHardwareMaterialLocks(productType) {
 
   return [
     "MATERIAL AND AIR-HARDWARE HARD LOCK:",
+    ...backViewAuthority,
     "Treat valves, blower valves, fan ports, air inlets, air outlets, pump ports, inflation/deflation ports, rings, caps, and grilles as physical product hardware, not optional decoration. Preserve their exact count, color, circular shape, diameter, ring thickness, grille/mesh/cap detail, height, side/back ownership, and relationship to seams/zipper/tail/belt/patches from the four-view references and preset support evidence.",
     "Never invent extra valves, ports, pumps, tubes, buttons, caps, logos, handles, stickers, or hardware. Never duplicate, recolor, resize, simplify, hide, or relocate an existing valve/port to make it more visible.",
     "Visibility rule: hidden side/back hardware must stay hidden in a front camera. If the chosen side or rear angle should physically reveal the valve/port, it must remain visible, unobscured, and in the correct location; do not let arms, fins, tail, scarf, belt, props, text, lighting rigs, or scenery cover it.",
@@ -1035,16 +1110,16 @@ function buildFirstFrameProductVisualLocks(productType) {
       "SHARK ARM-FIN HARD LOCK: side arm fins are short fabric hand fins attached to the arms, with white inner panels, naturally hanging close to the body or only mildly angled outward. Do not stretch either fin sideways into a horizontal airplane wing, glider wing, cape, huge paddle, manta ray wing, or wide blue-white triangle. Total product width including fins must stay close to the four-view references.",
       "Left-side reference lock: preserve the left-side silhouette and thickness, the side eye/gill/fin information visible on that side, fabric seam direction, bottom shoe/foot cover, and which structures are absent from that side.",
       "Right-side reference lock: preserve the right-side silhouette and thickness, the orange circular blower valve direction and height if visible, side fin, side vertical seam, tail-edge visibility, and black shoe sole at the bottom.",
-      "Back reference lock: preserve the plain muted cyan-blue back, central vertical back seam, top seam/stripe, centered blue rear tail fin, both side arm fins, orange valve visible on one side, black shoe soles, and wrinkled nylon inflatable fabric.",
+      "Back reference lock: BACK_VIEW is the only rear topology source. Preserve the plain muted cyan-blue back, central vertical back seam, top seam/stripe, centered blue rear tail fin, both side arm fins, orange valve visible only on the correct side edge, black shoe soles, and wrinkled nylon inflatable fabric. The rear tail fin root, position, size, direction, and outline must match BACK_VIEW exactly.",
       "Preset auxiliary support lock: if same-product auxiliary support views are supplied, use them only to refine local material, zipper, seam, wrinkle, valve, face-window, color-edge, and stitching evidence exactly where the core four views say they belong; never use support views as new decorative graphics or new product surfaces.",
       "VIEW TOPOLOGY LOCK:",
       "FOUR-VIEW REFERENCES ARE TOPOLOGY MAPS, NOT COLLAGE REQUIREMENTS.",
       "PRIMARY CAMERA IS FRONT-FACING BY DEFAULT: use the front reference as the dominant product view for first-frame generation; do not switch to side or rear unless the user explicitly asks for a side or rear view.",
       "Choose one primary camera family before rendering: front, left side, right side, or rear. The generated frame must obey that camera family instead of mixing all reference views into one surface.",
-      "Visibility matrix: front camera may show the front belly/window/zipper plus a thin side edge only; left-side camera may show only the structures visible on the left-side reference; right-side camera may show only the structures visible on the right-side reference, including the valve if that is the valve side; rear camera may show the rear tail fin, back seam, and plain blue back only.",
+      "Visibility matrix: front camera may show the front belly/window/zipper plus a thin side edge only; left-side camera may show only the structures visible on the left-side reference; right-side camera may show only the structures visible on the right-side reference, including the valve if that is the valve side; rear camera may show only the BACK_VIEW rear tail fin, back seam, plain blue back, side-edge arm fins, black shoe soles, and correct side-edge orange valve if physically visible.",
       "Do not satisfy product consistency by showing all reference details in one generated frame. Product consistency means correct physical placement and preserved shape, not maximum visible details.",
       "Do not merge details from different views into one impossible surface. The front belly/window/zipper belong only to the front-facing surface. Left-side details stay on the left side. Right-side details stay on the right side. The rear tail fin belongs on the back centerline only, never on the front belly or side waist.",
-      "For a front three-quarter view, show the front belly/window/zipper and only a narrow side edge; do not attach the back tail fin to the visible side. For a left-side or right-side view, obey that side's reference exactly; the front transparent window may only appear as a thin edge, not as a large side panel. For a rear view, show the centered back tail fin and back seam; do not show the front window or gill stripes on the back.",
+      "For a front three-quarter view, show the front belly/window/zipper and only a narrow side edge; do not attach the back tail fin to the visible side. For a left-side or right-side view, obey that side's reference exactly; the front transparent window may only appear as a thin edge, not as a large side panel. For a rear view, show the centered back tail fin and back seam exactly as BACK_VIEW; do not show the front window, white belly, front zipper, black side eye, or gill stripes on the back.",
       "Visible-detail rule: in a front camera, the face window and zipper are mandatory, the side valve is optional in a front camera only if it is naturally visible on a thin side edge, and the rear tail fin is hidden in a front camera unless the product is explicitly rear-facing.",
       "Do not force hidden side or rear details into a front-facing frame. Never move the side valve, zipper, tail fin, gill stripes, or face window just to make them visible.",
       "If the chosen camera angle cannot physically show a locked detail, hide it naturally instead of moving it to a wrong location.",
@@ -1067,11 +1142,11 @@ function buildFirstFrameProductVisualLocks(productType) {
       "MANDATORY GRAY MOUSE INFLATABLE COSTUME VISUAL LOCKS:",
       "Front reference lock: preserve the light gray mouse body, rounded mouse head, two round ears with cream inner ear panels, cream face/nose area, protruding gray snout, black open mouth, brown cartoon eyes, large cream oval belly panel, padded arms, separated legs, foot covers, and nylon wrinkles.",
       "Side reference lock: preserve side thickness, the cream/yellow tail emerging from the rear waist/hip area, rounded but wearable body volume, side seam behavior, side face depth, and soft fabric folds.",
-      "Back reference lock: preserve the center back zipper/seam, green circular blower valve on the back side, cream/yellow tail root, plain gray rear field, separated legs, and foot-cover shape.",
+      "Back reference lock: BACK_VIEW is the only rear topology source. Preserve the center back zipper/seam, green circular blower valve on the back side, cream/yellow tail root, plain gray rear field, separated legs, and foot-cover shape. The green valve position, size, direction, color, ring/grille detail, and spacing from the tail root must match BACK_VIEW exactly.",
       "VIEW TOPOLOGY LOCK:",
       "FOUR-VIEW REFERENCES ARE TOPOLOGY MAPS, NOT COLLAGE REQUIREMENTS.",
       "PRIMARY CAMERA IS FRONT-FACING BY DEFAULT: use the front reference as the dominant product view for first-frame generation unless the user explicitly asks for another angle.",
-      "Visibility matrix: front camera may show the mouse face, cream belly, ears, snout, arms, legs, and a thin side edge; side camera may show side thickness and the tail if naturally visible; rear camera may show back zipper, green valve, and tail root. Do not move the green valve or rear zipper to the front belly.",
+      "Visibility matrix: front camera may show the mouse face, cream belly, ears, snout, arms, legs, and a thin side edge; side camera may show side thickness and the tail if naturally visible; rear camera may show only BACK_VIEW back zipper, green valve, and tail root. Do not move the green valve above the tail, onto the tail root, onto the side surface, or to the front belly.",
       "SHAPE AND VOLUME ENVELOPE LOCK:",
       "Preserve the human-scale wearable envelope: a real person inside a low-to-medium inflated gray mouse suit. The shell is only moderately larger than the wearer; waist/hip transition, separated legs, foot contact, and fabric wrinkles must stay visible.",
       "Do not enlarge into a giant round mouse head, plush toy, realistic animal, theme-park mascot shell, standing balloon, or generic gray character. Do not add whiskers, new teeth, extra ears, fur, logos, accessories, or redesigned face graphics.",
@@ -1155,9 +1230,10 @@ function buildVideoProductVisualLocks(productType) {
       "FOUR-VIEW REFERENCES ARE TOPOLOGY MAPS, NOT COLLAGE REQUIREMENTS.",
       "CONTROLLED VIEW PATH: start from the approved first-frame camera, then allow a small physically valid front-to-three-quarter or brief side/rear glimpse when it helps the user action. Any revealed surface must match the four-view references exactly; do not invent unseen structures.",
       "Choose one primary camera family before rendering and maintain a physically valid camera path through the motion. The video may reveal or hide product surfaces as the camera/subject moves, but it must never paste details from unrelated views onto the wrong surface.",
-      "Visibility matrix: front-facing frames may show the front belly/window/zipper plus a thin side edge only; left-side frames may show only structures visible on the left-side reference; right-side frames may show only structures visible on the right-side reference, including the valve if that is the valve side; rear-facing frames may show the rear tail fin, back seam, and plain blue back only.",
+      "Visibility matrix: front-facing frames may show the front belly/window/zipper plus a thin side edge only; left-side frames may show only structures visible on the left-side reference; right-side frames may show only structures visible on the right-side reference, including the valve if that is the valve side; rear-facing frames may show only the BACK_VIEW rear tail fin, back seam, plain blue back, side-edge arm fins, black shoe soles, and correct side-edge orange valve if physically visible.",
       "Do not satisfy product consistency by showing all reference details in one generated frame. Product consistency means correct physical placement and preserved shape, not maximum visible details.",
-      "Maintain view-correct placement through the whole motion. The front belly/window/zipper stay on the front surface, left-side details stay on the left side, right-side details stay on the right side, and rear tail fin stays on the back centerline only; never move a rear tail fin to the side waist, never move the front window onto the side panel, and never combine front, side, and back details on one flat surface.",
+      "Maintain view-correct placement through the whole motion. The front belly/window/zipper stay on the front surface, left-side details stay on the left side, right-side details stay on the right side, and rear tail fin stays on the BACK_VIEW back centerline only; never move a rear tail fin to the side waist, never move the front window onto the side panel, never place side black eye/gill stripes on the back, and never combine front, side, and back details on one flat surface.",
+      "REAR TURN HARD LOCK: a controlled body turn is allowed and may reveal the back, but every rear-facing shark frame must match BACK_VIEW exactly. The back must remain a plain muted cyan-blue rear surface with central vertical seam and centered blue rear tail fin. The tail fin position, root, size, direction, and outline must not change. Do not add side gill stripes, side black eye, white belly, transparent window, or front zipper to the back.",
       "When the camera rotates, reveal and hide details according to physical visibility. A detail that is not visible from the current angle must remain hidden, not relocated.",
       "SHAPE AND VOLUME ENVELOPE LOCK:",
       "Maintain the same human-body envelope and low-to-medium inflated four-view silhouette through every frame, closer to soft slightly underinflated fabric than full taut pressure. The costume must not become skinny, fully collapsed, overly tall, overly round, balloon-spherical, capsule-shaped, torpedo-shaped, muscular, creature-like, or mascot-like.",
@@ -1173,6 +1249,7 @@ function buildVideoProductVisualLocks(productType) {
       "Keep the light gray mouse body, rounded ears with cream interiors, cream face/nose area, protruding gray snout, black open mouth, brown cartoon eyes, cream oval belly, cream/yellow rear tail, back zipper, green circular blower valve, separated legs, foot covers, and nylon wrinkles stable from frame 1 to the final frame.",
       "VIEW TOPOLOGY LOCK:",
       "CONTROLLED VIEW PATH: start from the approved first-frame camera, then allow a small physically valid front-to-three-quarter or brief side/rear glimpse when it helps the user action. Front-visible mouse face and belly stay on the front surface; tail stays rear/side; green valve and back zipper stay on the back only.",
+      "REAR TURN HARD LOCK: a controlled body turn is allowed and may reveal the back, but every rear-facing mouse frame must match BACK_VIEW exactly. The green circular valve must keep its BACK_VIEW position, size, direction, color, ring/grille detail, and distance from the tail root. Never move the green valve above the tail, onto the tail root, onto the side surface, onto the cream belly, or into the tail as a decoration.",
       "SHAPE AND VOLUME ENVELOPE LOCK:",
       "Maintain the same human-scale low-to-medium inflated mouse costume through every frame. No swelling into a round mascot, no shrinking, no plush/fur conversion, no realistic animal transformation, no new whiskers, teeth, logos, or accessories.",
     ];
@@ -2669,6 +2746,29 @@ function serveLocalVideo(url, req) {
   };
 }
 
+function revealLocalVideo(payload) {
+  const filePath = typeof payload?.path === "string" ? payload.path.trim() : "";
+  const resolvedPath = resolve(filePath);
+  if (!filePath || !isAllowedLocalVideoPath(resolvedPath) || !existsSync(resolvedPath)) {
+    return { status: 400, payload: { error: "Local video path is invalid or no longer exists." } };
+  }
+  const stat = statSync(resolvedPath);
+  if (!stat.isFile() || stat.size <= 0) {
+    return { status: 400, payload: { error: "Local video asset is empty." } };
+  }
+  try {
+    const child = spawn("explorer.exe", [`/select,${resolvedPath}`], {
+      detached: true,
+      stdio: "ignore",
+      windowsHide: false,
+    });
+    child.unref();
+    return { status: 200, payload: { ok: true, filePath: resolvedPath } };
+  } catch (error) {
+    return { status: 500, payload: { error: error instanceof Error ? error.message : "Failed to open local video location." } };
+  }
+}
+
 function serveHistoryAsset(fileName) {
   const cleanFileName = String(fileName || "").replace(/[\\/]/g, "");
   const filePath = resolve(LOCAL_HISTORY_ASSET_DIR, cleanFileName);
@@ -2813,8 +2913,8 @@ async function writeRenderSourceVideo(payload, outputPath) {
 }
 
 async function renderPostVideo(payload) {
-  if (!FFMPEG_BINARY || !existsSync(FFMPEG_BINARY)) {
-    return { status: 500, payload: { error: "Local ffmpeg renderer is not available." } };
+  if (!FFMPEG_BINARY) {
+    return { status: 500, payload: { error: "Local ffmpeg renderer is not available. Please install or configure a working FFmpeg binary." } };
   }
   const includeSubtitles = payload?.includeSubtitles !== false;
   const includeVoiceover = payload?.includeVoiceover !== false;
@@ -4074,6 +4174,11 @@ const apiRoutes = [
     method: "GET",
     path: "/api/local-video",
     handler: async ({ url, req }) => serveLocalVideo(url, req),
+  },
+  {
+    method: "POST",
+    path: "/api/reveal-local-video",
+    handler: async ({ body }) => revealLocalVideo(body),
   },
   {
     method: "GET",

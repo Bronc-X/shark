@@ -1,31 +1,36 @@
 import {
-  Check,
   ChevronDown,
-  ClipboardCheck,
   CloudUpload,
-  Database,
   Download,
   FileImage,
   Film,
-  KeyRound,
   LoaderCircle,
+  Plus,
   Pause,
   Play,
   Send,
   ShieldCheck,
   Sparkles,
   Trash2,
-  Upload,
   Volume2,
   Wand2,
   X,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Progress } from "@/components/ui/progress";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Select } from "@/components/ui/select";
+import { Slider } from "@/components/ui/slider";
+import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
 import type { LucideIcon } from "lucide-react";
 import type { DragEvent } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
-type StepId = "upload" | "storyboard" | "video";
+type StepId = "setup" | "upload" | "storyboard" | "video";
 type MotionMode = "strict" | "balanced" | "creative";
 type VideoStatus = "idle" | "submitted" | "polling" | "succeeded" | "failed";
 type WorkflowJobKind = "storyIntent" | "storyboard" | "video";
@@ -207,6 +212,17 @@ type HistoryItem = {
   error?: string;
 };
 
+type DownloadStatus = {
+  message: string;
+  filePath?: string;
+  fileName?: string;
+};
+
+type RevealStatus = {
+  message: string;
+  tone: "ok" | "error";
+};
+
 type ProductAsset = {
   id: string;
   name: string;
@@ -245,6 +261,7 @@ type TimedScriptSegment = {
 };
 
 const STORAGE_KEY = "videoai.apiSettings";
+const WORKSPACE_STATE_STORAGE_KEY = "videoai.workspaceState";
 const HISTORY_STORAGE_KEY = "videoai.historyItems";
 const HISTORY_ASSET_DB_NAME = "videoai.historyAssets";
 const HISTORY_ASSET_STORE_NAME = "assets";
@@ -256,8 +273,13 @@ const FIRST_FRAME_REFERENCE_MAX_BYTES = 900_000;
 const FIRST_FRAME_REFERENCE_JPEG_QUALITY = 0.86;
 const DEFAULT_PROMPT_MODEL = "gpt-5.4-mini";
 const DEFAULT_IMAGE_MODEL = "gpt-image-2";
-const DEFAULT_VIDEO_BASE_URL = "https://api.shishikeji.com";
-const DEFAULT_VIDEO_MODEL = "2.0";
+const KLING_VIDEO_PROVIDER = "kling" as const;
+const DEFAULT_VIDEO_BASE_URL = "https://api-singapore.klingai.com";
+const DEFAULT_VIDEO_MODEL = "kling-v3-omni";
+const VIDEO_STATUS_POLL_INTERVAL_MS = 8750;
+const VIDEO_DURATION_INPUT_MIN = 0;
+const VIDEO_DURATION_INPUT_MAX = 15;
+const DEFAULT_SUBTITLE_BLOCK_SECONDS = 3;
 const SENSITIVE_PRODUCT_WORD_REPLACEMENTS: Array<[RegExp, string]> = [
   [new RegExp("\\u5976\\u5934", "g"), "粉色小圆点"],
   [new RegExp("\\u4e73\\u623f", "g"), "粉色下腹组件"],
@@ -294,10 +316,9 @@ const VIDEO_PROVIDER_DURATION_CAPS: Record<ApiSettings["videoProvider"], { min: 
   toapis: { min: 4, max: 15, note: "ToAPI video models use the backend key; the final clip length follows the upstream model response." },
 };
 
-const steps: Array<{ id: StepId; label: string; shortLabel: string; description: string; icon: LucideIcon }> = [
-  { id: "upload", label: "上传产品四视图", shortLabel: "上传", description: "正面、左侧、右侧、背面四张核心图", icon: Upload },
-  { id: "storyboard", label: "生成并确认首帧", shortLabel: "首帧", description: "贴脚本，先生首帧，确认后进视频", icon: ClipboardCheck },
-  { id: "video", label: "生成视频", shortLabel: "视频", description: "通过执行包预检后一次提交", icon: Film },
+const steps: Array<{ id: StepId; label: string; shortLabel: string; icon: LucideIcon }> = [
+  { id: "setup", label: "素材与首帧", shortLabel: "素材与首帧", icon: FileImage },
+  { id: "video", label: "生成视频", shortLabel: "视频 / 后期", icon: Film },
 ];
 const visibleSteps = steps;
 
@@ -388,8 +409,8 @@ const SHARK_INFLATABLE_LOCK_NODES: LockNode[] = [
     id: "tail-fin-back-seam",
     label: "背部尾鳍 / 背部竖缝",
     code: "Back_Tail_Fin_Seam",
-    detail: "尾鳍只能位于背部中轴线，不能移动到侧腰、正面白肚或画面可见侧面；保留背部竖向缝线、后背纯蓝色块和底部黑色鞋底露出。",
-    confidence: 0.9,
+    detail: "BACK_VIEW 是背面唯一真源：尾鳍必须完全按背面图，位于背部中轴线，尾鳍根部、位置、大小、方向和轮廓不变；背面只保留纯蓝后背、中央竖缝/头顶缝线、背部褶皱、两侧手鳍边缘、侧缘可见的橙色阀门和黑鞋底。背面不得出现侧面黑眼睛、黑色鳃线、正面白肚、透明脸窗或正面拉链。",
+    confidence: 0.99,
     critical: true,
     confirmed: true,
   },
@@ -397,8 +418,8 @@ const SHARK_INFLATABLE_LOCK_NODES: LockNode[] = [
     id: "view-topology",
     label: "视角拓扑 / 细节归位",
     code: "View_Topology_Detail_Placement",
-    detail: "正面白肚、透明窗、拉链只属于正面；黑眼睛、5 条鳃线、橙色阀门只属于侧面；背部尾鳍只属于背面。看不见的细节应隐藏，不能挪到错误位置。",
-    confidence: 0.97,
+    detail: "正面白肚、透明窗、拉链只属于正面；黑眼睛和 5 条黑色鳃线只属于侧面，不得贴到背面；橙色阀门只在阀门侧腰/背侧边缘按四视图位置出现，不得挪到背部尾鳍、正面白肚、透明窗或鳃线处；背部尾鳍只属于 BACK_VIEW 中轴线。看不见的细节应隐藏，不能挪到错误位置。",
+    confidence: 0.99,
     critical: true,
     confirmed: true,
   },
@@ -530,8 +551,8 @@ const GRAY_MOUSE_INFLATABLE_LOCK_NODES: LockNode[] = [
     id: "mouse-back-zipper-valve",
     label: "背部拉链 / 绿色鼓风阀",
     code: "Mouse_Back_Zipper_Green_Valve",
-    detail: "背面中轴拉链、后背缝线和绿色圆形鼓风阀必须按背视图归位；正面镜头不可把绿色阀门或背部拉链挪到腹部或上身正面。",
-    confidence: 0.94,
+    detail: "BACK_VIEW 是背面唯一真源：背面中轴拉链、后背缝线、绿色圆形鼓风阀和米黄尾巴根部必须完全按背视图归位。绿色阀门位置、大小、颜色、方向、圆环/网格细节不变；它不能移动到尾巴上方、尾巴根部、米色腹部、鼻嘴、耳朵、手臂或侧面装饰处，也不能被当成尾巴部件。",
+    confidence: 0.99,
     critical: true,
     confirmed: true,
   },
@@ -797,7 +818,7 @@ function createPresetSlots(productType: string): UploadSlot[] {
 const defaultApiSettings: ApiSettings = {
   imagePath: "",
   imageModel: DEFAULT_IMAGE_MODEL,
-  videoProvider: "shishi",
+  videoProvider: KLING_VIDEO_PROVIDER,
   videoBaseUrl: DEFAULT_VIDEO_BASE_URL,
   videoPath: "",
   videoApiKey: "",
@@ -817,8 +838,8 @@ const VIDEO_MODEL_OPTIONS: Record<ApiSettings["videoProvider"], readonly { value
     { value: "yunshu-2-0-260128-720p", label: "\u4e91\u4e66 Seedance 2.0 - 720p - \u00a50.99/\u79d2 - yunshu-2-0-260128-720p" },
   ],
   kling: [
-    { value: "kling-v3-omni", label: "Kling VIDEO 3.0 Omni - prompt + first frame + references - official pricing" },
-    { value: "kling-video-o1", label: "Kling O1 Omni - references + first/end frame - official pricing" },
+    { value: "kling-v3-omni", label: "Kling VIDEO 3.0 Omni：主力图生视频，吃完整脚本 + 首帧 + 四视图参考，适合商品一致性流程" },
+    { value: "kling-video-o1", label: "Kling O1 Omni：更偏首尾帧和复杂参考控制，适合需要强约束的短视频" },
   ],
   toapis: [
     { value: "kling-v3", label: "kling-v3 - \u00a50.84/\u79d2 (12 credits/\u79d2)" },
@@ -829,10 +850,7 @@ const VIDEO_MODEL_OPTIONS: Record<ApiSettings["videoProvider"], readonly { value
 } as const;
 
 const VIDEO_PROVIDER_OPTIONS = [
-  { value: "shishi", label: "石狮接口", baseUrl: "https://api.shishikeji.com", model: "2.0" },
-  { value: "wisech", label: "Wisech / 云书 Seedance", baseUrl: "https://ai.wisech.com/v1", model: "yunshu-2-0-260128-1080p" },
   { value: "kling", label: "Kling Direct / 官方 Omni", baseUrl: "https://api-singapore.klingai.com", model: "kling-v3-omni" },
-  { value: "toapis", label: "ToAPI", baseUrl: "https://toapis.com/v1", model: "kling-v3" },
 ] as const;
 
 function getVideoProviderOption(value: ApiSettings["videoProvider"]) {
@@ -840,7 +858,7 @@ function getVideoProviderOption(value: ApiSettings["videoProvider"]) {
 }
 
 function getVideoDurationCap(provider: ApiSettings["videoProvider"]) {
-  return VIDEO_PROVIDER_DURATION_CAPS[provider] || VIDEO_PROVIDER_DURATION_CAPS.shishi;
+  return VIDEO_PROVIDER_DURATION_CAPS[provider] || VIDEO_PROVIDER_DURATION_CAPS.kling;
 }
 
 function getVideoModelDurationCap(provider: ApiSettings["videoProvider"], model: string) {
@@ -866,7 +884,7 @@ function getVideoModelDurationCap(provider: ApiSettings["videoProvider"], model:
 }
 
 function getVideoModelOptions(provider: ApiSettings["videoProvider"]) {
-  return VIDEO_MODEL_OPTIONS[provider] || VIDEO_MODEL_OPTIONS.shishi;
+  return provider === KLING_VIDEO_PROVIDER ? VIDEO_MODEL_OPTIONS.kling : VIDEO_MODEL_OPTIONS.kling;
 }
 
 function getDefaultVideoModel(provider: ApiSettings["videoProvider"]) {
@@ -894,6 +912,11 @@ function clampVideoDurationForModel(provider: ApiSettings["videoProvider"], mode
   const cap = getVideoModelDurationCap(provider, model);
   const numeric = Number.isFinite(value) ? value : cap.min;
   return Math.min(cap.max, Math.max(cap.min, Math.round(numeric)));
+}
+
+function clampVideoDurationInput(value: number) {
+  const numeric = Number.isFinite(value) ? value : 8;
+  return Math.min(VIDEO_DURATION_INPUT_MAX, Math.max(VIDEO_DURATION_INPUT_MIN, numeric));
 }
 
 const productAssetPlan: ProductAsset[] = [
@@ -1050,7 +1073,7 @@ function parseTimedScriptSegments(script: string): TimedScriptSegment[] {
 
   return segments.map((segment) => {
     const cleanLines = segment.lines.map((line) => line.trim()).filter(Boolean);
-    const subtitle = collectLabeledBlock(cleanLines, ["字幕", "subtitle", "caption"]) || cleanLines.map(stripScriptLabel).filter(Boolean).join("\n");
+    const subtitle = collectLabeledBlock(cleanLines, ["字幕", "subtitle", "caption"]);
     const voiceover = collectLabeledBlock(cleanLines, ["旁白", "配音", "voiceover", "vo"]) || subtitle;
     return {
       start: segment.start,
@@ -1060,6 +1083,34 @@ function parseTimedScriptSegments(script: string): TimedScriptSegment[] {
       voiceover,
     };
   });
+}
+
+function createEmptyPostSegment(start = 0, duration = DEFAULT_SUBTITLE_BLOCK_SECONDS): TimedScriptSegment {
+  const safeStart = clampWholeSeconds(start);
+  const safeDuration = Math.max(1, clampWholeSeconds(duration || DEFAULT_SUBTITLE_BLOCK_SECONDS));
+  return {
+    start: safeStart,
+    end: Math.min(VIDEO_DURATION_INPUT_MAX, safeStart + safeDuration),
+    body: "",
+    subtitle: "",
+    voiceover: "",
+  };
+}
+
+function createEmptyPostSegments(duration = 0) {
+  const targetDuration = Math.min(VIDEO_DURATION_INPUT_MAX, Math.max(DEFAULT_SUBTITLE_BLOCK_SECONDS, Number.isFinite(duration) ? duration : DEFAULT_SUBTITLE_BLOCK_SECONDS));
+  const segments: TimedScriptSegment[] = [];
+  for (let start = 0; start < targetDuration; start += DEFAULT_SUBTITLE_BLOCK_SECONDS) {
+    const segment = createEmptyPostSegment(start, Math.min(DEFAULT_SUBTITLE_BLOCK_SECONDS, targetDuration - start));
+    if (segment.end > segment.start) segments.push(segment);
+  }
+  return segments.length ? segments : [createEmptyPostSegment()];
+}
+
+function createEditablePostSegmentsFromScript(script: string, duration = 0) {
+  const parsed = parseTimedScriptSegments(script);
+  if (parsed.length) return parsed;
+  return createEmptyPostSegments(duration);
 }
 
 function formatSrtTime(seconds: number) {
@@ -1076,6 +1127,15 @@ function formatTimelineTime(seconds: number) {
   const minutes = Math.floor(safe / 60);
   const secs = Math.floor(safe % 60);
   return `${minutes}:${String(secs).padStart(2, "0")}`;
+}
+
+function clampWholeSeconds(value: number, fallback = VIDEO_DURATION_INPUT_MIN) {
+  const numeric = Number.isFinite(value) ? value : fallback;
+  return Math.min(VIDEO_DURATION_INPUT_MAX, Math.max(VIDEO_DURATION_INPUT_MIN, Math.round(numeric)));
+}
+
+function getSegmentDuration(segment: TimedScriptSegment) {
+  return Math.max(1, clampWholeSeconds(segment.end - segment.start, DEFAULT_SUBTITLE_BLOCK_SECONDS));
 }
 
 function buildPostSubtitleDraft(script: string) {
@@ -1110,6 +1170,38 @@ function downloadTextFile(fileName: string, text: string) {
   anchor.download = fileName;
   anchor.click();
   window.URL.revokeObjectURL(url);
+}
+
+function triggerBrowserDownload(url: string, fileName = "video-asset.mp4") {
+  if (typeof window === "undefined" || !url) return;
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = fileName || "video-asset.mp4";
+  anchor.rel = "noreferrer";
+  anchor.style.display = "none";
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+}
+
+async function revealLocalVideoInFolder(filePath: string) {
+  const response = await fetch("/api/reveal-local-video", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path: filePath }),
+  });
+  const data: unknown = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(extractErrorMessage(data, response.status));
+  }
+}
+
+function createDownloadStatus(filePath: string, fileName?: string): DownloadStatus {
+  return {
+    message: "已保存下载，浏览器下载已触发。",
+    filePath,
+    fileName,
+  };
 }
 
 function createAudioObjectUrlFromBase64(base64: string, contentType = "audio/mpeg") {
@@ -1215,16 +1307,7 @@ function loadApiSettings(): ApiSettings {
     if (merged.imagePath === "/images/generations") merged.imagePath = "";
     if (merged.videoPath === "/videos/generations") merged.videoPath = "";
     const normalizedVideoBaseUrl = typeof merged.videoBaseUrl === "string" ? merged.videoBaseUrl.replace(/\/+$/, "") : "";
-    if (parsed.videoProvider !== "wisech" && parsed.videoProvider !== "shishi" && parsed.videoProvider !== "kling" && parsed.videoProvider !== "toapis") {
-      merged.videoProvider =
-        normalizedVideoBaseUrl === "https://ai.wisech.com/v1"
-          ? "wisech"
-          : normalizedVideoBaseUrl === "https://api-singapore.klingai.com" || normalizedVideoBaseUrl === "https://api-beijing.klingai.com"
-            ? "kling"
-          : normalizedVideoBaseUrl === "https://toapis.com/v1"
-            ? "toapis"
-            : "shishi";
-    }
+    merged.videoProvider = KLING_VIDEO_PROVIDER;
     if (
       !normalizedVideoBaseUrl ||
       normalizedVideoBaseUrl === "https://ai.wisech.com/v1" ||
@@ -1237,7 +1320,8 @@ function loadApiSettings(): ApiSettings {
     ) {
       merged.videoBaseUrl = defaultApiSettings.videoBaseUrl;
     }
-    const provider = getVideoProviderOption(merged.videoProvider);
+    const provider = getVideoProviderOption(KLING_VIDEO_PROVIDER);
+    merged.videoProvider = KLING_VIDEO_PROVIDER;
     merged.videoBaseUrl = provider.baseUrl;
     const videoModelText = typeof merged.videoModel === "string" ? merged.videoModel.trim() : "";
     if (
@@ -1247,9 +1331,9 @@ function loadApiSettings(): ApiSettings {
       videoModelText === "doubao-seedance-1-5-pro-251215" ||
       videoModelText === "doubao-seedance-2-0-260128" ||
       videoModelText === "doubao-seedance-2-0-fast-260128" ||
-      !isVideoModelAllowed(merged.videoProvider, videoModelText)
+      !isVideoModelAllowed(KLING_VIDEO_PROVIDER, videoModelText)
     ) {
-      merged.videoModel = getDefaultVideoModel(merged.videoProvider);
+      merged.videoModel = getDefaultVideoModel(KLING_VIDEO_PROVIDER);
     } else {
       merged.videoModel = videoModelText;
     }
@@ -1279,9 +1363,81 @@ function saveApiSettings(settings: ApiSettings) {
   }
 }
 
+type PersistedWorkspaceState = {
+  activeStep?: StepId;
+  costumeType?: string;
+  duration?: number;
+  aspectRatio?: string;
+  motionMode?: MotionMode;
+  storyDirection?: string;
+  storyIntent?: StoryIntent | null;
+  storyboards?: StoryboardFrame[];
+  selectedStoryboardIds?: string[];
+  storyboardPreflight?: StoryboardPreflight | null;
+  videoExecutionPackage?: VideoExecutionPackage | null;
+  storyboardError?: string;
+  videoError?: string;
+  videoTaskId?: string;
+  videoStatus?: VideoStatus;
+  videoUrl?: string;
+  currentVideoHistoryItemId?: string;
+};
+
+function isStepId(value: unknown): value is StepId {
+  return value === "setup" || value === "upload" || value === "storyboard" || value === "video";
+}
+
+function isMotionMode(value: unknown): value is MotionMode {
+  return value === "strict" || value === "balanced" || value === "creative";
+}
+
+function isVideoStatus(value: unknown): value is VideoStatus {
+  return value === "idle" || value === "submitted" || value === "polling" || value === "succeeded" || value === "failed";
+}
+
+function loadWorkspaceState(): PersistedWorkspaceState {
+  if (typeof window === "undefined") return {};
+  try {
+    const saved = window.localStorage.getItem(WORKSPACE_STATE_STORAGE_KEY);
+    if (!saved) return {};
+    const parsed = JSON.parse(saved);
+    if (!parsed || typeof parsed !== "object") return {};
+    const state = parsed as PersistedWorkspaceState;
+    return {
+      ...state,
+      activeStep: isStepId(state.activeStep) ? state.activeStep : undefined,
+      motionMode: isMotionMode(state.motionMode) ? state.motionMode : undefined,
+      videoStatus: isVideoStatus(state.videoStatus) ? state.videoStatus : undefined,
+      storyboards: Array.isArray(state.storyboards) ? state.storyboards.filter((item) => item && typeof item.imageUrl === "string").slice(0, 5) : undefined,
+      selectedStoryboardIds: Array.isArray(state.selectedStoryboardIds) ? state.selectedStoryboardIds.filter((id) => typeof id === "string").slice(0, 5) : undefined,
+    };
+  } catch {
+    return {};
+  }
+}
+
+function saveWorkspaceState(state: PersistedWorkspaceState) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(WORKSPACE_STATE_STORAGE_KEY, JSON.stringify(state));
+  } catch {
+    // History is still the durable source if session restore cannot be saved.
+  }
+}
+
+function clearWorkspaceState() {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(WORKSPACE_STATE_STORAGE_KEY);
+  } catch {
+    // Ignore cleanup failures.
+  }
+}
+
 function isHistoryItem(value: unknown): value is HistoryItem {
   if (!value || typeof value !== "object") return false;
   const record = value as Record<string, unknown>;
+  if (typeof record.id === "string" && record.id.startsWith("CODEx-HISTORY")) return false;
   return (
     typeof record.id === "string" &&
     (record.type === "分镜" || record.type === "首帧" || record.type === "视频") &&
@@ -1387,6 +1543,34 @@ function isLargeInlineAsset(value?: string) {
   return typeof value === "string" && value.startsWith("data:");
 }
 
+function isRenderableImageUrl(value?: string) {
+  return typeof value === "string" && (/^data:image\//i.test(value) || /^https?:\/\//i.test(value) || value.startsWith("/"));
+}
+
+function waitForImageLoad(url: string, timeoutMs = 15000) {
+  return new Promise<void>((resolve, reject) => {
+    if (typeof window === "undefined" || typeof Image === "undefined") {
+      resolve();
+      return;
+    }
+    const image = new Image();
+    const timer = window.setTimeout(() => {
+      image.onload = null;
+      image.onerror = null;
+      reject(new Error("首帧图片地址无法加载，请重新生成首帧。"));
+    }, timeoutMs);
+    image.onload = () => {
+      window.clearTimeout(timer);
+      resolve();
+    };
+    image.onerror = () => {
+      window.clearTimeout(timer);
+      reject(new Error("首帧图片地址无法加载，请重新生成首帧。"));
+    };
+    image.src = url;
+  });
+}
+
 function isLocalVideoPath(value?: string) {
   return typeof value === "string" && /^[A-Za-z]:[\\/].+\.mp4$/i.test(value);
 }
@@ -1469,16 +1653,30 @@ function sanitizeHistoryItemForStorage(item: HistoryItem): HistoryItem {
   return next;
 }
 
-function saveHistoryItems(items: HistoryItem[]) {
-  const storedItems = items.slice(0, MAX_HISTORY_ITEMS).map(sanitizeHistoryItemForStorage);
-  void Promise.all(items.slice(0, MAX_HISTORY_ITEMS).map(writeHistoryItemAssets)).catch(() => undefined);
-  if (storedItems.length > 0) {
-    void fetch("/api/history", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ items: storedItems }),
-    }).catch(() => undefined);
+async function sanitizeHistoryItemForBackend(item: HistoryItem): Promise<HistoryItem> {
+  const next = await resolveHistoryItemAssets(item);
+  for (const field of HISTORY_ASSET_FIELDS) {
+    if (isHistoryAssetRef(next[field])) next[field] = undefined;
   }
+  next.productViewUrls = next.productViewUrls?.filter((url) => !isLargeInlineAsset(url) && !isHistoryAssetRef(url));
+  next.supportImageUrls = next.supportImageUrls?.filter((url) => !isLargeInlineAsset(url) && !isHistoryAssetRef(url));
+  return next;
+}
+
+function saveHistoryItems(items: HistoryItem[]) {
+  const currentItems = items.slice(0, MAX_HISTORY_ITEMS);
+  const storedItems = currentItems.map(sanitizeHistoryItemForStorage);
+  void Promise.all(currentItems.map(writeHistoryItemAssets)).catch(() => undefined);
+  void Promise.all(currentItems.map(sanitizeHistoryItemForBackend))
+    .then((backendItems) => {
+      if (backendItems.length === 0) return;
+      return fetch("/api/history", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items: backendItems }),
+      });
+    })
+    .catch(() => undefined);
   try {
     window.localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(storedItems));
   } catch (error) {
@@ -1706,6 +1904,9 @@ function toUserMessage(message: string) {
   if (/Preset image unavailable|preset images failed/i.test(text)) {
     return "本地预设图片没有加载成功，请刷新页面或重新选择产品。";
   }
+  if (/首帧图片地址无法加载/i.test(text)) {
+    return "首帧图片地址无法加载，请重新生成首帧。";
+  }
   if (/image\/url|图片地址|image_url|b64_json/i.test(text)) {
     return "这次没有拿到首帧图片结果，请稍后再试，或换一个首帧模型。";
   }
@@ -1847,34 +2048,35 @@ function createManualStoryIntent(script: string, productType: string, motionMode
 }
 
 export function App() {
-  const [activeStep, setActiveStep] = useState<StepId>("upload");
-  const [slots, setSlots] = useState(() => createPresetSlots(SHARK_INFLATABLE_TYPE));
+  const [initialWorkspaceState] = useState(() => loadWorkspaceState());
+  const initialCostumeType = initialWorkspaceState.costumeType || SHARK_INFLATABLE_TYPE;
+  const [activeStep, setActiveStep] = useState<StepId>(() => initialWorkspaceState.activeStep || "setup");
+  const [slots, setSlots] = useState(() => createPresetSlots(initialCostumeType));
   const [supportImageUrls, setSupportImageUrls] = useState<string[]>([]);
-  const [lockNodes, setLockNodes] = useState(() => getProductLockNodes(SHARK_INFLATABLE_TYPE));
-  const [costumeType, setCostumeType] = useState(SHARK_INFLATABLE_TYPE);
+  const [lockNodes, setLockNodes] = useState(() => getProductLockNodes(initialCostumeType));
+  const [costumeType, setCostumeType] = useState(initialCostumeType);
   const [apiSettings, setApiSettings] = useState<ApiSettings>(() => loadApiSettings());
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyItems, setHistoryItems] = useState<HistoryItem[]>(() => loadHistoryItems());
   const [pendingHistoryItem, setPendingHistoryItem] = useState<HistoryItem | null>(null);
   const [historyError, setHistoryError] = useState("");
   const [productAssets] = useState<ProductAsset[]>(productAssetPlan);
-  const [duration, setDuration] = useState(8);
-  const [aspectRatio, setAspectRatio] = useState("9:16");
-  const [motionMode, setMotionMode] = useState<MotionMode>("strict");
-  const [storyDirection, setStoryDirection] = useState("");
-  const [storyIntent, setStoryIntent] = useState<StoryIntent | null>(null);
-  const [storyboards, setStoryboards] = useState<StoryboardFrame[]>([]);
-  const [selectedStoryboardIds, setSelectedStoryboardIds] = useState<string[]>([]);
-  const [storyboardPreflight, setStoryboardPreflight] = useState<StoryboardPreflight | null>(null);
-  const [videoExecutionPackage, setVideoExecutionPackage] = useState<VideoExecutionPackage | null>(null);
-  const [storyboardError, setStoryboardError] = useState("");
-  const [videoError, setVideoError] = useState("");
-  const [videoTaskId, setVideoTaskId] = useState("");
-  const [videoStatus, setVideoStatus] = useState<VideoStatus>("idle");
-  const [videoUrl, setVideoUrl] = useState("");
-  const [currentVideoHistoryItemId, setCurrentVideoHistoryItemId] = useState("");
+  const [duration, setDuration] = useState(initialWorkspaceState.duration || 8);
+  const [aspectRatio, setAspectRatio] = useState(initialWorkspaceState.aspectRatio || "9:16");
+  const [motionMode, setMotionMode] = useState<MotionMode>(initialWorkspaceState.motionMode || "strict");
+  const [storyDirection, setStoryDirection] = useState(initialWorkspaceState.storyDirection || "");
+  const [storyIntent, setStoryIntent] = useState<StoryIntent | null>(initialWorkspaceState.storyIntent || null);
+  const [storyboards, setStoryboards] = useState<StoryboardFrame[]>(initialWorkspaceState.storyboards || []);
+  const [selectedStoryboardIds, setSelectedStoryboardIds] = useState<string[]>(initialWorkspaceState.selectedStoryboardIds || []);
+  const [storyboardPreflight, setStoryboardPreflight] = useState<StoryboardPreflight | null>(initialWorkspaceState.storyboardPreflight || null);
+  const [videoExecutionPackage, setVideoExecutionPackage] = useState<VideoExecutionPackage | null>(initialWorkspaceState.videoExecutionPackage || null);
+  const [storyboardError, setStoryboardError] = useState(initialWorkspaceState.storyboardError || "");
+  const [videoError, setVideoError] = useState(initialWorkspaceState.videoError || "");
+  const [videoTaskId, setVideoTaskId] = useState(initialWorkspaceState.videoTaskId || "");
+  const [videoStatus, setVideoStatus] = useState<VideoStatus>(initialWorkspaceState.videoStatus || "idle");
+  const [videoUrl, setVideoUrl] = useState(initialWorkspaceState.videoUrl || "");
+  const [currentVideoHistoryItemId, setCurrentVideoHistoryItemId] = useState(initialWorkspaceState.currentVideoHistoryItemId || "");
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [testing, setTesting] = useState<"image" | "video" | "">("");
   const [activeJob, setActiveJob] = useState<WorkflowJobKind | "">("");
   const [progressEvents, setProgressEvents] = useState<ProgressEvent[]>([]);
   const currentJobIdRef = useRef("");
@@ -1883,6 +2085,46 @@ export function App() {
   useEffect(() => {
     saveApiSettings(apiSettings);
   }, [apiSettings]);
+
+  useEffect(() => {
+    saveWorkspaceState({
+      activeStep,
+      costumeType,
+      duration,
+      aspectRatio,
+      motionMode,
+      storyDirection,
+      storyIntent,
+      storyboards,
+      selectedStoryboardIds,
+      storyboardPreflight,
+      videoExecutionPackage,
+      storyboardError,
+      videoError,
+      videoTaskId,
+      videoStatus,
+      videoUrl,
+      currentVideoHistoryItemId,
+    });
+  }, [
+    activeStep,
+    costumeType,
+    duration,
+    aspectRatio,
+    motionMode,
+    storyDirection,
+    storyIntent,
+    storyboards,
+    selectedStoryboardIds,
+    storyboardPreflight,
+    videoExecutionPackage,
+    storyboardError,
+    videoError,
+    videoTaskId,
+    videoStatus,
+    videoUrl,
+    currentVideoHistoryItemId,
+  ]);
 
   function patchHistoryItem(id: string, patch: Partial<HistoryItem>) {
     if (!id) return;
@@ -1950,19 +2192,15 @@ export function App() {
   useEffect(() => {
     const preset = getProductPreset(costumeType);
     if (!preset) {
-      invalidateGeneratedOutputs();
       setSlots(initialSlots);
       setSupportImageUrls([]);
       setLockNodes(getProductLockNodes(costumeType));
-      setActiveStep("upload");
       return;
     }
     let cancelled = false;
-    invalidateGeneratedOutputs();
     setSlots(createPresetSlots(costumeType));
     setSupportImageUrls([]);
     setLockNodes(getProductLockNodes(costumeType));
-    setActiveStep("upload");
     Promise.all([loadPresetSlotDataUrls(preset), loadPresetSupportDataUrls(preset)])
       .then(([loadedSlots, loadedSupportImages]) => {
         if (cancelled) return;
@@ -1990,20 +2228,18 @@ export function App() {
     setPendingHistoryItem(null);
   }, [costumeType, pendingHistoryItem]);
 
-  const allLocksConfirmed = lockNodes.every((node) => node.confirmed);
-  const autoLockedNodes = useMemo(() => lockNodes.map((node) => ({ ...node, confirmed: true })), [lockNodes]);
   const requiredUrls = slots.map(getSlotImageUrl).filter(Boolean);
   const currentProductPreset = getProductPreset(costumeType);
   const currentSupportViewCount = currentProductPreset?.supportViews?.length || 0;
   const uploadReady = requiredUrls.length === slots.length;
   const selectedStoryboards = storyboards.filter((storyboard) => selectedStoryboardIds.includes(storyboard.id));
   const storyIntentReady = Boolean(storyIntent?.storyIntent?.trim());
-  const storyIntentCanGenerate = uploadReady && allLocksConfirmed;
+  const storyIntentCanGenerate = uploadReady;
   const storyboardReady = storyIntentCanGenerate && storyIntentReady;
   const selectedStoryboardAnchor = selectedStoryboards[0]?.imageUrl || "";
   const videoReady = uploadReady && Boolean(videoExecutionPackage?.ok) && Boolean(selectedStoryboardAnchor);
   const videoDurationCap = getVideoModelDurationCap(apiSettings.videoProvider, apiSettings.videoModel);
-  const requestedVideoDuration = Number.isFinite(duration) ? duration : videoDurationCap.min;
+  const requestedVideoDuration = clampVideoDurationInput(duration);
   const actualVideoDuration = clampVideoDurationForModel(apiSettings.videoProvider, apiSettings.videoModel, requestedVideoDuration);
 
   function createHistoryDetail(
@@ -2032,17 +2268,15 @@ export function App() {
   }
 
   const completedSteps: Record<StepId, boolean> = {
+    setup: uploadReady && Boolean(videoExecutionPackage?.ok),
     upload: uploadReady,
     storyboard: Boolean(videoExecutionPackage?.ok),
     video: videoStatus === "succeeded" || Boolean(videoUrl),
   };
+  const workflowProgress = Math.round((visibleSteps.filter((step) => completedSteps[step.id]).length / visibleSteps.length) * 100);
 
   const motionText =
-    motionMode === "strict"
-      ? "Controlled visible comedy beats: one clear arm gesture, a small prop interaction, a small recoil or elastic wobble, and a freeze-pause twist; start from the approved first-frame view and allow a slight three-quarter shift if needed; no product redesign."
-      : motionMode === "balanced"
-        ? "Readable ecommerce comedy motion: one small half-step or body pivot, prop reaction, elastic wobble, and a clear pause; product surfaces must follow the four-view topology."
-        : "More playful comedy timing with a visible prop gag, controlled angle change, or reversal, while preserving every locked product node and view-correct component placement.";
+    "Controlled visible comedy beats: keep the approved first-frame as the anchor, allow the turn/body motion required by the script, and preserve the four-view topology without product redesign.";
 
   const lockedNodePayload = lockNodes.map(({ code, label, detail, confidence, confirmed, critical }) => ({
     code,
@@ -2201,11 +2435,38 @@ export function App() {
     setVideoUrl("");
   }
 
+  function resetWorkspaceFlow() {
+    clearWorkspaceState();
+    setActiveStep("setup");
+    setCostumeType(SHARK_INFLATABLE_TYPE);
+    setSlots(createPresetSlots(SHARK_INFLATABLE_TYPE));
+    setSupportImageUrls([]);
+    setLockNodes(getProductLockNodes(SHARK_INFLATABLE_TYPE));
+    setDuration(8);
+    setAspectRatio("9:16");
+    setMotionMode("strict");
+    setStoryDirection("");
+    setStoryIntent(null);
+    setStoryboards([]);
+    setSelectedStoryboardIds([]);
+    setStoryboardPreflight(null);
+    setVideoExecutionPackage(null);
+    setStoryboardError("");
+    setVideoError("");
+    setVideoTaskId("");
+    setVideoStatus("idle");
+    setVideoUrl("");
+    setCurrentVideoHistoryItemId("");
+    setIsSubmitting(false);
+    setActiveJob("");
+    setProgressEvents([]);
+  }
+
   async function updateSlotFile(id: string, file?: File) {
     if (!file) return;
     const localUrl = URL.createObjectURL(file);
     invalidateGeneratedOutputs();
-    setActiveStep("upload");
+    setActiveStep("setup");
     const updateSlot = (slot: UploadSlot): UploadSlot =>
       slot.id === id ? { ...slot, file, fileName: file.name, localUrl, dataUrl: "", source: "manual" } : slot;
     setSlots((current) => current.map(updateSlot));
@@ -2216,15 +2477,16 @@ export function App() {
 
   function updateApiSettings(patch: Partial<ApiSettings>) {
     setApiSettings((current) => {
-      const next = { ...current, ...patch, imagePath: "", videoPath: "" };
+      const next = { ...current, ...patch, videoProvider: KLING_VIDEO_PROVIDER, imagePath: "", videoPath: "" };
       if (patch.videoProvider) {
-        const provider = getVideoProviderOption(patch.videoProvider);
+        const provider = getVideoProviderOption(KLING_VIDEO_PROVIDER);
         next.videoBaseUrl = provider.baseUrl;
         next.videoApiKey = "";
         next.videoModel = provider.model;
-      } else if (patch.videoModel && !isVideoModelAllowed(next.videoProvider, patch.videoModel)) {
-        next.videoModel = getDefaultVideoModel(next.videoProvider);
+      } else if (patch.videoModel && !isVideoModelAllowed(KLING_VIDEO_PROVIDER, patch.videoModel)) {
+        next.videoModel = getDefaultVideoModel(KLING_VIDEO_PROVIDER);
       }
+      next.videoBaseUrl = getVideoProviderOption(KLING_VIDEO_PROVIDER).baseUrl;
       return next;
     });
   }
@@ -2234,7 +2496,7 @@ export function App() {
     setCostumeType(value);
     setLockNodes(getProductLockNodes(value));
     setStoryDirection("");
-    setActiveStep("upload");
+    setActiveStep("setup");
   }
 
   function updateStoryDirection(value: string) {
@@ -2244,14 +2506,37 @@ export function App() {
 
   function updateVideoDuration(value: number) {
     invalidateVideoOutputs();
-    setDuration(clampVideoDurationForModel(apiSettings.videoProvider, apiSettings.videoModel, value));
+    setDuration(clampVideoDurationInput(value));
   }
 
   function updateAspectRatio(value: string) {
     if (value === aspectRatio) return;
-    invalidateGeneratedOutputs();
     setAspectRatio(value);
-    if (activeStep !== "upload") setActiveStep("storyboard");
+    if (activeStep === "video") {
+      invalidateVideoOutputs();
+      return;
+    }
+    invalidateGeneratedOutputs();
+    setActiveStep("setup");
+  }
+
+  function markStoryboardImageFailed(id: string) {
+    setStoryboards((current) =>
+      current.map((storyboard) =>
+        storyboard.id === id
+          ? {
+              ...storyboard,
+              imageUrl: "",
+              checks: [{ id: "first_frame_load_failed", status: "fail", detail: "首帧图片地址无法加载。" }],
+            }
+          : storyboard,
+      ),
+    );
+    setSelectedStoryboardIds((current) => current.filter((item) => item !== id));
+    setStoryboardPreflight(null);
+    setVideoExecutionPackage(null);
+    invalidateVideoOutputs();
+    setStoryboardError("首帧图片地址无法加载，请重新生成首帧。");
   }
 
   async function requestStoryboards() {
@@ -2283,6 +2568,10 @@ export function App() {
       if (!response.ok) throw new Error(extractErrorMessage(data, response.status));
       const firstFrameUrl = extractImageUrl(data);
       if (!firstFrameUrl) throw new Error("首帧模型没有返回可用图片。");
+      if (!isRenderableImageUrl(firstFrameUrl) || isHistoryAssetRef(firstFrameUrl)) {
+        throw new Error("首帧模型返回的图片地址不可直接打开，请重新生成一次；如果连续出现，请让管理员检查首帧服务返回格式。");
+      }
+      await waitForImageLoad(firstFrameUrl);
       const firstFrame: StoryboardFrame = {
         id: `first-frame-${Date.now()}`,
         imageUrl: firstFrameUrl,
@@ -2371,22 +2660,9 @@ export function App() {
     invalidateVideoOutputs();
   }
 
-  function completeUploadStep() {
-    if (!uploadReady) {
-      setStoryboardError("请先上传正面、左侧、右侧、背面四张核心产品图。");
-      return;
-    }
-    setLockNodes(autoLockedNodes);
-    setActiveStep("storyboard");
-  }
-
   function selectStep(step: StepId) {
-    if (step === "upload") {
-      setActiveStep("upload");
-      return;
-    }
-    if (step === "storyboard" && uploadReady) {
-      setActiveStep("storyboard");
+    if (step === "setup" || step === "upload" || step === "storyboard") {
+      setActiveStep("setup");
       return;
     }
     if (step === "video" && videoReady) {
@@ -2394,7 +2670,7 @@ export function App() {
       return;
     }
     if (!uploadReady) {
-      setActiveStep("upload");
+      setActiveStep("setup");
       setStoryboardError("请先上传正面、左侧、右侧、背面四张核心产品图。");
     }
   }
@@ -2424,7 +2700,7 @@ export function App() {
     setVideoStatus(restoredVideoUrl ? "succeeded" : item.type === "视频" && item.status === "处理中" ? "polling" : "idle");
     setStoryboardError(item.firstFrameUrl ? "已从历史记录载入首帧资产。" : "");
     setVideoError(restoredVideoUrl ? "已从历史记录载入视频资产，可继续处理字幕和旁白。" : item.error || "");
-    setActiveStep(restoredVideoUrl || item.type === "视频" ? "video" : "storyboard");
+    setActiveStep(restoredVideoUrl || item.type === "视频" ? "video" : "setup");
   }
 
   function inferHistoryVideoProvider(item: HistoryItem): ApiSettings["videoProvider"] {
@@ -2596,7 +2872,7 @@ export function App() {
 
         setVideoError(`视频还在生成中，已检查 ${attempts} 次。`);
         addProgressEvent("tool.completed", "进度查询完成", `上游仍在处理，已检查 ${attempts} 次。`, "done");
-        if (!stopped) timer = window.setTimeout(pollVideoStatus, 3500);
+        if (!stopped) timer = window.setTimeout(pollVideoStatus, VIDEO_STATUS_POLL_INTERVAL_MS);
       } catch (error) {
         const message = error instanceof Error ? toUserMessage(error.message) : "暂时查不到视频进度，请稍后再试。";
         setVideoStatus("failed");
@@ -2615,109 +2891,81 @@ export function App() {
     };
   }, [apiSettings.videoProvider, videoApiKeyForRequest, videoBaseUrlForRequest, videoStatus, videoTaskId]);
 
-  async function testApi(kind: "image" | "video") {
-    setTesting(kind);
-    setStoryboardError("");
-    setVideoError("");
-    try {
-      const response = await fetch(kind === "image" ? "/api/test-image" : "/api/test-video", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(kind === "image" ? storyboardPayload : videoPayload),
-      });
-      const data: unknown = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(extractErrorMessage(data, response.status));
-      }
-      const message = kind === "image" ? "首帧服务连接正常。" : "视频服务连接正常。";
-      if (kind === "image") setStoryboardError(message);
-      if (kind === "video") setVideoError(message);
-    } catch (error) {
-      const message = error instanceof Error ? toUserMessage(error.message) : "服务测试没有通过，请稍后再试。";
-      if (kind === "image") setStoryboardError(message);
-      if (kind === "video") setVideoError(message);
-    } finally {
-      setTesting("");
-    }
-  }
-
   return (
-    <div className="min-h-[100dvh] overflow-hidden bg-[#eef4f4] text-[#0d1d20]">
-      <div className="pointer-events-none fixed inset-0 -z-10 bg-[radial-gradient(circle_at_8%_10%,rgba(0,126,145,0.18),transparent_32%),radial-gradient(circle_at_92%_6%,rgba(15,109,243,0.12),transparent_34%),linear-gradient(120deg,#f7fbfb_0%,#edf4f4_48%,#f4f1f3_100%)]" />
-      <header className="sticky top-0 z-50 border-b border-white/65 bg-white/76 px-8 py-4 shadow-[0_12px_44px_rgba(12,57,65,0.07)] backdrop-blur-2xl">
-        <div className="mx-auto flex max-w-[1880px] items-center justify-between gap-6">
-          <div className="flex min-w-0 items-center gap-4">
-            <div className="grid h-[52px] w-[52px] place-items-center rounded-lg bg-[#007e91] text-white shadow-[0_18px_36px_rgba(0,126,145,0.22)]">
-              <Film size={24} />
-            </div>
-            <div className="min-w-0">
-              <strong className="block truncate text-[26px] font-black tracking-[0] text-[#07363d]">Product Lock Video Studio</strong>
-              <span className="block truncate text-[14px] font-bold text-[#607276]">四视图锁定  -  首帧确认  -  Kling 视频生成</span>
-            </div>
-          </div>
+    <div className="shadcn-ai-shell" data-testid="app-shell">
+      <header className="shadcn-topbar">
+        <div className="brand-mark">
+          <Film size={21} />
+        </div>
+        <div className="brand-copy">
+          <strong>Product Lock Video Studio</strong>
         </div>
       </header>
 
-      <div className="mx-auto grid max-w-[1880px] grid-cols-1 gap-8 px-8 py-7 pb-32 lg:grid-cols-[380px_minmax(0,1fr)]">
+      <div className="shadcn-shell-grid">
         <motion.aside
-          className="flex min-h-0 flex-col rounded-lg border border-white/70 bg-white/62 p-5 shadow-[0_24px_70px_rgba(12,57,65,0.08)] backdrop-blur-2xl lg:sticky lg:top-28 lg:h-[calc(100dvh-150px)]"
+          className="shadcn-left-rail"
+          data-testid="workflow-sidebar"
           initial={{ opacity: 0, x: -18 }}
           animate={{ opacity: 1, x: 0 }}
           transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
         >
-          <div className="rounded-lg bg-[#07363d] p-5 text-white">
-            <div className="mb-8 flex items-center justify-between">
-              <span className="text-[13px] font-black uppercase tracking-[0.14em] text-white/58">Current Run</span>
-              <FileImage size={20} />
-            </div>
-            <strong className="block text-[28px] font-black leading-tight">{costumeType}</strong>
-            <span className="mt-3 block text-[15px] font-semibold text-white/70">{requiredUrls.length}/4 核心视图  -  {currentSupportViewCount} 辅助角度</span>
-          </div>
-          <div className="mt-5 grid gap-3">
+          <Card className="run-card">
+            <CardHeader>
+              <div className="run-card-kicker">
+                <FileImage size={18} />
+              </div>
+              <CardTitle>{costumeType}</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <Progress value={workflowProgress} />
+            </CardContent>
+          </Card>
+
+          <nav className="step-nav" aria-label="workflow steps">
             {visibleSteps.map((step, index) => {
               const isActive = activeStep === step.id;
               const isDone = completedSteps[step.id];
               const Icon = step.icon;
               return (
                 <button
-                  className={cn(
-                    "group grid min-h-[74px] grid-cols-[48px_1fr_auto] items-center gap-4 rounded-lg border border-transparent px-4 py-4 text-left transition active:scale-[0.99]",
-                    isActive && "border-[#b8dce1] bg-white shadow-[0_12px_28px_rgba(12,57,65,0.08)]",
-                    !isActive && "hover:bg-white/55",
-                  )}
+                  className={cn("step-nav-item", isActive && "active", isDone && "done")}
                   type="button"
                   key={step.id}
                   onClick={() => selectStep(step.id)}
+                  data-testid={`step-${step.id}`}
                 >
-                  <span className={cn("grid h-12 w-12 place-items-center rounded-lg bg-[#e9f4f5] text-[#007e91]", isActive && "bg-[#007e91] text-white")}>
-                    <Icon size={22} />
+                  <span className="step-icon"><Icon size={19} /></span>
+                  <span className="step-copy">
+                    <strong>{step.shortLabel}</strong>
                   </span>
-                  <span className="min-w-0">
-                    <strong className="block text-[17px] font-black text-[#18363a]">{step.shortLabel}</strong>
-                    <small className="block truncate text-[14px] font-semibold text-[#607276]">{step.description}</small>
-                  </span>
-                  <span className={cn("text-[13px] font-black", isDone ? "text-[#167a3a]" : "text-[#9caeb2]")}>{isDone ? "OK" : String(index + 1).padStart(2, "0")}</span>
+                  <em>{isDone ? "OK" : String(index + 1).padStart(2, "0")}</em>
                 </button>
               );
             })}
-          </div>
-          <button className="mt-5 w-full rounded-lg border border-[#d7e5e6] bg-white/70 px-4 py-4 text-[16px] font-black text-[#456064] transition active:scale-[0.98]">
-            新建流程
-          </button>
-          <HistoryInlinePanel
-            items={historyItems}
-            error={historyError}
-            onClear={() => {
-              setHistoryError("");
-              clearSavedHistoryItems();
-              setHistoryItems([]);
-            }}
-            onRemove={(id) => setHistoryItems((current) => current.filter((item) => item.id !== id))}
-            onOpenItem={openHistoryItem}
-          />
+          </nav>
+
+          <Button variant="outline" className="new-flow-button" type="button" onClick={resetWorkspaceFlow}>
+            <Sparkles size={16} />
+            新建任务
+          </Button>
+
+          <ScrollArea className="history-scroll">
+            <HistoryInlinePanel
+              items={historyItems}
+              error={historyError}
+              onClear={() => {
+                setHistoryError("");
+                clearSavedHistoryItems();
+                setHistoryItems([]);
+              }}
+              onRemove={(id) => setHistoryItems((current) => current.filter((item) => item.id !== id))}
+              onOpenItem={openHistoryItem}
+            />
+          </ScrollArea>
         </motion.aside>
 
-        <main className="min-w-0">
+        <main className="shadcn-center-canvas">
           <AnimatePresence mode="wait">
             <motion.div
               key={activeStep}
@@ -2726,19 +2974,13 @@ export function App() {
               exit={{ opacity: 0, y: -12, filter: "blur(8px)" }}
               transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
             >
-              {activeStep === "upload" && (
-                <UploadStep
+              {activeStep !== "video" && (
+                <SetupStep
                   slots={slots}
                   costumeType={costumeType}
                   supportViewCount={currentSupportViewCount}
                   setCostumeType={updateProductType}
                   onFile={updateSlotFile}
-                  canComplete={uploadReady}
-                  onComplete={() => completeUploadStep()}
-                />
-              )}
-              {activeStep === "storyboard" && (
-                <StoryboardStep
                   storyDirection={storyDirection}
                   setStoryDirection={updateStoryDirection}
                   storyIntent={storyIntent}
@@ -2747,9 +2989,6 @@ export function App() {
                   preflight={storyboardPreflight}
                   videoPackage={videoExecutionPackage}
                   apiSettings={apiSettings}
-                  aspectRatio={aspectRatio}
-                  motionMode={motionMode}
-                  productViews={slots}
                   error={storyboardError}
                   canGenerate={storyIntentCanGenerate}
                   isSubmitting={isSubmitting}
@@ -2758,33 +2997,19 @@ export function App() {
                   onGenerateStoryboards={requestStoryboards}
                   onCompilePackage={compileVideoPackage}
                   onToggleStoryboard={toggleStoryboardSelection}
+                  onStoryboardImageError={markStoryboardImageFailed}
                 />
               )}
               {activeStep === "video" && (
                 <VideoStep
-                  apiSettings={apiSettings}
-                  updateApiSettings={updateApiSettings}
-                  duration={actualVideoDuration}
-                  requestedDuration={requestedVideoDuration}
-                  setDuration={updateVideoDuration}
-                  motionMode={motionMode}
-                  setMotionMode={setMotionMode}
-                  canGenerate={videoReady}
-                  isSubmitting={isSubmitting}
-                  isTesting={testing === "video"}
-                  error={videoError}
                   aspectRatio={aspectRatio}
                   firstFrameUrl={selectedStoryboardAnchor}
                   status={videoStatus}
                   statusText={videoStatusText}
                   taskId={videoTaskId}
                   videoUrl={videoUrl}
-                  videoPrompt={videoExecutionPackage?.finalVideoPrompt || ""}
                   sourceScript={storyDirection}
                   historyItemId={currentVideoHistoryItemId}
-                  progressEvents={progressEvents}
-                  onGenerate={() => callBackend("video")}
-                  onTest={() => testApi("video")}
                   onPatchHistoryItem={patchHistoryItem}
                   onSaveRenderedVideoHistory={saveRenderedVideoHistory}
                 />
@@ -2792,6 +3017,43 @@ export function App() {
             </motion.div>
           </AnimatePresence>
         </main>
+
+        <aside className="shadcn-right-inspector">
+          {activeStep === "video" ? (
+            <VideoParameterPanel
+              apiSettings={apiSettings}
+              updateApiSettings={updateApiSettings}
+              duration={requestedVideoDuration}
+              submittedDuration={actualVideoDuration}
+              setDuration={updateVideoDuration}
+              aspectRatio={aspectRatio}
+              setAspectRatio={updateAspectRatio}
+              canGenerate={videoReady}
+              isWorking={isSubmitting || videoStatus === "submitted" || videoStatus === "polling"}
+              error={videoError}
+              statusText={videoStatusText}
+              taskId={videoTaskId}
+              videoPrompt={videoExecutionPackage?.finalVideoPrompt || ""}
+              progressEvents={progressEvents}
+              onGenerate={() => callBackend("video")}
+            />
+          ) : (
+            <div className="inspector-content compact-inspector">
+              <Card>
+                <CardHeader>
+                  <CardTitle>当前任务</CardTitle>
+                </CardHeader>
+                <CardContent className="inspector-stack">
+                  <div><span>产品</span><strong>{costumeType}</strong></div>
+                  <div><span>产品视图</span><strong>{requiredUrls.length}/4</strong></div>
+                  <div><span>首帧</span><strong>{selectedStoryboardAnchor ? "已确认" : "未确认"}</strong></div>
+                  <div><span>视频通道</span><strong>Kling</strong></div>
+                </CardContent>
+              </Card>
+              <ProgressPanel events={progressEvents} emptyText="生成首帧时显示真实进度。" />
+            </div>
+          )}
+        </aside>
       </div>
     </div>
   );
@@ -2813,7 +3075,7 @@ function HistoryInlinePanel(props: {
   }, [expandedId, props.items]);
 
   return (
-    <section className="history-inline-panel" aria-label="历史记录">
+    <section className="history-inline-panel" aria-label="历史记录" data-testid="history-panel">
       <div className="history-inline-head">
         <div>
           <span>历史记录</span>
@@ -2861,85 +3123,12 @@ function HistoryInlinePanel(props: {
   );
 }
 
-function UploadStep(props: {
+function SetupStep(props: {
   slots: UploadSlot[];
   costumeType: string;
   supportViewCount: number;
   setCostumeType: (value: string) => void;
   onFile: (id: string, file?: File) => void;
-  canComplete: boolean;
-  onComplete: () => void;
-}) {
-  function handleDrop(id: string, event: DragEvent<HTMLElement>) {
-    event.preventDefault();
-    props.onFile(id, event.dataTransfer.files?.[0]);
-  }
-
-  return (
-    <section className="stage-panel">
-      <StageHeader eyebrow="第 1 步" title="上传产品四视图" />
-      <div className="lock-note">核心四视图上传后进入脚本和首帧确认。正面、左侧、右侧、背面用于锁定尺寸、比例、外形和拓扑；选择本地预设产品时，已保存的辅助角度会在后台自动作为一致性证据进入模型。</div>
-      <div className="field-grid">
-        <label>
-          产品类型
-          <select value={props.costumeType} onChange={(event) => props.setCostumeType(event.target.value)}>
-            <option>鲨鱼充气服</option>
-            <option>奶牛充气服</option>
-            <option>灰色老鼠充气服</option>
-            <option>青蛙充气服</option>
-            <option>相扑充气服</option>
-          </select>
-        </label>
-      </div>
-      <div className="upload-section-title">
-        <strong>核心四视图</strong>
-        <span>必填，用于后台提取产品结构</span>
-      </div>
-      <div className="asset-grid">
-        {props.slots.map((slot) => (
-          <article className="asset-card" key={slot.id}>
-            <label className="asset-preview">
-              <input type="file" accept={slot.accept} onChange={(event) => props.onFile(slot.id, event.target.files?.[0])} />
-              <div
-                className="drop-zone"
-                onDragOver={(event) => event.preventDefault()}
-                onDrop={(event) => handleDrop(slot.id, event)}
-              >
-                {slot.localUrl ? (
-                  <img src={slot.localUrl} alt={slot.label} />
-                ) : (
-                  <div className="missing-asset">
-                    <CloudUpload size={30} />
-                    <span>{slot.label}</span>
-                    <small>上传图片</small>
-                  </div>
-                )}
-                <em>{slot.badge}</em>
-              </div>
-            </label>
-            <strong>{slot.label}</strong>
-            <small>{slot.fileName || slot.hint}</small>
-            {slot.source && <span className="asset-source">{slot.source === "preset" ? "本地预设" : "手动上传"}</span>}
-          </article>
-        ))}
-      </div>
-      {props.supportViewCount > 0 && (
-        <div className="preset-reference-note">
-          <strong>已绑定辅助角度</strong>
-          <span>{props.supportViewCount} 张本地辅助视角会随四视图一起进入模型，用来加固侧面和背面组件归位。</span>
-        </div>
-      )}
-      <div className="upload-actions">
-        <button className="primary-action" type="button" disabled={!props.canComplete} onClick={props.onComplete}>
-          <Check size={16} />
-          素材上传完成
-        </button>
-      </div>
-    </section>
-  );
-}
-
-function StoryboardStep(props: {
   storyDirection: string;
   setStoryDirection: (value: string) => void;
   storyIntent: StoryIntent | null;
@@ -2948,9 +3137,6 @@ function StoryboardStep(props: {
   preflight: StoryboardPreflight | null;
   videoPackage: VideoExecutionPackage | null;
   apiSettings: ApiSettings;
-  aspectRatio: string;
-  motionMode: MotionMode;
-  productViews: UploadSlot[];
   error: string;
   canGenerate: boolean;
   isSubmitting: boolean;
@@ -2959,44 +3145,76 @@ function StoryboardStep(props: {
   onGenerateStoryboards: () => void;
   onCompilePackage: () => void;
   onToggleStoryboard: (id: string) => void;
+  onStoryboardImageError: (id: string) => void;
 }) {
-  const hasFirstFrame = props.selectedStoryboardIds.length > 0;
+  const hasFirstFrame = props.storyboards.some((storyboard) => props.selectedStoryboardIds.includes(storyboard.id) && isRenderableImageUrl(storyboard.imageUrl) && !isHistoryAssetRef(storyboard.imageUrl));
   const working = props.activeJob === "storyboard";
+  function handleDrop(id: string, event: DragEvent<HTMLElement>) {
+    event.preventDefault();
+    props.onFile(id, event.dataTransfer.files?.[0]);
+  }
+
   return (
-    <section className="stage-panel">
-      <StageHeader eyebrow="第 2 步" title="脚本生成首帧" />
-      <div className="lock-note">贴上一次性视频脚本或动作文字，先自动生成一张首帧；用户确认首帧后，下一步会像 Kling 一样把同一段脚本、首帧和四视图一起提交视频模型。</div>
+    <section className="stage-panel setup-screen" data-testid="setup-screen">
+      <StageHeader title="素材与首帧" />
+      <div className="lock-note">上传或确认四视图，直接贴脚本生成首帧。首帧确认后，下一步会把同一段脚本、首帧和四视图一起提交视频模型。</div>
       <div className="two-col">
         <div className="stack">
+          <div className="scenario-card setup-product-card" data-testid="upload-screen">
+            <label className="shadcn-field setup-product-select">
+              产品类型
+              <Select data-testid="product-select" value={props.costumeType} onChange={(event) => props.setCostumeType(event.target.value)}>
+                <option>鲨鱼充气服</option>
+                <option>奶牛充气服</option>
+                <option>灰色老鼠充气服</option>
+                <option>青蛙充气服</option>
+                <option>相扑充气服</option>
+              </Select>
+            </label>
+            <div className="asset-grid setup-asset-grid">
+              {props.slots.map((slot) => (
+                <article className="asset-card compact-asset-card" key={slot.id}>
+                  <label className="asset-preview">
+                    <input type="file" accept={slot.accept} onChange={(event) => props.onFile(slot.id, event.target.files?.[0])} />
+                    <div
+                      className="drop-zone"
+                      onDragOver={(event) => event.preventDefault()}
+                      onDrop={(event) => handleDrop(slot.id, event)}
+                    >
+                      {slot.localUrl ? (
+                        <img src={slot.localUrl} alt={slot.label} />
+                      ) : (
+                        <div className="missing-asset">
+                          <CloudUpload size={24} />
+                          <span>{slot.label}</span>
+                        </div>
+                      )}
+                      <em>{slot.badge}</em>
+                    </div>
+                  </label>
+                  <strong>{slot.label}</strong>
+                  <small>{slot.fileName || slot.hint}</small>
+                </article>
+              ))}
+            </div>
+            {props.supportViewCount > 0 && (
+              <div className="preset-reference-note compact-note">
+                <strong>辅助角度</strong>
+                <span>{props.supportViewCount} 张本地辅助视角会随四视图一起进入模型。</span>
+              </div>
+            )}
+          </div>
           <div className="scenario-card prompt-card first-frame-script-card">
             <div className="prompt-label-row">
               <span>视频脚本 / 动作文字</span>
             </div>
-            <textarea value={props.storyDirection} onChange={(event) => props.setStoryDirection(event.target.value)} placeholder="把视频脚本直接贴在这里。默认按一整段 prompt 生成首帧；如果你自己写了 0-2 秒、2-5 秒这样的节奏，后面视频再按这个节奏处理。" />
+            <Textarea data-testid="script-input" value={props.storyDirection} onChange={(event) => props.setStoryDirection(event.target.value)} placeholder="把视频脚本直接贴在这里。默认按一整段 prompt 生成首帧；如果你自己写了 0-2 秒、2-5 秒这样的节奏，后面视频再按这个节奏处理。" />
             <div className="center-flow-actions">
-              <button className="primary-action" type="button" disabled={!props.canGenerate || working} onClick={props.onGenerateStoryboards}>
+              <Button className="primary-action" type="button" disabled={!props.canGenerate || working} onClick={props.onGenerateStoryboards} data-testid="generate-first-frame">
                 {working ? <LoaderCircle className="spin" size={16} /> : <Send size={16} />}
                 生成首帧
-              </button>
+              </Button>
             </div>
-          </div>
-          <div className="storyboard-reference-grid">
-            {props.productViews.map((slot) => (
-              <div className="review-pane" key={slot.id}>
-                <div className="review-pane-head">
-                  <strong>{slot.label}</strong>
-                  <span>{slot.badge}</span>
-                </div>
-                {slot.localUrl ? (
-                  <img className="review-image" src={slot.localUrl} alt={slot.label} />
-                ) : (
-                  <div className="frame-placeholder compact">
-                    <FileImage size={34} />
-                    <strong>等待{slot.label}</strong>
-                  </div>
-                )}
-              </div>
-            ))}
           </div>
           <div className="storyboard-grid first-frame-review-grid">
             {props.storyboards.length === 0 ? (
@@ -3007,9 +3225,17 @@ function StoryboardStep(props: {
             ) : (
               props.storyboards.map((storyboard) => {
                 const selected = props.selectedStoryboardIds.includes(storyboard.id);
+                const canRenderImage = isRenderableImageUrl(storyboard.imageUrl) && !isHistoryAssetRef(storyboard.imageUrl);
                 return (
-                  <button className={cn("storyboard-card", selected && "selected")} type="button" key={storyboard.id} onClick={() => props.onToggleStoryboard(storyboard.id)}>
-                    <img src={storyboard.imageUrl} alt={storyboard.beat} />
+                  <button className={cn("storyboard-card", selected && "selected", !canRenderImage && "broken")} type="button" key={storyboard.id} onClick={() => canRenderImage && props.onToggleStoryboard(storyboard.id)} disabled={!canRenderImage} data-testid="first-frame-card">
+                    {canRenderImage ? (
+                      <img src={storyboard.imageUrl} alt={storyboard.beat} onError={() => props.onStoryboardImageError(storyboard.id)} />
+                    ) : (
+                      <div className="broken-first-frame">
+                        <FileImage size={34} />
+                        <span>首帧图片无法打开</span>
+                      </div>
+                    )}
                     <span>{storyboard.viewAngle}</span>
                     <strong>{storyboard.beat}</strong>
                     <small>{storyboard.action}</small>
@@ -3019,10 +3245,10 @@ function StoryboardStep(props: {
             )}
           </div>
           <div className="center-flow-actions">
-            <button className="secondary-action confirm-first-frame-action" disabled={!hasFirstFrame || working} onClick={props.onCompilePackage}>
+            <Button variant="outline" className="secondary-action confirm-first-frame-action" disabled={!hasFirstFrame || working} onClick={props.onCompilePackage} data-testid="confirm-first-frame">
               {working ? <LoaderCircle className="spin" size={16} /> : <ShieldCheck size={16} />}
               确认首帧并进入视频
-            </button>
+            </Button>
           </div>
           {(props.preflight || props.videoPackage) && (
             <div className={cn("preflight-card", props.preflight?.status || "pass")}>
@@ -3034,19 +3260,11 @@ function StoryboardStep(props: {
             </div>
           )}
         </div>
-        <div className="parameter-panel">
-          <h3>首帧状态</h3>
+        <div className="parameter-panel setup-status-panel">
+          <h3>状态</h3>
           <div className="api-fixed-note">
             <strong>模型</strong>
             <span>{props.apiSettings.imageModel}</span>
-          </div>
-          <div className="api-fixed-note">
-            <strong>比例</strong>
-            <span>{props.aspectRatio}</span>
-          </div>
-          <div className="api-fixed-note">
-            <strong>一致性</strong>
-            <span>{props.motionMode === "strict" ? "高一致性" : props.motionMode === "creative" ? "创意" : "平衡"}</span>
           </div>
           {props.error && <div className={cn("field-error", getStatusMessageTone(props.error))}>{props.error}</div>}
           {!props.canGenerate && <div className="field-hint">请先确认四张核心视图已加载。</div>}
@@ -3059,169 +3277,141 @@ function StoryboardStep(props: {
 }
 
 function VideoStep(props: {
-  apiSettings: ApiSettings;
-  updateApiSettings: (patch: Partial<ApiSettings>) => void;
-  duration: number;
-  requestedDuration: number;
-  setDuration: (value: number) => void;
-  motionMode: MotionMode;
-  setMotionMode: (value: MotionMode) => void;
-  canGenerate: boolean;
-  isSubmitting: boolean;
-  isTesting: boolean;
-  error: string;
   aspectRatio: string;
   firstFrameUrl: string;
   status: VideoStatus;
   statusText: string;
   taskId: string;
   videoUrl: string;
-  videoPrompt: string;
   sourceScript: string;
   historyItemId: string;
-  progressEvents: ProgressEvent[];
-  onGenerate: () => void;
-  onTest: () => void;
   onPatchHistoryItem: (id: string, patch: Partial<HistoryItem>) => void;
   onSaveRenderedVideoHistory: (filePath: string, fileName: string) => void;
 }) {
-  const isWorking = props.isSubmitting || props.status === "submitted" || props.status === "polling";
-  const durationCap = getVideoModelDurationCap(props.apiSettings.videoProvider, props.apiSettings.videoModel);
-  const modelOptions = getVideoModelOptions(props.apiSettings.videoProvider);
+  const isWorking = props.status === "submitted" || props.status === "polling";
   return (
-    <section className="stage-panel">
-      <StageHeader eyebrow="第 3 步" title="生成视频" />
-      <div className="two-col">
-        <div className="stack">
-          <div className={cn("video-preview", `media-ratio-${props.aspectRatio.replace(":", "-")}`)}>
-            {props.videoUrl ? (
-              <video controls controlsList="nodownload" playsInline src={props.videoUrl} />
-            ) : isWorking ? (
-              <div className="video-status-card video-generating-card">
-                <div className="video-generating-frame" aria-hidden="true">
-                  {props.firstFrameUrl ? (
-                    <img src={props.firstFrameUrl} alt="" />
-                  ) : (
-                    <Film size={42} />
-                  )}
-                </div>
-                <div className="video-generating-hud">
-                  <LoaderCircle className="spin" size={28} />
-                  <strong>{props.statusText || "视频生成中"}</strong>
-                  {props.taskId && <span>任务号：{props.taskId}</span>}
-                </div>
+    <section className="stage-panel" data-testid="video-screen">
+      <StageHeader title="生成视频" />
+      <div className="video-main-stack">
+        <div className={cn("video-preview", `media-ratio-${props.aspectRatio.replace(":", "-")}`)}>
+          {props.videoUrl ? (
+            <video controls controlsList="nodownload" playsInline src={props.videoUrl} />
+          ) : isWorking ? (
+            <div className="video-status-card video-generating-card">
+              <div className="video-generating-frame" aria-hidden="true">
+                {props.firstFrameUrl ? (
+                  <img src={props.firstFrameUrl} alt="" />
+                ) : (
+                  <Film size={42} />
+                )}
               </div>
-            ) : (
-              <div className="video-status-card">
-                <Play size={42} />
-                <strong>{props.statusText || "视频预览"}</strong>
+              <div className="video-generating-hud">
+                <LoaderCircle className="spin" size={28} />
+                <strong>{props.statusText || "视频生成中"}</strong>
+                {props.taskId && <span>任务号：{props.taskId}</span>}
               </div>
-            )}
-          </div>
-          <PostProductionPanel
-            sourceScript={props.sourceScript}
-            videoUrl={props.videoUrl}
-            historyItemId={props.historyItemId}
-            onPatchHistoryItem={props.onPatchHistoryItem}
-            onSaveRenderedVideoHistory={props.onSaveRenderedVideoHistory}
-          />
-        </div>
-        <div className="parameter-panel">
-          <h3>视频参数</h3>
-          <label>
-            视频站点
-            <select value={props.apiSettings.videoProvider} onChange={(event) => props.updateApiSettings({ videoProvider: event.target.value as ApiSettings["videoProvider"] })}>
-              {VIDEO_PROVIDER_OPTIONS.map((provider) => (
-                <option key={provider.value} value={provider.value}>
-                  {provider.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            视频模型
-            <select value={props.apiSettings.videoModel} onChange={(event) => props.updateApiSettings({ videoModel: event.target.value })}>
-              {modelOptions.map((model) => (
-                <option key={model.value} value={model.value}>
-                  {model.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <button className="secondary-action full-width" type="button" onClick={props.onTest} disabled={props.isTesting}>
-            {props.isTesting ? <LoaderCircle className="spin" size={16} /> : <Sparkles size={16} />}
-            测试接口
-          </button>
-          <label>
-            视频接口
-            <input
-              value={props.apiSettings.videoBaseUrl}
-              readOnly
-              placeholder={DEFAULT_VIDEO_BASE_URL}
-              autoComplete="off"
-              name="video-api-url"
-            />
-          </label>
-          <label>
-            视频 API Key
-            <div className="key-input">
-              <KeyRound size={16} />
-              <input
-                value={props.apiSettings.videoApiKey}
-                type="password"
-                readOnly
-                placeholder="后台按所选站点自动配置"
-                autoComplete="new-password"
-                name="video-api-token"
-              />
             </div>
-          </label>
-          <label>
-            时长
-            <input
-              type="number"
-              min={durationCap.min}
-              max={durationCap.max}
-              value={props.duration}
-              onChange={(event) => props.setDuration(Number(event.target.value))}
-            />
-            <small className="field-hint">
-              {durationCap.note}
-              {props.requestedDuration !== props.duration ? ` 原来选择的 ${props.requestedDuration} 秒已按当前站点改为 ${props.duration} 秒。` : ""}
-            </small>
-          </label>
-          <div className="segmented">
-            {[
-              ["strict", "高一致性"],
-              ["balanced", "平衡"],
-              ["creative", "创意"],
-            ].map(([value, label]) => (
-              <button
-                key={value}
-                className={props.motionMode === value ? "active" : ""}
-                onClick={() => props.setMotionMode(value as MotionMode)}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-          <label className="video-prompt-editor">
-            视频提示词
-            <textarea
-              value={props.videoPrompt}
-              readOnly
-              placeholder="执行包通过预检后自动生成，不在视频提交前手工改写。"
-            />
-          </label>
-          <button className="primary-action" disabled={!props.canGenerate || isWorking} onClick={props.onGenerate}>
-            {isWorking ? <LoaderCircle className="spin" size={16} /> : <Sparkles size={16} />}
-            {isWorking ? "生成中" : "生成视频"}
-          </button>
-          {props.error && <div className={cn("field-error", getStatusMessageTone(props.error))}>{props.error}</div>}
-          <ProgressPanel events={props.progressEvents} emptyText="视频生成开始后会显示安全预检、提交、轮询和产物返回。" />
+          ) : (
+            <div className="video-status-card">
+              <Play size={42} />
+              <strong>{props.statusText || "视频预览"}</strong>
+            </div>
+          )}
         </div>
+        <PostProductionPanel
+          sourceScript={props.sourceScript}
+          videoUrl={props.videoUrl}
+          historyItemId={props.historyItemId}
+          onPatchHistoryItem={props.onPatchHistoryItem}
+          onSaveRenderedVideoHistory={props.onSaveRenderedVideoHistory}
+        />
       </div>
     </section>
+  );
+}
+
+function VideoParameterPanel(props: {
+  apiSettings: ApiSettings;
+  updateApiSettings: (patch: Partial<ApiSettings>) => void;
+  duration: number;
+  submittedDuration: number;
+  setDuration: (value: number) => void;
+  aspectRatio: string;
+  setAspectRatio: (value: string) => void;
+  canGenerate: boolean;
+  isWorking: boolean;
+  error: string;
+  statusText: string;
+  taskId: string;
+  videoPrompt: string;
+  progressEvents: ProgressEvent[];
+  onGenerate: () => void;
+}) {
+  const modelOptions = getVideoModelOptions(KLING_VIDEO_PROVIDER);
+  return (
+    <div className="parameter-panel video-side-params" data-testid="video-parameter-panel">
+      <h3>视频参数</h3>
+      <div className="api-fixed-note">
+        <strong>渠道</strong>
+        <span>Kling</span>
+      </div>
+      <label className="shadcn-field">
+        比例
+        <div className="ratio-grid compact-ratio-grid" data-testid="aspect-ratio-control">
+          {["9:16", "1:1", "16:9"].map((ratio) => (
+            <button
+              className={props.aspectRatio === ratio ? "active" : ""}
+              type="button"
+              key={ratio}
+              onClick={() => props.setAspectRatio(ratio)}
+            >
+              <i data-ratio={ratio} />
+              {ratio}
+            </button>
+          ))}
+        </div>
+      </label>
+      <label className="shadcn-field">
+        模型
+        <Select data-testid="video-model-select" value={props.apiSettings.videoModel} onChange={(event) => props.updateApiSettings({ videoModel: event.target.value })}>
+          {modelOptions.map((model) => (
+            <option key={model.value} value={model.value}>
+              {model.label}
+            </option>
+          ))}
+        </Select>
+      </label>
+      <label className="shadcn-field">
+        时长
+        <Input
+          data-testid="video-duration-input"
+          type="number"
+          min={VIDEO_DURATION_INPUT_MIN}
+          max={VIDEO_DURATION_INPUT_MAX}
+          step="1"
+          value={props.duration}
+          onChange={(event) => props.setDuration(clampWholeSeconds(Number(event.target.value), props.duration))}
+        />
+      </label>
+      <label className="video-prompt-editor shadcn-field">
+        视频提示词
+        <Textarea
+          value={props.videoPrompt}
+          readOnly
+          placeholder="确认首帧后自动生成。"
+        />
+      </label>
+      <Button className="primary-action" disabled={!props.canGenerate || props.isWorking} onClick={props.onGenerate} data-testid="generate-video">
+        {props.isWorking ? <LoaderCircle className="spin" size={16} /> : <Sparkles size={16} />}
+        {props.isWorking ? "生成中" : "生成视频"}
+      </Button>
+      {props.submittedDuration !== props.duration && (
+        <div className="field-hint">Kling 提交时会按模型限制使用 {props.submittedDuration} 秒。</div>
+      )}
+      {props.statusText && <div className={cn("field-error", "info")}>{props.statusText}{props.taskId ? `：${props.taskId}` : ""}</div>}
+      {props.error && <div className={cn("field-error", getStatusMessageTone(props.error))}>{props.error}</div>}
+      <ProgressPanel events={props.progressEvents} emptyText="视频生成开始后显示进度。" />
+    </div>
   );
 }
 
@@ -3241,6 +3431,8 @@ function PostProductionPanel(props: {
   const [subtitlesEnabled, setSubtitlesEnabled] = useState(true);
   const [voiceoverEnabled, setVoiceoverEnabled] = useState(true);
   const [assetStatus, setAssetStatus] = useState("");
+  const [downloadStatus, setDownloadStatus] = useState<DownloadStatus | null>(null);
+  const [revealStatus, setRevealStatus] = useState<RevealStatus | null>(null);
   const [isGeneratingAssets, setIsGeneratingAssets] = useState(false);
   const [isDownloadingVideo, setIsDownloadingVideo] = useState(false);
   const [isPreviewPlaying, setIsPreviewPlaying] = useState(false);
@@ -3248,13 +3440,18 @@ function PostProductionPanel(props: {
   const [previewDuration, setPreviewDuration] = useState(0);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const voiceoverAudioRef = useRef<HTMLAudioElement | null>(null);
-  const sourceSegments = useMemo(() => parseTimedScriptSegments(props.sourceScript), [props.sourceScript]);
+  const parsedSourceSegments = useMemo(() => parseTimedScriptSegments(props.sourceScript), [props.sourceScript]);
+  const sourceSegments = useMemo(() => createEditablePostSegmentsFromScript(props.sourceScript, 0), [props.sourceScript]);
   const voiceoverText = useMemo(() => editableSegments.map((segment) => segment.voiceover.trim()).filter(Boolean).join("\n"), [editableSegments]);
   const activeSubtitle = useMemo(
     () => (subtitlesEnabled ? generatedSegments.find((segment) => previewTime >= segment.start && previewTime < segment.end)?.subtitle || "" : ""),
     [generatedSegments, previewTime, subtitlesEnabled],
   );
   const canGenerateAssets = Boolean(props.videoUrl && editableSegments.length && (subtitlesEnabled || (voiceoverEnabled && voiceoverText.trim())));
+  const postToggleOptions = [
+    { id: "subtitle" as const, label: "字幕", checked: subtitlesEnabled, setChecked: setSubtitlesEnabled, testId: "subtitle-toggle" },
+    { id: "voiceover" as const, label: "旁白", checked: voiceoverEnabled, setChecked: setVoiceoverEnabled, testId: "voiceover-toggle" },
+  ];
 
   useEffect(() => {
     setEditableSegments(sourceSegments);
@@ -3263,6 +3460,8 @@ function PostProductionPanel(props: {
     setPreviewDuration(0);
     setIsPreviewPlaying(false);
     setAssetStatus("");
+    setDownloadStatus(null);
+    setRevealStatus(null);
     setVoiceoverAudioBase64("");
     setVoiceoverAudioContentType("audio/mpeg");
     setVoiceoverAudioUrl((current) => {
@@ -3279,6 +3478,78 @@ function PostProductionPanel(props: {
     setEditableSegments((current) =>
       current.map((segment, segmentIndex) => (segmentIndex === index ? { ...segment, [field]: value } : segment)),
     );
+  }
+
+  function cascadeEditableSegments(segments: TimedScriptSegment[], changedIndex = 0) {
+    const next = segments.map((segment) => ({ ...segment }));
+    for (let index = Math.max(changedIndex + 1, 1); index < next.length; index += 1) {
+      const duration = getSegmentDuration(next[index]);
+      const start = clampWholeSeconds(next[index - 1].end);
+      next[index].start = start;
+      next[index].end = Math.min(VIDEO_DURATION_INPUT_MAX, start + duration);
+      if (next[index].end <= next[index].start) next[index].end = Math.min(VIDEO_DURATION_INPUT_MAX, next[index].start + DEFAULT_SUBTITLE_BLOCK_SECONDS);
+    }
+    return next.filter((segment) => segment.end > segment.start);
+  }
+
+  function autoLayoutEditableSegments() {
+    setEditableSegments((current) => {
+      if (!current.length) return [createEmptyPostSegment()];
+      const firstStart = clampWholeSeconds(current[0].start);
+      const firstDuration = getSegmentDuration(current[0]);
+      const normalized = current.map((segment, index) => {
+        if (index === 0) return { ...segment, start: firstStart, end: Math.min(VIDEO_DURATION_INPUT_MAX, firstStart + firstDuration) };
+        return { ...segment };
+      });
+      return cascadeEditableSegments(normalized, 0);
+    });
+    setGeneratedSegments([]);
+  }
+
+  function updateEditableSegmentTime(index: number, field: "start" | "end", value: number) {
+    setEditableSegments((current) => {
+      const next = current.map((segment) => ({ ...segment }));
+      const segment = next[index];
+      if (!segment) return current;
+      const numeric = clampWholeSeconds(value, segment[field]);
+      if (field === "start") {
+        segment.start = numeric;
+        if (segment.end <= segment.start) segment.end = Math.min(VIDEO_DURATION_INPUT_MAX, segment.start + DEFAULT_SUBTITLE_BLOCK_SECONDS);
+      } else {
+        segment.end = numeric;
+        if (segment.end <= segment.start) segment.end = Math.min(VIDEO_DURATION_INPUT_MAX, segment.start + DEFAULT_SUBTITLE_BLOCK_SECONDS);
+      }
+      return cascadeEditableSegments(next, index);
+    });
+    setGeneratedSegments([]);
+  }
+
+  function addEditableSegment() {
+    setEditableSegments((current) => {
+      const last = current[current.length - 1];
+      const nextStart = last ? clampWholeSeconds(last.end) : 0;
+      const nextEnd = Math.min(VIDEO_DURATION_INPUT_MAX, nextStart + DEFAULT_SUBTITLE_BLOCK_SECONDS);
+      const nextSegment = createEmptyPostSegment(nextStart, Math.max(1, nextEnd - nextStart));
+      return [...current, nextSegment];
+    });
+    setGeneratedSegments([]);
+  }
+
+  function removeEditableSegment(index: number) {
+    setEditableSegments((current) => cascadeEditableSegments(current.filter((_, segmentIndex) => segmentIndex !== index), Math.max(0, index - 1)));
+    setGeneratedSegments([]);
+  }
+
+  function handlePreviewMetadata(video: HTMLVideoElement) {
+    const nextDuration = video.duration || 0;
+    setPreviewDuration(nextDuration);
+    if (parsedSourceSegments.length) return;
+    setEditableSegments((current) => {
+      const canAutoExpand =
+        current.length <= 1 &&
+        current.every((segment) => !segment.subtitle.trim() && !segment.voiceover.trim() && segment.start === 0 && segment.end <= DEFAULT_SUBTITLE_BLOCK_SECONDS);
+      return canAutoExpand ? createEmptyPostSegments(nextDuration) : current;
+    });
   }
 
   async function syncVoiceoverWithVideo(video: HTMLVideoElement) {
@@ -3321,7 +3592,7 @@ function PostProductionPanel(props: {
       return;
     }
     if (!editableSegments.length) {
-      setAssetStatus("脚本里没有识别到 0-3秒 这类时间段，暂时不能对齐字幕。");
+      setAssetStatus("请先添加至少一条字幕或旁白时间段。");
       return;
     }
     if (!subtitlesEnabled && !voiceoverEnabled) {
@@ -3380,7 +3651,8 @@ function PostProductionPanel(props: {
       return;
     }
     setIsDownloadingVideo(true);
-    setAssetStatus("正在保存 MP4 到本机下载文件夹...");
+    setAssetStatus("正在保存下载...");
+    setDownloadStatus(null);
     try {
       const { filePath, fileName } = await renderPostVideoToDownloads(
         props.videoUrl,
@@ -3392,7 +3664,9 @@ function PostProductionPanel(props: {
       );
       props.onPatchHistoryItem(props.historyItemId, { renderedVideoPath: filePath, renderedVideoFileName: fileName });
       props.onSaveRenderedVideoHistory(filePath, fileName);
-      setAssetStatus(`已保存为可打开的 MP4：${filePath}`);
+      triggerBrowserDownload(getLocalVideoAssetUrl(filePath), fileName || "subtitle-voiceover-rendered.mp4");
+      setAssetStatus("已保存下载。");
+      setDownloadStatus(createDownloadStatus(filePath, fileName));
     } catch (error) {
       setAssetStatus(error instanceof Error ? error.message : "视频下载失败。");
     } finally {
@@ -3400,8 +3674,20 @@ function PostProductionPanel(props: {
     }
   }
 
+  async function revealDownloadedVideo() {
+    const filePath = downloadStatus?.filePath;
+    if (!filePath) return;
+    setRevealStatus(null);
+    try {
+      await revealLocalVideoInFolder(filePath);
+      setRevealStatus({ tone: "ok", message: "已打开本机文件所在位置。" });
+    } catch (error) {
+      setRevealStatus({ tone: "error", message: error instanceof Error ? error.message : "无法打开本机文件所在位置。" });
+    }
+  }
+
   return (
-    <div className="post-production-panel">
+    <div className="post-production-panel" data-testid="post-production-panel">
       <div className="post-production-head">
         <div>
           <span>后期资产</span>
@@ -3410,52 +3696,112 @@ function PostProductionPanel(props: {
         <em>{props.videoUrl ? "视频已就绪" : "等待视频"}</em>
       </div>
       <div className="post-production-controls">
-        <label className="toggle-control">
-          <input type="checkbox" checked={subtitlesEnabled} onChange={(event) => setSubtitlesEnabled(event.target.checked)} />
-          字幕
-        </label>
-        <label className="toggle-control">
-          <input type="checkbox" checked={voiceoverEnabled} onChange={(event) => setVoiceoverEnabled(event.target.checked)} />
-          旁白
-        </label>
+        <div className="segmented post-toggle-group" aria-label="后期功能开关">
+          {postToggleOptions.map((option) => (
+            <label className={cn("toggle-control post-toggle-pill", option.checked && "active")} key={option.id}>
+              <Switch
+                className="post-toggle-input"
+                checked={option.checked}
+                onChange={(event) => option.setChecked(event.target.checked)}
+                aria-label={option.label}
+                data-testid={option.testId}
+              />
+              <span>{option.label}</span>
+            </label>
+          ))}
+        </div>
         <div className="segmented voice-choice" aria-label="旁白声音">
           {[
             ["female", "女声"],
             ["male", "男声"],
           ].map(([value, label]) => (
-            <button key={value} type="button" className={voiceGender === value ? "active" : ""} onClick={() => setVoiceGender(value as "female" | "male")}>
+            <Button key={value} type="button" variant="ghost" className={voiceGender === value ? "active" : ""} onClick={() => setVoiceGender(value as "female" | "male")} data-testid={`voice-${value}`}>
               {label}
-            </button>
+            </Button>
           ))}
         </div>
       </div>
-      {editableSegments.length ? (
-        <div className="caption-voice-editor">
+      <div className="caption-voice-editor">
+        {editableSegments.length ? (
+          <>
           {editableSegments.map((segment, index) => (
             <article className="caption-voice-row" key={`${segment.start}-${segment.end}-${index}`}>
-              <div className="caption-voice-time">
-                {formatTimelineTime(segment.start)} - {formatTimelineTime(segment.end)}
+              <div className="caption-time-fields">
+                <label>
+                  开始
+                  <Input
+                    data-testid={`caption-start-${index}`}
+                    type="number"
+                    min={VIDEO_DURATION_INPUT_MIN}
+                    max={VIDEO_DURATION_INPUT_MAX}
+                    step="1"
+                    value={segment.start}
+                    onChange={(event) => updateEditableSegmentTime(index, "start", Number(event.target.value))}
+                  />
+                </label>
+                <label>
+                  结束
+                  <Input
+                    data-testid={`caption-end-${index}`}
+                    type="number"
+                    min={VIDEO_DURATION_INPUT_MIN}
+                    max={VIDEO_DURATION_INPUT_MAX}
+                    step="1"
+                    value={segment.end}
+                    onChange={(event) => updateEditableSegmentTime(index, "end", Number(event.target.value))}
+                  />
+                </label>
+                <button className="icon-action subtle" type="button" onClick={() => removeEditableSegment(index)} aria-label="删除这一条字幕">
+                  <Trash2 size={15} />
+                </button>
               </div>
               <label className={!subtitlesEnabled ? "disabled-field" : ""}>
                 字幕
-                <textarea disabled={!subtitlesEnabled} value={segment.subtitle} onChange={(event) => updateEditableSegment(index, "subtitle", event.target.value)} />
+                <Textarea disabled={!subtitlesEnabled} value={segment.subtitle} onChange={(event) => updateEditableSegment(index, "subtitle", event.target.value)} />
               </label>
               <label className={!voiceoverEnabled ? "disabled-field" : ""}>
                 旁白
-                <textarea disabled={!voiceoverEnabled} value={segment.voiceover} onChange={(event) => updateEditableSegment(index, "voiceover", event.target.value)} />
+                <Textarea disabled={!voiceoverEnabled} value={segment.voiceover} onChange={(event) => updateEditableSegment(index, "voiceover", event.target.value)} />
               </label>
             </article>
           ))}
-        </div>
-      ) : null}
-      <div className="post-production-actions single-action-row">
-        <button className="primary-action compact-action" type="button" disabled={isGeneratingAssets || !canGenerateAssets} onClick={generatePostAssets}>
-          {isGeneratingAssets ? <LoaderCircle className="spin" size={16} /> : <Volume2 size={16} />}
-          {isGeneratingAssets ? "生成中" : "一键生成字幕和旁白"}
+          </>
+        ) : (
+          <div className="post-asset-empty">暂无字幕段</div>
+        )}
+        <button className="add-caption-segment" type="button" onClick={addEditableSegment} data-testid="add-caption-segment">
+          <Plus size={16} />
+          增加一条
+        </button>
+        <button className="add-caption-segment auto-layout-segments" type="button" onClick={autoLayoutEditableSegments} data-testid="auto-layout-segments">
+          自动排布
         </button>
       </div>
+      <div className="post-production-actions single-action-row">
+        <Button className="primary-action compact-action" type="button" disabled={isGeneratingAssets || !canGenerateAssets} onClick={generatePostAssets} data-testid="generate-post-assets">
+          {isGeneratingAssets ? <LoaderCircle className="spin" size={16} /> : <Volume2 size={16} />}
+          {isGeneratingAssets ? "生成中" : "一键生成字幕和旁白"}
+        </Button>
+      </div>
       {assetStatus && <small className="post-production-status">{assetStatus}</small>}
-      {!sourceSegments.length && <small className="post-production-status">脚本需要包含 0-3秒、3-6秒 这样的时间段，系统会按这些时间点上字幕。</small>}
+      {downloadStatus?.filePath && (
+        <div className="download-location-card" data-testid="download-location">
+          <span>{downloadStatus.message}</span>
+          <code>{downloadStatus.filePath}</code>
+          <div className="download-location-actions">
+            <a className="secondary-action compact-action" href={getLocalVideoAssetUrl(downloadStatus.filePath)} download={downloadStatus.fileName || "video-asset.mp4"}>
+              重新下载
+            </a>
+            <a className="secondary-action compact-action" href={getLocalVideoAssetUrl(downloadStatus.filePath)} target="_blank" rel="noreferrer">
+              打开文件
+            </a>
+            <Button variant="outline" className="secondary-action compact-action" type="button" onClick={revealDownloadedVideo} data-testid="reveal-final-mp4">
+              打开所在位置
+            </Button>
+          </div>
+          {revealStatus && <small className={cn("reveal-status", revealStatus.tone === "error" && "error")}>{revealStatus.message}</small>}
+        </div>
+      )}
       <div className="post-asset-preview">
         {props.videoUrl ? (
           <div className="captioned-video-shell">
@@ -3464,7 +3810,7 @@ function PostProductionPanel(props: {
               playsInline
               src={props.videoUrl}
               onClick={() => void togglePreviewPlayback()}
-              onLoadedMetadata={(event) => setPreviewDuration(event.currentTarget.duration || 0)}
+              onLoadedMetadata={(event) => handlePreviewMetadata(event.currentTarget)}
               onPlay={(event) => {
                 setIsPreviewPlaying(true);
                 void syncVoiceoverWithVideo(event.currentTarget);
@@ -3485,12 +3831,11 @@ function PostProductionPanel(props: {
             />
             {activeSubtitle && <div className="caption-overlay">{activeSubtitle}</div>}
             <div className="preview-video-controls">
-              <button type="button" onClick={() => void togglePreviewPlayback()} aria-label={isPreviewPlaying ? "暂停预览" : "播放预览"}>
+              <Button type="button" variant="ghost" onClick={() => void togglePreviewPlayback()} aria-label={isPreviewPlaying ? "暂停预览" : "播放预览"}>
                 {isPreviewPlaying ? <Pause size={15} /> : <Play size={15} />}
-              </button>
+              </Button>
               <span>{formatTimelineTime(previewTime)}</span>
-              <input
-                type="range"
+              <Slider
                 min="0"
                 max={previewDuration || 0}
                 step="0.1"
@@ -3510,10 +3855,10 @@ function PostProductionPanel(props: {
           </div>
         )}
         {props.videoUrl && (
-          <button className="secondary-action compact-action download-video-action" type="button" disabled={isDownloadingVideo} onClick={downloadPreviewVideo}>
+          <Button variant="outline" className="secondary-action compact-action download-video-action" type="button" disabled={isDownloadingVideo} onClick={downloadPreviewVideo} data-testid="download-final-mp4">
             {isDownloadingVideo ? <LoaderCircle className="spin" size={15} /> : <Download size={15} />}
-            {isDownloadingVideo ? "保存中" : "保存到下载文件夹 MP4"}
-          </button>
+            {isDownloadingVideo ? "保存中" : "保存下载"}
+          </Button>
         )}
       </div>
     </div>
@@ -3547,10 +3892,10 @@ function ProgressPanel(props: { events: ProgressEvent[]; emptyText: string }) {
   );
 }
 
-function StageHeader(props: { eyebrow: string; title: string }) {
+function StageHeader(props: { eyebrow?: string; title: string }) {
   return (
     <div className="stage-header">
-      <span>{props.eyebrow}</span>
+      {props.eyebrow && <span>{props.eyebrow}</span>}
       <h1>{props.title}</h1>
     </div>
   );
@@ -3655,6 +4000,8 @@ function HistoryDetail(props: { item: HistoryItem; onOpenItem: () => void }) {
   const [resolvedAssetUrl, setResolvedAssetUrl] = useState(isHistoryAssetRef(storedAssetUrl) ? "" : storedAssetUrl);
   const [assetLoading, setAssetLoading] = useState(isHistoryAssetRef(storedAssetUrl));
   const [downloadStatus, setDownloadStatus] = useState("");
+  const [savedDownload, setSavedDownload] = useState<DownloadStatus | null>(null);
+  const [revealStatus, setRevealStatus] = useState<RevealStatus | null>(null);
   const [isSavingVideo, setIsSavingVideo] = useState(false);
   const assetUrl = renderedAssetUrl || (isHistoryAssetRef(storedAssetUrl) ? resolvedAssetUrl : storedAssetUrl);
   const isVideoAsset = Boolean(props.item.videoUrl || props.item.renderedVideoPath);
@@ -3679,10 +4026,14 @@ function HistoryDetail(props: { item: HistoryItem; onOpenItem: () => void }) {
     const saveTarget = props.item.renderedVideoPath || assetUrl;
     if (!saveTarget || !isVideoAsset) return;
     setIsSavingVideo(true);
-    setDownloadStatus("正在保存 MP4 到下载文件夹...");
+    setDownloadStatus("正在保存下载...");
+    setSavedDownload(null);
+    setRevealStatus(null);
     try {
       const filePath = await saveVideoAssetToDownloads(saveTarget);
-      setDownloadStatus(`已保存：${filePath}`);
+      triggerBrowserDownload(getLocalVideoAssetUrl(filePath), "video-asset.mp4");
+      setDownloadStatus("已保存下载。");
+      setSavedDownload(createDownloadStatus(filePath, "video-asset.mp4"));
     } catch (error) {
       setDownloadStatus(error instanceof Error ? error.message : "历史视频保存失败。");
     } finally {
@@ -3690,13 +4041,22 @@ function HistoryDetail(props: { item: HistoryItem; onOpenItem: () => void }) {
     }
   }
 
+  async function revealSavedHistoryVideo() {
+    const filePath = savedDownload?.filePath || props.item.renderedVideoPath;
+    if (!filePath) return;
+    setRevealStatus(null);
+    try {
+      await revealLocalVideoInFolder(filePath);
+      setRevealStatus({ tone: "ok", message: "已打开本机文件所在位置。" });
+    } catch (error) {
+      setRevealStatus({ tone: "error", message: error instanceof Error ? error.message : "无法打开本机文件所在位置。" });
+    }
+  }
+
   const rows = [
     ["产品", props.item.productType],
-    ["场景", props.item.sceneTitle],
     ["模型", props.item.model],
-    ["画面比例", props.item.aspectRatio],
     ["视频时长", props.item.duration ? `${props.item.duration} 秒` : ""],
-    ["动作模式", props.item.motionMode],
     ["任务号", props.item.taskId || props.item.id],
   ].filter(([, value]) => Boolean(value));
 
@@ -3714,21 +4074,39 @@ function HistoryDetail(props: { item: HistoryItem; onOpenItem: () => void }) {
         </div>
       )}
       <div className="history-detail-actions">
-        <button className="primary-action compact-action" type="button" onClick={props.onOpenItem}>
+        <Button className="primary-action compact-action" type="button" onClick={props.onOpenItem}>
           载入到字幕/旁白流程
-        </button>
+        </Button>
         {assetUrl && (
           <a className="secondary-action compact-action" href={assetUrl} target="_blank" rel="noreferrer">
             单独打开资产
           </a>
         )}
         {(assetUrl || props.item.renderedVideoPath) && isVideoAsset && (
-          <button className="secondary-action compact-action" type="button" disabled={isSavingVideo} onClick={saveHistoryVideo}>
-            {isSavingVideo ? "保存中" : "保存 MP4"}
-          </button>
+          <Button variant="outline" className="secondary-action compact-action" type="button" disabled={isSavingVideo} onClick={saveHistoryVideo}>
+            {isSavingVideo ? "保存中" : "保存下载"}
+          </Button>
         )}
       </div>
       {downloadStatus && <div className="history-asset-loading">{downloadStatus}</div>}
+      {savedDownload?.filePath && (
+        <div className="download-location-card history-download-location" data-testid="history-download-location">
+          <span>{savedDownload.message}</span>
+          <code>{savedDownload.filePath}</code>
+          <div className="download-location-actions">
+            <a className="secondary-action compact-action" href={getLocalVideoAssetUrl(savedDownload.filePath)} download={savedDownload.fileName || "video-asset.mp4"}>
+              重新下载
+            </a>
+            <a className="secondary-action compact-action" href={getLocalVideoAssetUrl(savedDownload.filePath)} target="_blank" rel="noreferrer">
+              打开文件
+            </a>
+            <Button variant="outline" className="secondary-action compact-action" type="button" onClick={revealSavedHistoryVideo} data-testid="reveal-history-mp4">
+              打开所在位置
+            </Button>
+          </div>
+          {revealStatus && <small className={cn("reveal-status", revealStatus.tone === "error" && "error")}>{revealStatus.message}</small>}
+        </div>
+      )}
       <div className="history-detail-grid">
         {rows.map(([label, value]) => (
           <span key={label}>
@@ -3737,32 +4115,10 @@ function HistoryDetail(props: { item: HistoryItem; onOpenItem: () => void }) {
           </span>
         ))}
       </div>
-      {(props.item.sourceScript || props.item.scenePrompt) && (
-        <div className="history-detail-text">
-          <b>原始脚本 / 后期字幕旁白来源</b>
-          <p>{props.item.sourceScript || props.item.scenePrompt}</p>
-        </div>
-      )}
-      {props.item.videoPrompt && (
-        <div className="history-detail-text">
-          <b>视频提示词</b>
-          <p>{props.item.videoPrompt}</p>
-        </div>
-      )}
       {props.item.error && (
         <div className="history-detail-text error">
           <b>失败原因</b>
           <p>{props.item.error}</p>
-        </div>
-      )}
-      {props.item.productViewUrls && props.item.productViewUrls.length > 0 && (
-        <div className="history-asset-strip">
-          <b>产品四视图</b>
-          <div>
-            {props.item.productViewUrls.map((url, index) => (
-              <img src={url} alt={`产品视图 ${index + 1}`} key={`${url}-${index}`} />
-            ))}
-          </div>
         </div>
       )}
     </div>

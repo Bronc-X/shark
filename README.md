@@ -32,8 +32,11 @@ npm run test:baseline
 This command now protects three layers:
 
 - Production build: TypeScript and Vite must still compile.
-- Static workflow contract: `scripts/baseline-check.mjs` guards the product lock, story intent, storyboard, execution-package, video, and history invariants.
-- Browser user path: `scripts/baseline-ui-flow.mjs` runs the real frontend with mocked upstream APIs and verifies preset upload -> story intent -> storyboard generation -> execution package -> explicit video submission. It must not submit `/api/video` before `/api/video-package` and `/api/video-safety` pass.
+- Static workflow contract: `scripts/baseline-check.mjs` guards the product lock, BACK_VIEW rear-surface authority, story intent, first frame, execution package, Kling-only video, history migration, local video serving, subtitle/voiceover rendering, saved MP4 download, and local-file reveal invariants.
+- Browser user path: `scripts/baseline-ui-flow.mjs` runs the real frontend with mocked upstream APIs and verifies preset upload -> first frame -> execution package -> safety preflight -> explicit video submission -> subtitle/voiceover editor -> browser MP4 download -> local Explorer reveal -> refresh persistence. It must not submit `/api/video` before `/api/video-package` and `/api/video-safety` pass. The download flow must show the saved local file path after the browser download is triggered, and "打开所在位置" must call `/api/reveal-local-video` with the saved `.mp4` path instead of opening the browser video URL.
+- Workspace persistence: a refresh must keep the user on the current workflow screen, especially the video/post-production screen with the generated video still loaded. React StrictMode or preset-loading effects must not clear restored workspace state.
+
+Future changes to product consistency prompts, four-view mapping, BACK_VIEW rear details, subtitle/voiceover rendering, history assets, download/open-location behavior, or workspace refresh/state persistence must run `npm run test:baseline` before and after the change.
 
 ## Aircraft Model Interaction Video
 
