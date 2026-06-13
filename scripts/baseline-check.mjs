@@ -180,13 +180,10 @@ const checks = [
       appSource.includes('data-testid={`voice-${value}`}') &&
       appSource.includes('data-testid="generate-post-assets"') &&
       appSource.includes('data-testid="download-final-mp4"') &&
-      appSource.includes('data-testid="reopen-post-editor"') &&
       appSource.includes('data-testid="add-caption-segment"') &&
-      appSource.includes('data-testid="auto-layout-segments"') &&
       appSource.includes('data-testid={`caption-start-${index}`}') &&
       appSource.includes('data-testid={`caption-end-${index}`}') &&
       appSource.includes("cascadeEditableSegments") &&
-      appSource.includes("autoLayoutEditableSegments") &&
       appSource.includes("clampWholeSeconds") &&
       appSource.includes("caption-time-fields") &&
       appSource.includes("createEditablePostSegmentsFromScript") &&
@@ -194,9 +191,16 @@ const checks = [
       appSource.includes('fetch("/api/voiceover"') &&
       appSource.includes("renderPostVideoToDownloads") &&
       appSource.includes("type VoiceoverClip") &&
+      appSource.includes("postSegments?: TimedScriptSegment[]") &&
+      appSource.includes("normalizeStoredPostSegments") &&
+      appSource.includes("sourceVideoUrl={currentVideoHistoryItem?.videoUrl || currentVideoHistoryItem?.detailUrl || videoUrl}") &&
+      appSource.includes("videoHasGeneratedAsset") &&
+      appSource.includes("lockAspectRatio={videoHasGeneratedAsset}") &&
+      appSource.includes("disabled={props.lockAspectRatio}") &&
       appSource.includes("setVoiceoverClips") &&
       appSource.includes("onFinalVideoReady") &&
-      appSource.includes("setIsFinalized(true)") &&
+      !appSource.includes('data-testid="reopen-post-editor"') &&
+      !appSource.includes("autoLayoutEditableSegments") &&
       serverSource.includes('path: "/api/voiceover"') &&
       serverSource.includes('path: "/api/render-post-video"') &&
       serverSource.includes("normalizeVoiceoverClips") &&

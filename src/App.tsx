@@ -217,6 +217,12 @@ type HistoryItem = {
   videoUrl?: string;
   renderedVideoPath?: string;
   renderedVideoFileName?: string;
+  postSegments?: TimedScriptSegment[];
+  postSettings?: {
+    subtitlesEnabled?: boolean;
+    voiceoverEnabled?: boolean;
+    voiceGender?: "female" | "male";
+  };
   productViewUrls?: string[];
   supportImageUrls?: string[];
   error?: string;
@@ -1157,6 +1163,29 @@ function normalizePostSegmentsForDuration(segments: TimedScriptSegment[], durati
       end: Math.min(maxDuration, Math.max(0, clampWholeSeconds(segment.end, maxDuration))),
     }))
     .filter((segment) => segment.end > segment.start);
+}
+
+function normalizeStoredPostSegments(value: unknown, duration = 0): TimedScriptSegment[] {
+  if (!Array.isArray(value)) return [];
+  return normalizePostSegmentsForDuration(
+    value
+      .map((segment) => {
+        if (!segment || typeof segment !== "object") return null;
+        const record = segment as Record<string, unknown>;
+        const start = Number(record.start);
+        const end = Number(record.end);
+        if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+        return {
+          start,
+          end,
+          body: typeof record.body === "string" ? record.body : "",
+          subtitle: typeof record.subtitle === "string" ? record.subtitle : "",
+          voiceover: typeof record.voiceover === "string" ? record.voiceover : "",
+        };
+      })
+      .filter((segment): segment is TimedScriptSegment => Boolean(segment)),
+    duration,
+  );
 }
 
 function formatSrtTime(seconds: number) {
@@ -2256,7 +2285,7 @@ export function App() {
     setHistoryItems((current) => current.map((item) => (item.id === id ? { ...item, ...patch } : item)));
   }
 
-  function saveRenderedVideoHistory(filePath: string, fileName: string) {
+  function saveRenderedVideoHistory(filePath: string, fileName: string, patch: Partial<HistoryItem> = {}) {
     if (!filePath) return;
     const title = fileName ? `字幕旁白完整视频：${fileName}` : "字幕旁白完整视频";
     const finalUrl = getLocalVideoAssetUrl(filePath);
@@ -2264,7 +2293,7 @@ export function App() {
     setVideoUrl(finalUrl);
     setVideoStatus("succeeded");
     if (currentVideoHistoryItemId) {
-      patchHistoryItem(currentVideoHistoryItemId, { renderedVideoPath: filePath, renderedVideoFileName: fileName });
+      patchHistoryItem(currentVideoHistoryItemId, { ...patch, renderedVideoPath: filePath, renderedVideoFileName: fileName });
       return;
     }
     const historyItem = createHistoryItem(
@@ -2278,6 +2307,7 @@ export function App() {
         detailUrl: videoUrl || undefined,
         renderedVideoPath: filePath,
         renderedVideoFileName: fileName,
+        ...patch,
       }),
     );
     setHistoryItems((current) => upsertHistoryItem(current, historyItem));
@@ -2376,6 +2406,7 @@ export function App() {
   const requestedVideoDuration = clampVideoDurationInput(duration);
   const actualVideoDuration = clampVideoDurationForModel(apiSettings.videoProvider, apiSettings.videoModel, requestedVideoDuration);
   const currentVideoHistoryItem = historyItems.find((item) => item.id === currentVideoHistoryItemId || item.taskId === currentVideoHistoryItemId);
+  const videoHasGeneratedAsset = Boolean(videoUrl || finalVideoPath || currentVideoHistoryItem?.videoUrl || currentVideoHistoryItem?.detailUrl || currentVideoHistoryItem?.renderedVideoPath);
   const currentProgressStep: ProjectProgressId = currentVideoHistoryItem?.renderedVideoPath
     ? "post"
     : videoUrl || videoStatus === "succeeded"
@@ -2740,6 +2771,7 @@ export function App() {
 
   function updateAspectRatio(value: string) {
     if (value === aspectRatio) return;
+    if (activeStep === "video" && videoHasGeneratedAsset) return;
     setAspectRatio(value);
     if (activeStep === "video") {
       invalidateVideoOutputs();
@@ -3266,7 +3298,9 @@ export function App() {
                   statusText={videoStatusText}
                   taskId={videoTaskId}
                   videoUrl={videoUrl}
+                  sourceVideoUrl={currentVideoHistoryItem?.videoUrl || currentVideoHistoryItem?.detailUrl || videoUrl}
                   sourceScript={storyDirection}
+                  historyItem={currentVideoHistoryItem}
                   historyItemId={currentVideoHistoryItemId}
                   onPatchHistoryItem={patchHistoryItem}
                   onSaveRenderedVideoHistory={saveRenderedVideoHistory}
@@ -3292,6 +3326,7 @@ export function App() {
               setDuration={updateVideoDuration}
               aspectRatio={aspectRatio}
               setAspectRatio={updateAspectRatio}
+              lockAspectRatio={videoHasGeneratedAsset}
               canGenerate={videoReady}
               isWorking={isSubmitting || videoStatus === "submitted" || videoStatus === "polling"}
               error={videoError}
@@ -3841,10 +3876,12 @@ function VideoStep(props: {
   statusText: string;
   taskId: string;
   videoUrl: string;
+  sourceVideoUrl: string;
   sourceScript: string;
+  historyItem?: HistoryItem;
   historyItemId: string;
   onPatchHistoryItem: (id: string, patch: Partial<HistoryItem>) => void;
-  onSaveRenderedVideoHistory: (filePath: string, fileName: string) => void;
+  onSaveRenderedVideoHistory: (filePath: string, fileName: string, patch?: Partial<HistoryItem>) => void;
   onFinalVideoReady: (filePath: string) => void;
 }) {
   const isWorking = props.status === "submitted" || props.status === "polling";
@@ -3881,6 +3918,8 @@ function VideoStep(props: {
           sourceScript={props.sourceScript}
           duration={props.duration}
           videoUrl={props.videoUrl}
+          sourceVideoUrl={props.sourceVideoUrl}
+          historyItem={props.historyItem}
           historyItemId={props.historyItemId}
           onPatchHistoryItem={props.onPatchHistoryItem}
           onSaveRenderedVideoHistory={props.onSaveRenderedVideoHistory}
@@ -3899,6 +3938,7 @@ function VideoParameterPanel(props: {
   setDuration: (value: number) => void;
   aspectRatio: string;
   setAspectRatio: (value: string) => void;
+  lockAspectRatio: boolean;
   canGenerate: boolean;
   isWorking: boolean;
   error: string;
@@ -3924,6 +3964,7 @@ function VideoParameterPanel(props: {
               className={props.aspectRatio === ratio ? "active" : ""}
               type="button"
               key={ratio}
+              disabled={props.lockAspectRatio}
               onClick={() => props.setAspectRatio(ratio)}
             >
               <i data-ratio={ratio} />
@@ -3980,9 +4021,11 @@ function PostProductionPanel(props: {
   sourceScript: string;
   duration: number;
   videoUrl: string;
+  sourceVideoUrl: string;
+  historyItem?: HistoryItem;
   historyItemId: string;
   onPatchHistoryItem: (id: string, patch: Partial<HistoryItem>) => void;
-  onSaveRenderedVideoHistory: (filePath: string, fileName: string) => void;
+  onSaveRenderedVideoHistory: (filePath: string, fileName: string, patch?: Partial<HistoryItem>) => void;
   onFinalVideoReady: (filePath: string) => void;
 }) {
   const [generatedSegments, setGeneratedSegments] = useState<TimedScriptSegment[]>([]);
@@ -3994,7 +4037,6 @@ function PostProductionPanel(props: {
   const [assetStatus, setAssetStatus] = useState("");
   const [downloadStatus, setDownloadStatus] = useState<DownloadStatus | null>(null);
   const [revealStatus, setRevealStatus] = useState<RevealStatus | null>(null);
-  const [isFinalized, setIsFinalized] = useState(false);
   const [isGeneratingAssets, setIsGeneratingAssets] = useState(false);
   const [isDownloadingVideo, setIsDownloadingVideo] = useState(false);
   const [isPreviewPlaying, setIsPreviewPlaying] = useState(false);
@@ -4005,7 +4047,9 @@ function PostProductionPanel(props: {
   const activeVoiceoverClipRef = useRef<VoiceoverClip | null>(null);
   const parsedSourceSegments = useMemo(() => parseTimedScriptSegments(props.sourceScript), [props.sourceScript]);
   const durationLimit = useMemo(() => getPostProductionDurationLimit(props.duration), [props.duration]);
+  const storedPostSegments = useMemo(() => normalizeStoredPostSegments(props.historyItem?.postSegments, durationLimit), [props.historyItem?.postSegments, durationLimit]);
   const sourceSegments = useMemo(() => createEditablePostSegmentsFromScript(props.sourceScript, durationLimit), [props.sourceScript, durationLimit]);
+  const sourceVideoUrl = props.sourceVideoUrl || props.videoUrl;
   const timelineEditableSegments = useMemo(() => normalizePostSegmentsForDuration(editableSegments, durationLimit), [editableSegments, durationLimit]);
   const voiceoverText = useMemo(() => timelineEditableSegments.map((segment) => segment.voiceover.trim()).filter(Boolean).join("\n"), [timelineEditableSegments]);
   const activeSubtitle = useMemo(
@@ -4019,8 +4063,10 @@ function PostProductionPanel(props: {
   ];
 
   useEffect(() => {
-    if (isFinalized) return;
-    setEditableSegments(sourceSegments);
+    setEditableSegments(storedPostSegments.length ? storedPostSegments : sourceSegments);
+    setSubtitlesEnabled(props.historyItem?.postSettings?.subtitlesEnabled ?? true);
+    setVoiceoverEnabled(props.historyItem?.postSettings?.voiceoverEnabled ?? true);
+    setVoiceGender(props.historyItem?.postSettings?.voiceGender ?? "female");
     setGeneratedSegments([]);
     setPreviewTime(0);
     setPreviewDuration(props.duration || 0);
@@ -4033,7 +4079,7 @@ function PostProductionPanel(props: {
       return [];
     });
     activeVoiceoverClipRef.current = null;
-  }, [sourceSegments, props.videoUrl, props.duration, isFinalized]);
+  }, [props.historyItemId, props.sourceScript, sourceVideoUrl, props.duration]);
 
   useEffect(() => () => {
     voiceoverClips.forEach((clip) => window.URL.revokeObjectURL(clip.audioUrl));
@@ -4055,20 +4101,6 @@ function PostProductionPanel(props: {
       if (next[index].end <= next[index].start) next[index].end = Math.min(durationLimit, next[index].start + DEFAULT_SUBTITLE_BLOCK_SECONDS);
     }
     return next.filter((segment) => segment.end > segment.start);
-  }
-
-  function autoLayoutEditableSegments() {
-    setEditableSegments((current) => {
-      if (!current.length) return [createEmptyPostSegment()];
-      const firstStart = clampWholeSeconds(current[0].start);
-      const firstDuration = getSegmentDuration(current[0]);
-      const normalized = current.map((segment, index) => {
-        if (index === 0) return { ...segment, start: firstStart, end: Math.min(durationLimit, firstStart + firstDuration) };
-        return { ...segment };
-      });
-      return cascadeEditableSegments(normalized, 0);
-    });
-    setGeneratedSegments([]);
   }
 
   function updateEditableSegmentTime(index: number, field: "start" | "end", value: number) {
@@ -4168,7 +4200,7 @@ function PostProductionPanel(props: {
 
   async function generatePostAssets() {
     const timelineSegments = timelineEditableSegments;
-    if (!props.videoUrl) {
+    if (!sourceVideoUrl) {
       setAssetStatus("请先生成或从历史记录载入视频。");
       return;
     }
@@ -4186,7 +4218,6 @@ function PostProductionPanel(props: {
       return;
     }
     setIsGeneratingAssets(true);
-    setIsFinalized(false);
     setDownloadStatus(null);
     setRevealStatus(null);
     setAssetStatus(voiceoverEnabled ? "正在生成字幕和旁白，并合成最终视频..." : "正在生成字幕，并合成最终视频...");
@@ -4230,18 +4261,25 @@ function PostProductionPanel(props: {
       }
       setGeneratedSegments(timelineSegments);
       setPreviewTime(0);
+      const postProductionPatch: Partial<HistoryItem> = {
+        postSegments: timelineSegments,
+        postSettings: {
+          subtitlesEnabled,
+          voiceoverEnabled,
+          voiceGender,
+        },
+      };
       const { filePath, fileName } = await renderPostVideoToDownloads(
-        props.videoUrl,
+        sourceVideoUrl,
         timelineSegments,
         nextClips,
         subtitlesEnabled,
         voiceoverEnabled,
       );
-      props.onPatchHistoryItem(props.historyItemId, { renderedVideoPath: filePath, renderedVideoFileName: fileName });
-      props.onSaveRenderedVideoHistory(filePath, fileName);
+      props.onPatchHistoryItem(props.historyItemId, { ...postProductionPatch, renderedVideoPath: filePath, renderedVideoFileName: fileName });
+      props.onSaveRenderedVideoHistory(filePath, fileName, postProductionPatch);
       props.onFinalVideoReady(filePath);
       setDownloadStatus(createDownloadStatus(filePath, fileName));
-      setIsFinalized(true);
       setAssetStatus("已完成：字幕和旁白已经合成到最终视频。");
     } catch (error) {
       setGeneratedSegments([]);
@@ -4257,11 +4295,12 @@ function PostProductionPanel(props: {
   }
 
   async function downloadPreviewVideo() {
-    if (!props.videoUrl) {
+    const timelineSegments = timelineEditableSegments;
+    if (!sourceVideoUrl) {
       setAssetStatus("请先生成或从历史记录载入视频。");
       return;
     }
-    if (!generatedSegments.length || (voiceoverEnabled && !voiceoverClips.length)) {
+    if (!timelineSegments.length || (voiceoverEnabled && !voiceoverClips.length)) {
       setAssetStatus("请先点击一键生成字幕和旁白，再保存完整 MP4。");
       return;
     }
@@ -4270,14 +4309,22 @@ function PostProductionPanel(props: {
     setDownloadStatus(null);
     try {
       const { filePath, fileName } = await renderPostVideoToDownloads(
-        props.videoUrl,
-        generatedSegments,
+        sourceVideoUrl,
+        timelineSegments,
         voiceoverClips,
         subtitlesEnabled,
         voiceoverEnabled,
       );
-      props.onPatchHistoryItem(props.historyItemId, { renderedVideoPath: filePath, renderedVideoFileName: fileName });
-      props.onSaveRenderedVideoHistory(filePath, fileName);
+      const postProductionPatch: Partial<HistoryItem> = {
+        postSegments: timelineSegments,
+        postSettings: {
+          subtitlesEnabled,
+          voiceoverEnabled,
+          voiceGender,
+        },
+      };
+      props.onPatchHistoryItem(props.historyItemId, { ...postProductionPatch, renderedVideoPath: filePath, renderedVideoFileName: fileName });
+      props.onSaveRenderedVideoHistory(filePath, fileName, postProductionPatch);
       triggerBrowserDownload(getLocalVideoAssetUrl(filePath), fileName || "subtitle-voiceover-rendered.mp4");
       setAssetStatus("已保存下载。");
       setDownloadStatus(createDownloadStatus(filePath, fileName));
@@ -4286,11 +4333,6 @@ function PostProductionPanel(props: {
     } finally {
       setIsDownloadingVideo(false);
     }
-  }
-
-  function reopenPostEditor() {
-    setIsFinalized(false);
-    setAssetStatus("已回到编辑状态，修改后可再次一键生成最终视频。");
   }
 
   async function revealDownloadedVideo() {
@@ -4388,24 +4430,16 @@ function PostProductionPanel(props: {
         ) : (
           <div className="post-asset-empty">暂无字幕段</div>
         )}
-        <button className="add-caption-segment" type="button" onClick={addEditableSegment} data-testid="add-caption-segment">
+        <Button variant="outline" className="add-caption-segment" type="button" onClick={addEditableSegment} data-testid="add-caption-segment">
           <Plus size={16} />
           增加一条
-        </button>
-        <button className="add-caption-segment auto-layout-segments" type="button" onClick={autoLayoutEditableSegments} data-testid="auto-layout-segments">
-          自动排布
-        </button>
+        </Button>
       </div>
       <div className="post-production-actions single-action-row">
         <Button className="primary-action compact-action" type="button" disabled={isGeneratingAssets || !canGenerateAssets} onClick={generatePostAssets} data-testid="generate-post-assets">
           {isGeneratingAssets ? <LoaderCircle className="spin" size={16} /> : <Volume2 size={16} />}
           {isGeneratingAssets ? "生成中" : "一键生成字幕和旁白"}
         </Button>
-        {isFinalized && (
-          <Button variant="outline" className="secondary-action compact-action" type="button" onClick={reopenPostEditor} data-testid="reopen-post-editor">
-            重新编辑
-          </Button>
-        )}
       </div>
       {assetStatus && <small className="post-production-status">{assetStatus}</small>}
       {downloadStatus?.filePath && (
@@ -4478,7 +4512,7 @@ function PostProductionPanel(props: {
             <audio ref={voiceoverAudioRef} controls controlsList="nodownload" />
           </div>
         )}
-        {props.videoUrl && !isFinalized && (
+        {props.videoUrl && (
           <Button variant="outline" className="secondary-action compact-action download-video-action" type="button" disabled={isDownloadingVideo} onClick={downloadPreviewVideo} data-testid="download-final-mp4">
             {isDownloadingVideo ? <LoaderCircle className="spin" size={15} /> : <Download size={15} />}
             {isDownloadingVideo ? "保存中" : "保存下载"}

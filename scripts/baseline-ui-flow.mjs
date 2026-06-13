@@ -198,17 +198,30 @@ async function main() {
       await fulfillJson(route, { audioBase64, audioContentType: "audio/mpeg", fileName: `baseline-voiceover-${body.segmentIndex}.mp3` });
     });
 
+    let renderPostCallCount = 0;
     await page.route("**/api/render-post-video", async (route) => {
       const body = parseRequest(route);
+      renderPostCallCount += 1;
       apiCalls.push({ route: "render-post-video", body });
       await expect(Array.isArray(body.segments) && body.segments.length > 0, "render request must include subtitle segments");
-      await expect(body.segments[0]?.start === 0 && body.segments[0]?.end === 4, "render request must keep the edited whole-second first segment");
-      await expect(body.segments[1]?.start === 4 && body.segments[1]?.end === 7, "render request must cascade the next segment after edited time");
-      await expect(body.includeSubtitles === true, "render request must preserve subtitle toggle");
-      await expect(body.includeVoiceover === true, "render request must preserve voiceover toggle");
-      await expect(Array.isArray(body.voiceoverClips) && body.voiceoverClips.length > 0, "render request must include per-segment voiceover clips");
-      await expect(body.voiceoverClips[0]?.start === body.segments[0]?.start, "first voiceover clip must align to the first segment start");
-      await fulfillJson(route, { ok: true, filePath: "C:\\Users\\Administrator\\Downloads\\baseline-output.mp4", fileName: "baseline-output.mp4" });
+      if (renderPostCallCount === 1) {
+        await expect(body.segments[0]?.start === 0 && body.segments[0]?.end === 4, "render request must keep the edited whole-second first segment");
+        await expect(body.segments[0]?.subtitle === "Edited subtitle from user", "one-click render must read the latest edited subtitle");
+        await expect(body.segments[0]?.voiceover === "Edited voiceover from user", "one-click render must read the latest edited voiceover");
+        await expect(body.segments[1]?.start === 4 && body.segments[1]?.end === 7, "render request must cascade the next segment after edited time");
+        await expect(body.includeSubtitles === true, "render request must preserve subtitle toggle");
+        await expect(body.includeVoiceover === true, "render request must preserve voiceover toggle");
+        await expect(Array.isArray(body.voiceoverClips) && body.voiceoverClips.length > 0, "render request must include per-segment voiceover clips");
+        await expect(body.voiceoverClips[0]?.start === body.segments[0]?.start, "first voiceover clip must align to the first segment start");
+        await fulfillJson(route, { ok: true, filePath: "C:\\Users\\Administrator\\Downloads\\baseline-output.mp4", fileName: "baseline-output.mp4" });
+        return;
+      }
+      await expect(body.segments[0]?.subtitle === "Edited subtitle from user", "repeat render keeps the saved subtitle text but disables overlay when subtitles are off");
+      await expect(body.segments[0]?.voiceover === "Second pass voiceover", "repeat render must read the newest edited voiceover");
+      await expect(body.includeSubtitles === false, "turning subtitles off must send includeSubtitles false");
+      await expect(body.includeVoiceover === true, "voiceover-only render must keep voiceover on");
+      await expect(String(body.sourceVideoUrl || "").includes("baseline-output.mp4"), "repeat render must use the original raw video URL, not the previously rendered local MP4");
+      await fulfillJson(route, { ok: true, filePath: "C:\\Users\\Administrator\\Downloads\\baseline-output-voiceonly.mp4", fileName: "baseline-output-voiceonly.mp4" });
     });
 
     await page.route("**/api/reveal-local-video", async (route) => {
@@ -319,6 +332,10 @@ Would You Wear This?`;
     await expect(generatingFit.objectFit === "cover", "approved first frame must fill the generating video container");
     await expect(generatingFit.widthDiff <= 1 && generatingFit.heightDiff <= 1, "approved first frame image element should match the generating container size");
     await page.waitForFunction(() => document.querySelector("video")?.getAttribute("src")?.includes("baseline-output.mp4"), undefined, { timeout: 20_000 });
+    const rawVideoSrcBeforeRatioClick = await page.locator("video").first().getAttribute("src");
+    await expect(await page.getByTestId("aspect-ratio-control").getByText("1:1").isDisabled(), "aspect ratio buttons should lock after a video asset exists");
+    await page.getByTestId("aspect-ratio-control").getByText("1:1").click({ force: true });
+    await expect((await page.locator("video").first().getAttribute("src")) === rawVideoSrcBeforeRatioClick, "clicking a locked aspect ratio after video generation must not clear the video preview");
     const rawVideoProgress = await page.evaluate(() => {
       const current = Array.from(document.querySelectorAll(".project-progress-item")).find((item) => item.classList.contains("current"));
       return current?.textContent?.trim() || "";
@@ -335,20 +352,24 @@ Would You Wear This?`;
     await page.getByTestId("caption-end-0").fill("4");
     await expect((await page.getByTestId("caption-start-1").inputValue()) === "4", "editing the first end time should move the next segment start to 4");
     await expect((await page.getByTestId("caption-end-1").inputValue()) === "7", "editing the first end time should keep the next 3-second segment");
-    await expect(await page.getByTestId("auto-layout-segments").isVisible(), "subtitle editor should expose an automatic layout button");
-    await page.getByTestId("auto-layout-segments").click();
-    await expect((await page.getByTestId("caption-start-1").inputValue()) === "4", "auto layout should keep segments sequential after manual edit");
+    await expect((await page.getByTestId("auto-layout-segments").count()) === 0, "subtitle editor should not expose the removed automatic layout button");
     const segmentCountBeforeAdd = await page.locator(".caption-voice-row").count();
     await page.getByTestId("add-caption-segment").click();
     await expect((await page.locator(".caption-voice-row").count()) === segmentCountBeforeAdd + 1, "subtitle editor should allow adding a 3-second segment");
     await page.locator(".caption-voice-row").last().getByLabel("删除这一条字幕").click();
     await expect((await page.locator(".caption-voice-row").count()) === segmentCountBeforeAdd, "subtitle editor should allow removing a segment");
+    await page.locator(".caption-voice-row").first().locator("textarea").nth(0).fill("Edited subtitle from user");
+    await page.locator(".caption-voice-row").first().locator("textarea").nth(1).fill("Edited voiceover from user");
     await page.getByTestId("voice-male").click();
     await (await expectEnabled(page, "generate-post-assets", "post-production assets button must be enabled for timed script and returned video")).click();
     await expectVisible(page, "download-location", "one-click post-production should render and save the final MP4");
-    await expectVisible(page, "reopen-post-editor", "completed post-production should expose a re-edit control");
+    await expect((await page.getByTestId("reopen-post-editor").count()) === 0, "completed post-production should not expose a redundant re-edit control");
     await expect((await page.getByTestId("download-location").textContent())?.includes("C:\\Users\\Administrator\\Downloads\\baseline-output.mp4"), "download location must include the exact local saved path");
     await expect((await page.locator("video").first().getAttribute("src"))?.includes("/api/local-video"), "completed post-production should keep the final local MP4 in the preview");
+    await page.getByTestId("subtitle-toggle").click();
+    await page.locator(".caption-voice-row").first().locator("textarea").nth(1).fill("Second pass voiceover");
+    await (await expectEnabled(page, "generate-post-assets", "post-production repeat button must stay enabled after final render")).click();
+    await expect((await page.getByTestId("download-location").textContent())?.includes("baseline-output-voiceonly.mp4"), "repeat one-click render should save the latest voiceover-only MP4");
     await page.getByTestId("reveal-final-mp4").click();
     await page.waitForFunction(() => document.body.textContent?.includes("已打开本机文件所在位置"), undefined, { timeout: 10_000 });
     await page.reload({ waitUntil: "networkidle" });
